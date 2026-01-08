@@ -8,6 +8,7 @@ from .flight_plan import (
     WaypointPreviewPanel,
     WaypointSelected,
 )
+from .header import StatusHeader, StatusIcon
 from .panels import RightPanel, SpecPanel
 from .status_indicator import ModelStatusIndicator
 
@@ -20,6 +21,8 @@ __all__ = [
     "ModelStatusIndicator",
     "RightPanel",
     "SpecPanel",
+    "StatusHeader",
+    "StatusIcon",
     "WaypointDetailModal",
     "WaypointListItem",
     "WaypointPreviewPanel",

@@ -9,7 +9,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Footer, Static
 
 from waypoints.llm.client import ChatClient
 from waypoints.models import Project
@@ -24,6 +24,7 @@ from waypoints.tui.widgets.flight_plan import (
     WaypointPreviewPanel,
     WaypointSelected,
 )
+from waypoints.tui.widgets.header import StatusHeader
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ class ChartScreen(Screen):
         self._active_panel = "left"
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield StatusHeader()
         with Horizontal(classes="main-container"):
             with Vertical(classes="generating", id="generating-view"):
                 yield ThinkingIndicator()
@@ -163,12 +164,18 @@ class ChartScreen(Screen):
         self.query_one("#flight-plan-panel").display = True
         self.query_one("#preview-panel").display = True
 
+    def _set_thinking(self, thinking: bool) -> None:
+        """Set the header status indicator to thinking state."""
+        self.query_one(StatusHeader).set_thinking(thinking)
+
     @work(thread=True)
     def _generate_waypoints(self) -> None:
         """Generate waypoints from product spec via LLM."""
         prompt = WAYPOINT_GENERATION_PROMPT.format(spec=self.spec)
 
         logger.info("Generating waypoints from spec: %d chars", len(self.spec))
+
+        self.app.call_from_thread(self._set_thinking, True)
 
         full_response = ""
 
@@ -198,6 +205,8 @@ class ChartScreen(Screen):
         except Exception as e:
             logger.exception("Error generating waypoints: %s", e)
             self.app.call_from_thread(self.notify, f"Error: {e}", severity="error")
+
+        self.app.call_from_thread(self._set_thinking, False)
 
     def _parse_waypoints(self, response: str) -> list[Waypoint]:
         """Parse waypoints from LLM response."""
