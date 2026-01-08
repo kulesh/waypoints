@@ -368,6 +368,7 @@ class WaypointDetailModal(ModalScreen[bool]):
     DEFAULT_CSS = """
     WaypointDetailModal {
         align: center middle;
+        background: $surface 60%;
     }
 
     WaypointDetailModal > Vertical {
@@ -376,7 +377,7 @@ class WaypointDetailModal(ModalScreen[bool]):
         height: auto;
         max-height: 80%;
         background: $surface;
-        border: thick $surface-lighten-2;
+        border: solid $surface-lighten-2;
         padding: 1 2;
     }
 
@@ -384,27 +385,47 @@ class WaypointDetailModal(ModalScreen[bool]):
         text-style: bold;
         color: $text;
         text-align: center;
-        padding-bottom: 1;
-        border-bottom: solid $surface-lighten-1;
+        padding: 1 0;
         margin-bottom: 1;
+        border-bottom: solid $surface-lighten-1;
     }
 
     WaypointDetailModal .modal-content {
         height: auto;
         max-height: 50;
-        padding: 1;
+        padding: 1 0;
+    }
+
+    WaypointDetailModal .modal-content Markdown {
+        margin: 0;
+        padding: 0;
     }
 
     WaypointDetailModal .modal-actions {
         dock: bottom;
         height: auto;
-        padding-top: 1;
+        padding: 1 0 0 0;
+        margin-top: 1;
         border-top: solid $surface-lighten-1;
         align: center middle;
     }
 
     WaypointDetailModal Button {
         margin: 0 1;
+        min-width: 12;
+    }
+
+    WaypointDetailModal Button#btn-edit {
+        background: $primary-darken-2;
+    }
+
+    WaypointDetailModal Button#btn-delete {
+        background: $surface-lighten-1;
+        color: $error;
+    }
+
+    WaypointDetailModal Button#btn-close {
+        background: $surface-lighten-1;
     }
     """
 
@@ -523,48 +544,63 @@ class ConfirmDeleteModal(ModalScreen[bool]):
     DEFAULT_CSS = """
     ConfirmDeleteModal {
         align: center middle;
+        background: $surface 60%;
     }
 
     ConfirmDeleteModal > Vertical {
         width: 60;
         height: auto;
-        max-height: 20;
+        max-height: 24;
         background: $surface;
-        border: thick $error;
+        border: solid $surface-lighten-2;
+        border-top: solid $error;
         padding: 1 2;
     }
 
     ConfirmDeleteModal .modal-title {
         text-style: bold;
-        color: $error;
+        color: $text;
         text-align: center;
-        padding-bottom: 1;
+        padding: 1 0;
         margin-bottom: 1;
     }
 
     ConfirmDeleteModal .modal-content {
         height: auto;
-        padding: 0 1;
+        padding: 0;
     }
 
     ConfirmDeleteModal .waypoint-info {
         margin-bottom: 1;
+        color: $text-muted;
     }
 
     ConfirmDeleteModal .warning {
         color: $warning;
         margin-top: 1;
+        padding: 0;
     }
 
     ConfirmDeleteModal .modal-actions {
         dock: bottom;
         height: auto;
-        padding-top: 1;
+        padding: 1 0 0 0;
+        margin-top: 1;
+        border-top: solid $surface-lighten-1;
         align: center middle;
     }
 
     ConfirmDeleteModal Button {
         margin: 0 1;
+        min-width: 10;
+    }
+
+    ConfirmDeleteModal Button#btn-delete {
+        background: $error-darken-2;
+    }
+
+    ConfirmDeleteModal Button#btn-cancel {
+        background: $surface-lighten-1;
     }
     """
 
@@ -642,15 +678,16 @@ class WaypointEditModal(ModalScreen[Waypoint | None]):
     DEFAULT_CSS = """
     WaypointEditModal {
         align: center middle;
+        background: $surface 60%;
     }
 
     WaypointEditModal > Vertical {
         width: 80%;
-        max-width: 100;
+        max-width: 90;
         height: auto;
-        max-height: 90%;
+        max-height: 85%;
         background: $surface;
-        border: thick $surface-lighten-2;
+        border: solid $surface-lighten-2;
         padding: 1 2;
     }
 
@@ -658,15 +695,19 @@ class WaypointEditModal(ModalScreen[Waypoint | None]):
         text-style: bold;
         color: $text;
         text-align: center;
-        padding-bottom: 1;
-        border-bottom: solid $surface-lighten-1;
+        padding: 1 0;
         margin-bottom: 1;
+        border-bottom: solid $surface-lighten-1;
     }
 
     WaypointEditModal .form-content {
         height: auto;
-        max-height: 40;
-        padding: 0 1;
+        max-height: 45;
+        padding: 0;
+        scrollbar-gutter: stable;
+        scrollbar-size: 1 1;
+        scrollbar-background: transparent;
+        scrollbar-color: $surface-lighten-2;
     }
 
     WaypointEditModal .field-label {
@@ -677,11 +718,25 @@ class WaypointEditModal(ModalScreen[Waypoint | None]):
 
     WaypointEditModal Input {
         margin-bottom: 1;
+        background: $surface-lighten-1;
+        border: none;
+    }
+
+    WaypointEditModal Input:focus {
+        background: $surface-lighten-2;
+        border: none;
     }
 
     WaypointEditModal TextArea {
         height: 6;
         margin-bottom: 1;
+        background: $surface-lighten-1;
+        border: none;
+    }
+
+    WaypointEditModal TextArea:focus {
+        background: $surface-lighten-2;
+        border: none;
     }
 
     WaypointEditModal .criteria-area {
@@ -697,13 +752,23 @@ class WaypointEditModal(ModalScreen[Waypoint | None]):
     WaypointEditModal .modal-actions {
         dock: bottom;
         height: auto;
-        padding-top: 1;
+        padding: 1 0 0 0;
+        margin-top: 1;
         border-top: solid $surface-lighten-1;
         align: center middle;
     }
 
     WaypointEditModal Button {
         margin: 0 1;
+        min-width: 10;
+    }
+
+    WaypointEditModal Button#btn-save {
+        background: $success-darken-2;
+    }
+
+    WaypointEditModal Button#btn-cancel {
+        background: $surface-lighten-1;
     }
     """
 
@@ -802,15 +867,16 @@ class BreakDownPreviewModal(ModalScreen[bool]):
     DEFAULT_CSS = """
     BreakDownPreviewModal {
         align: center middle;
+        background: $surface 60%;
     }
 
     BreakDownPreviewModal > Vertical {
         width: 80%;
-        max-width: 100;
+        max-width: 90;
         height: auto;
         max-height: 80%;
         background: $surface;
-        border: thick $surface-lighten-2;
+        border: solid $surface-lighten-2;
         padding: 1 2;
     }
 
@@ -818,20 +884,26 @@ class BreakDownPreviewModal(ModalScreen[bool]):
         text-style: bold;
         color: $text;
         text-align: center;
-        padding-bottom: 1;
-        border-bottom: solid $surface-lighten-1;
+        padding: 1 0;
         margin-bottom: 1;
+        border-bottom: solid $surface-lighten-1;
     }
 
     BreakDownPreviewModal .modal-content {
         height: auto;
         max-height: 40;
-        padding: 0 1;
+        padding: 0;
+        scrollbar-gutter: stable;
+        scrollbar-size: 1 1;
+        scrollbar-background: transparent;
+        scrollbar-color: $surface-lighten-2;
     }
 
     BreakDownPreviewModal .parent-info {
         color: $text-muted;
         margin-bottom: 1;
+        padding-bottom: 1;
+        border-bottom: dashed $surface-lighten-1;
     }
 
     BreakDownPreviewModal .sub-waypoint {
@@ -842,22 +914,34 @@ class BreakDownPreviewModal(ModalScreen[bool]):
 
     BreakDownPreviewModal .sub-title {
         text-style: bold;
+        color: $text;
     }
 
     BreakDownPreviewModal .sub-objective {
         color: $text-muted;
+        margin-top: 0;
     }
 
     BreakDownPreviewModal .modal-actions {
         dock: bottom;
         height: auto;
-        padding-top: 1;
+        padding: 1 0 0 0;
+        margin-top: 1;
         border-top: solid $surface-lighten-1;
         align: center middle;
     }
 
     BreakDownPreviewModal Button {
         margin: 0 1;
+        min-width: 10;
+    }
+
+    BreakDownPreviewModal Button#btn-confirm {
+        background: $success-darken-2;
+    }
+
+    BreakDownPreviewModal Button#btn-cancel {
+        background: $surface-lighten-1;
     }
     """
 
