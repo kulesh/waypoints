@@ -263,7 +263,8 @@ class FlyScreen(Screen):
 
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", show=True),
-        Binding("space", "start", "Start", show=True),
+        Binding("enter", "start", "Start", show=True),
+        Binding("space", "start", "Start", show=False),
         Binding("p", "pause", "Pause", show=True),
         Binding("s", "skip", "Skip", show=True),
         Binding("escape", "back", "Back", show=True),
