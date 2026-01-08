@@ -24,7 +24,6 @@ from waypoints.tui.widgets.flight_plan import (
     WaypointPreviewPanel,
     WaypointSelected,
 )
-from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
 
 logger = logging.getLogger(__name__)
 
@@ -97,14 +96,6 @@ class ChartScreen(Screen):
         color: $text-muted;
     }
 
-    ChartScreen ModelStatusIndicator {
-        dock: top;
-        layer: above;
-        margin: 0 0 0 1;
-        height: 1;
-        width: 2;
-    }
-
     ChartScreen .file-path {
         dock: bottom;
         color: $text-muted;
@@ -134,7 +125,6 @@ class ChartScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield ModelStatusIndicator(id="model-status")
         with Horizontal(classes="main-container"):
             with Vertical(classes="generating", id="generating-view"):
                 yield ThinkingIndicator()
@@ -180,8 +170,6 @@ class ChartScreen(Screen):
 
         logger.info("Generating waypoints from spec: %d chars", len(self.spec))
 
-        self.app.call_from_thread(self._set_thinking, True)
-
         full_response = ""
 
         try:
@@ -211,8 +199,6 @@ class ChartScreen(Screen):
             logger.exception("Error generating waypoints: %s", e)
             self.app.call_from_thread(self.notify, f"Error: {e}", severity="error")
 
-        self.app.call_from_thread(self._set_thinking, False)
-
     def _parse_waypoints(self, response: str) -> list[Waypoint]:
         """Parse waypoints from LLM response."""
         # Try to extract JSON array from response
@@ -240,10 +226,6 @@ class ChartScreen(Screen):
         logger.info("Parsed %d waypoints from LLM response", len(waypoints))
         return waypoints
 
-    def _set_thinking(self, thinking: bool) -> None:
-        """Toggle the model status indicator."""
-        self.query_one("#model-status", ModelStatusIndicator).set_thinking(thinking)
-
     def _finalize_generation(self) -> None:
         """Finalize after generation completes."""
         self._show_panels()
@@ -261,7 +243,12 @@ class ChartScreen(Screen):
 
         # Select first waypoint if none selected
         if plan_panel.selected_id is None and self.flight_plan.waypoints:
-            plan_panel.selected_id = self.flight_plan.waypoints[0].id
+            first_wp = self.flight_plan.waypoints[0]
+            plan_panel.selected_id = first_wp.id
+            # Also update preview directly
+            preview_panel = self.query_one("#preview-panel", WaypointPreviewPanel)
+            is_epic = self.flight_plan.is_epic(first_wp.id)
+            preview_panel.show_waypoint(first_wp, is_epic)
 
         # Focus the flight plan panel
         plan_panel.focus()
