@@ -340,6 +340,9 @@ class WaypointDetailPanel(Vertical):
             if waypoint.completed_at:
                 completed = waypoint.completed_at.strftime("%Y-%m-%d %H:%M")
                 log.log(f"Completed: {completed}")
+        elif waypoint.status == WaypointStatus.FAILED:
+            log.log_error("Last execution failed")
+            log.log("Press 'r' to retry")
         elif waypoint.status == WaypointStatus.IN_PROGRESS:
             # In progress but not active (maybe from a previous session)
             log.log("Execution in progress...")
@@ -434,7 +437,7 @@ class WaypointListPanel(Vertical):
                 "□□□□□□□□□□ 0/0", classes="progress-bar", id="overall-progress"
             )
         yield FlightPlanTree(id="waypoint-tree")
-        yield Static("◉ Done  ◎ Active  ○ Pending", classes="legend")
+        yield Static("◉ Done  ◎ Active  ✗ Failed  ○ Pending", classes="legend")
 
     def update_flight_plan(
         self,
@@ -608,13 +611,13 @@ class FlyScreen(Screen):
         """Find and select the next waypoint to execute.
 
         Args:
-            include_in_progress: If True, also consider IN_PROGRESS waypoints
-                                (for resume after pause)
+            include_in_progress: If True, also consider IN_PROGRESS and FAILED
+                                waypoints (for resume after pause/failure)
         """
-        # If resuming, first check for IN_PROGRESS waypoints
+        # If resuming, first check for IN_PROGRESS or FAILED waypoints
         if include_in_progress:
             for wp in self.flight_plan.waypoints:
-                if wp.status == WaypointStatus.IN_PROGRESS:
+                if wp.status in (WaypointStatus.IN_PROGRESS, WaypointStatus.FAILED):
                     self.current_waypoint = wp
                     detail_panel = self.query_one(
                         "#waypoint-detail", WaypointDetailPanel
@@ -822,12 +825,14 @@ class FlyScreen(Screen):
 
         elif result == ExecutionResult.INTERVENTION_NEEDED:
             log.log_error("Human intervention needed")
+            self._mark_waypoint_failed()
             self.execution_state = ExecutionState.INTERVENTION
             self.query_one(StatusHeader).set_error()
             self.notify("Waypoint needs human intervention", severity="warning")
 
         elif result == ExecutionResult.MAX_ITERATIONS:
             log.log_error("Max iterations reached without completion")
+            self._mark_waypoint_failed()
             self.execution_state = ExecutionState.INTERVENTION
             self.query_one(StatusHeader).set_error()
             self.notify("Max iterations reached", severity="error")
@@ -838,9 +843,19 @@ class FlyScreen(Screen):
 
         else:  # FAILED or None
             log.log_error("Execution failed")
+            self._mark_waypoint_failed()
             self.execution_state = ExecutionState.INTERVENTION
             self.query_one(StatusHeader).set_error()
             self.notify("Waypoint execution failed", severity="error")
+
+    def _mark_waypoint_failed(self) -> None:
+        """Mark the current waypoint as failed and save."""
+        if self.current_waypoint:
+            self.current_waypoint.status = WaypointStatus.FAILED
+            self._save_flight_plan()
+            # Update the tree display
+            list_panel = self.query_one("#waypoint-list", WaypointListPanel)
+            list_panel.update_flight_plan(self.flight_plan)
 
     def _save_flight_plan(self) -> None:
         """Save the flight plan to disk."""
