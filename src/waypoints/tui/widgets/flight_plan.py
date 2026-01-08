@@ -168,42 +168,49 @@ class FlightPlanPanel(VerticalScroll):
                 item.remove_class("selected")
             if item.waypoint.id == new_id:
                 item.add_class("selected")
-        # Emit selection event
-        if new_id:
-            self.post_message(WaypointSelected(new_id))
 
     def on_waypoint_selected(self, event: WaypointSelected) -> None:
-        """Handle waypoint selection from click."""
-        event.stop()
+        """Handle waypoint selection from click - let event bubble to screen."""
         self.selected_id = event.waypoint_id
+        # Don't stop - let it bubble up to ChartScreen
 
     def action_move_down(self) -> None:
         """Move selection down."""
         if not self._waypoint_items:
             return
 
+        new_id: str | None = None
         if self.selected_id is None:
-            self.selected_id = self._waypoint_items[0].waypoint.id
+            new_id = self._waypoint_items[0].waypoint.id
         else:
             for i, item in enumerate(self._waypoint_items):
                 if item.waypoint.id == self.selected_id:
                     if i + 1 < len(self._waypoint_items):
-                        self.selected_id = self._waypoint_items[i + 1].waypoint.id
+                        new_id = self._waypoint_items[i + 1].waypoint.id
                     break
+
+        if new_id:
+            self.selected_id = new_id
+            self.post_message(WaypointSelected(new_id))
 
     def action_move_up(self) -> None:
         """Move selection up."""
         if not self._waypoint_items:
             return
 
+        new_id: str | None = None
         if self.selected_id is None:
-            self.selected_id = self._waypoint_items[-1].waypoint.id
+            new_id = self._waypoint_items[-1].waypoint.id
         else:
             for i, item in enumerate(self._waypoint_items):
                 if item.waypoint.id == self.selected_id:
                     if i > 0:
-                        self.selected_id = self._waypoint_items[i - 1].waypoint.id
+                        new_id = self._waypoint_items[i - 1].waypoint.id
                     break
+
+        if new_id:
+            self.selected_id = new_id
+            self.post_message(WaypointSelected(new_id))
 
     def action_open_detail(self) -> None:
         """Open detail modal for selected waypoint."""
