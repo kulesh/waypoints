@@ -34,6 +34,7 @@ class ExecutionState(Enum):
 
     IDLE = "idle"
     RUNNING = "running"
+    PAUSE_PENDING = "pause_pending"  # Pause requested, finishing current waypoint
     PAUSED = "paused"
     DONE = "done"
     INTERVENTION = "intervention"
@@ -109,8 +110,15 @@ class ExecutionLog(RichLog):
         background: $surface;
         scrollbar-gutter: stable;
         scrollbar-size: 1 1;
-        scrollbar-background: transparent;
+        scrollbar-size-vertical: 1;
+        scrollbar-size-horizontal: 1;
+        scrollbar-background: $surface;
+        scrollbar-background-hover: $surface;
+        scrollbar-background-active: $surface;
         scrollbar-color: $surface-lighten-2;
+        scrollbar-color-hover: $surface-lighten-3;
+        scrollbar-color-active: $surface-lighten-3;
+        scrollbar-corner-color: $surface;
     }
     """
 
@@ -408,7 +416,11 @@ class WaypointListPanel(Vertical):
 
     def _toggle_blink(self) -> None:
         """Toggle blink state for running indicator."""
-        if self._execution_state == ExecutionState.RUNNING:
+        # Blink for both RUNNING and PAUSE_PENDING (still executing)
+        if self._execution_state in (
+            ExecutionState.RUNNING,
+            ExecutionState.PAUSE_PENDING,
+        ):
             self._blink_visible = not self._blink_visible
             self._update_overall_progress()
         elif not self._blink_visible:
@@ -472,6 +484,7 @@ class WaypointListPanel(Vertical):
         state_styles = {
             ExecutionState.IDLE: ("", ""),
             ExecutionState.RUNNING: (" ▶ Running", "bold cyan"),
+            ExecutionState.PAUSE_PENDING: (" ⏸ Pausing...", "bold yellow"),
             ExecutionState.PAUSED: (" ⏸ Paused", "bold yellow"),
             ExecutionState.DONE: (" ✓ Done", "bold green"),
             ExecutionState.INTERVENTION: (" ⚠ Needs Help", "bold red"),
@@ -480,13 +493,16 @@ class WaypointListPanel(Vertical):
             self._execution_state, ("", "")
         )
         if state_text:
-            # Blink the play button when running
-            if (
-                self._execution_state == ExecutionState.RUNNING
-                and not self._blink_visible
-            ):
-                # Show just "Running" without the play symbol
-                text.append("   Running", style=state_style)
+            # Blink the icon when running or pause pending
+            if self._execution_state in (
+                ExecutionState.RUNNING,
+                ExecutionState.PAUSE_PENDING,
+            ) and not self._blink_visible:
+                # Show text without the icon symbol
+                if self._execution_state == ExecutionState.RUNNING:
+                    text.append("   Running", style=state_style)
+                else:
+                    text.append("   Pausing...", style=state_style)
             else:
                 text.append(state_text, style=state_style)
 
@@ -621,6 +637,7 @@ class FlyScreen(Screen):
         messages = {
             ExecutionState.IDLE: "Press 'r' to start execution",
             ExecutionState.RUNNING: "Executing waypoint...",
+            ExecutionState.PAUSE_PENDING: "Pausing after current waypoint...",
             ExecutionState.PAUSED: "Paused. Press 'r' to resume",
             ExecutionState.DONE: "All waypoints complete!",
             ExecutionState.INTERVENTION: "Human intervention needed",
@@ -649,7 +666,7 @@ class FlyScreen(Screen):
     def action_pause(self) -> None:
         """Pause execution after current waypoint."""
         if self.execution_state == ExecutionState.RUNNING:
-            self.execution_state = ExecutionState.PAUSED
+            self.execution_state = ExecutionState.PAUSE_PENDING
             if self._executor:
                 self._executor.cancel()
             self.notify("Will pause after current waypoint")
@@ -765,13 +782,16 @@ class FlyScreen(Screen):
             detail_panel.clear_iteration()
             list_panel.update_flight_plan(self.flight_plan)
 
-            # Move to next waypoint if not paused
+            # Move to next waypoint if not paused/pausing
             if self.execution_state == ExecutionState.RUNNING:
                 self._select_next_waypoint()
                 if self.current_waypoint:
                     self._execute_current_waypoint()
                 else:
                     self.execution_state = ExecutionState.DONE
+            elif self.execution_state == ExecutionState.PAUSE_PENDING:
+                # Pause was requested, now actually pause
+                self.execution_state = ExecutionState.PAUSED
 
         elif result == ExecutionResult.INTERVENTION_NEEDED:
             log.log_error("Human intervention needed")
