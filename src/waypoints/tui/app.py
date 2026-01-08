@@ -8,6 +8,7 @@ from textual.binding import Binding
 
 from waypoints.config import settings
 from waypoints.tui.screens.chart import ChartScreen
+from waypoints.tui.screens.fly import FlyScreen
 from waypoints.tui.screens.idea_brief import IdeaBriefScreen
 from waypoints.tui.screens.ideation import IdeationScreen
 from waypoints.tui.screens.ideation_qa import IdeationQAScreen
@@ -85,6 +86,14 @@ class WaypointsApp(App):
                     idea=data.get("idea"),
                     brief=data.get("brief"),
                     history=data.get("history"),
+                )
+            )
+        elif phase == "fly":
+            self.switch_screen(
+                FlyScreen(
+                    project=project,
+                    flight_plan=data.get("flight_plan"),
+                    spec=data.get("spec", ""),
                 )
             )
 

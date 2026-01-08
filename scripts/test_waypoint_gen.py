@@ -59,9 +59,14 @@ def main():
     client = ChatClient()
     response = ""
 
+    system_msg = (
+        "You are a technical project planner. "
+        "Create clear, testable waypoints for software development. "
+        "Output valid JSON only."
+    )
     for chunk in client.stream_message(
         messages=[{"role": "user", "content": prompt}],
-        system="You are a technical project planner. Create clear, testable waypoints for software development. Output valid JSON only.",
+        system=system_msg,
     ):
         print(chunk, end="", flush=True)
         response += chunk
@@ -75,8 +80,10 @@ def main():
             waypoints = json.loads(json_match.group())
             print(f"\n--- Parsed {len(waypoints)} waypoints ---\n")
             for wp in waypoints:
-                parent = f" (child of {wp.get('parent_id')})" if wp.get("parent_id") else ""
-                deps = f" [deps: {', '.join(wp.get('dependencies', []))}]" if wp.get("dependencies") else ""
+                parent_id = wp.get("parent_id")
+                parent = f" (child of {parent_id})" if parent_id else ""
+                dep_list = wp.get("dependencies", [])
+                deps = f" [deps: {', '.join(dep_list)}]" if dep_list else ""
                 print(f"{wp['id']}: {wp['title']}{parent}{deps}")
     except json.JSONDecodeError as e:
         print(f"Failed to parse JSON: {e}")

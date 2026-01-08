@@ -523,12 +523,19 @@ class ChartScreen(Screen):
         )
 
     def action_proceed(self) -> None:
-        """Proceed to next phase (Ready for Takeoff)."""
-        if self.flight_plan:
-            errors = self.flight_plan.validate_dependencies()
-            if errors:
-                self.notify(f"Fix issues: {errors[0]}", severity="error")
-                return
+        """Proceed to FLY phase (Ready for Takeoff)."""
+        if not self.flight_plan:
+            self.notify("No flight plan to execute", severity="error")
+            return
 
-        # Future: transition to FLY phase
-        self.notify("Ready for Takeoff! (FLY phase coming soon)")
+        errors = self.flight_plan.validate_dependencies()
+        if errors:
+            self.notify(f"Fix issues: {errors[0]}", severity="error")
+            return
+
+        # Transition to FLY phase
+        self.app.switch_phase("fly", {
+            "project": self.project,
+            "flight_plan": self.flight_plan,
+            "spec": self.spec,
+        })

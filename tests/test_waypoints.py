@@ -1,6 +1,5 @@
 """Tests for waypoints."""
 
-import pytest
 
 from waypoints.models.dialogue import DialogueHistory, Message, MessageRole
 

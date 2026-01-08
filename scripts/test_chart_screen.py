@@ -45,8 +45,8 @@ class TestChartApp(App):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python scripts/test_chart_screen.py <spec-file.md> [project-name]")
-        print("Example: python scripts/test_chart_screen.py docs/product-spec.md")
+        print("Usage: test_chart_screen.py <spec-file.md> [project-name]")
+        print("Example: test_chart_screen.py docs/product-spec.md")
         sys.exit(1)
 
     spec_path = Path(sys.argv[1])
