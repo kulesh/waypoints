@@ -34,11 +34,20 @@ STATUS_ICONS = {
     WaypointStatus.IN_PROGRESS: "◎",
     WaypointStatus.PENDING: "○",
 }
+# Blink state icon (shown when blinking is "off")
+STATUS_ICONS_BLINK = {
+    WaypointStatus.COMPLETE: "◉",
+    WaypointStatus.IN_PROGRESS: " ",  # Blinks to empty
+    WaypointStatus.PENDING: "○",
+}
 EPIC_ICON = "◇"
 
 
 def _format_waypoint_label(
-    waypoint: Waypoint, is_epic: bool = False, width: int = 80
+    waypoint: Waypoint,
+    is_epic: bool = False,
+    width: int = 80,
+    blink_visible: bool = True,
 ) -> str:
     """Format a waypoint for display in the tree.
 
@@ -46,8 +55,14 @@ def _format_waypoint_label(
         waypoint: The waypoint to format.
         is_epic: Whether this waypoint is an epic.
         width: Target width for padding (fills with spaces).
+        blink_visible: Whether to show the icon (for blink animation).
     """
-    icon = EPIC_ICON if is_epic else STATUS_ICONS[waypoint.status]
+    if is_epic:
+        icon = EPIC_ICON
+    elif blink_visible:
+        icon = STATUS_ICONS[waypoint.status]
+    else:
+        icon = STATUS_ICONS_BLINK[waypoint.status]
     # Calculate available space for title (width - icon - space - id - colon - space)
     id_prefix = f"{icon} {waypoint.id}: "
     max_title_len = width - len(id_prefix)
@@ -113,6 +128,18 @@ class FlightPlanTree(Tree[Waypoint]):
         self._flight_plan: FlightPlan | None = None
         # Hide the root node - we just want to show waypoints
         self.show_root = False
+        # Blink state for active waypoints
+        self._blink_visible: bool = True
+        self._blink_timer: object = None
+
+    def on_mount(self) -> None:
+        """Start the blink timer for active waypoints."""
+        self._blink_timer = self.set_interval(0.5, self._toggle_blink)
+
+    def _toggle_blink(self) -> None:
+        """Toggle visibility of IN_PROGRESS waypoint icons."""
+        self._blink_visible = not self._blink_visible
+        self._update_active_labels()
 
     def update_flight_plan(self, flight_plan: FlightPlan) -> None:
         """Update the tree with a new flight plan."""
@@ -142,7 +169,9 @@ class FlightPlanTree(Tree[Waypoint]):
             for wp in children_map.get(parent_id, []):
                 fp = self._flight_plan
                 is_epic = fp.is_epic(wp.id) if fp else False
-                label = _format_waypoint_label(wp, is_epic)
+                label = _format_waypoint_label(
+                    wp, is_epic, blink_visible=self._blink_visible
+                )
 
                 # Check if this waypoint has children
                 has_children = wp.id in children_map
@@ -159,6 +188,25 @@ class FlightPlanTree(Tree[Waypoint]):
 
         # Expand all nodes by default
         self.root.expand_all()
+
+    def _update_active_labels(self) -> None:
+        """Update labels for IN_PROGRESS waypoints (for blink animation)."""
+        if not self._flight_plan:
+            return
+
+        def update_node(node: TreeNode[Waypoint]) -> None:
+            if node.data and node.data.status == WaypointStatus.IN_PROGRESS:
+                fp = self._flight_plan
+                is_epic = fp.is_epic(node.data.id) if fp else False
+                label = _format_waypoint_label(
+                    node.data, is_epic, blink_visible=self._blink_visible
+                )
+                node.set_label(label)
+            for child in node.children:
+                update_node(child)
+
+        for child in self.root.children:
+            update_node(child)
 
     def on_tree_node_highlighted(
         self, event: Tree.NodeHighlighted[Waypoint]
