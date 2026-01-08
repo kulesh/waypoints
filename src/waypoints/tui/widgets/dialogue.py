@@ -2,10 +2,10 @@
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import LoadingIndicator, Markdown, Rule, Static, TextArea
+from textual.widgets import Markdown, Rule, Static, TextArea
 
 from waypoints.tui.messages import UserSubmitted
 
@@ -86,6 +86,10 @@ class MessageWidget(Markdown):
         """Update message content (used during streaming)."""
         self._raw_content = content
         self.update(content)
+        # Scroll parent into view during streaming
+        if parent := self.parent:
+            if hasattr(parent, "scroll_end"):
+                parent.scroll_end(animate=False)
 
 
 class Spacer(Static):
@@ -168,7 +172,7 @@ class DialogueView(VerticalScroll):
     def _anchor_if_enabled(self, widget: Widget) -> None:
         """Anchor widget if auto-scroll is enabled."""
         if self.auto_scroll:
-            widget.scroll_visible()
+            self.scroll_end(animate=False)
 
     def on_scroll_up(self) -> None:
         """Disable auto-scroll when user scrolls up."""
@@ -283,7 +287,7 @@ class DialoguePanel(Vertical):
     DEFAULT_CSS = """
     DialoguePanel {
         width: 100%;
-        height: 100%;
+        height: 1fr;
     }
     """
 

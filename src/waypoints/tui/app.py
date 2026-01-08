@@ -7,8 +7,10 @@ from textual.app import App
 from textual.binding import Binding
 
 from waypoints.config import settings
-from waypoints.tui.screens.shape import ShapeScreen
-from waypoints.tui.screens.spark import SparkScreen
+from waypoints.tui.screens.idea_brief import IdeaBriefScreen
+from waypoints.tui.screens.ideation import IdeationScreen
+from waypoints.tui.screens.ideation_qa import IdeationQAScreen
+from waypoints.tui.screens.product_spec import ProductSpecScreen
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,7 @@ class WaypointsApp(App):
         saved_theme = settings.theme
         logger.info("Loading saved theme: %s", saved_theme)
         self.theme = saved_theme
-        self.push_screen(SparkScreen())
+        self.push_screen(IdeationScreen())
 
     def watch_theme(self, new_theme: str) -> None:
         """Save theme whenever it changes (from any source)."""
@@ -45,12 +47,28 @@ class WaypointsApp(App):
 
     def switch_phase(self, phase: str, data: dict[str, Any] | None = None) -> None:
         """Switch to a different phase, optionally with data."""
-        if phase == "spark":
-            self.switch_screen(SparkScreen())
-        elif phase == "shape":
-            screen = ShapeScreen(brief_data=data) if data else ShapeScreen()
-            self.switch_screen(screen)
-        # Future: add CHART screen
+        data = data or {}
+
+        if phase == "ideation":
+            self.switch_screen(IdeationScreen())
+        elif phase == "ideation-qa":
+            self.switch_screen(IdeationQAScreen(idea=data.get("idea", "")))
+        elif phase == "idea-brief":
+            self.switch_screen(
+                IdeaBriefScreen(
+                    idea=data.get("idea", ""),
+                    history=data.get("history"),
+                )
+            )
+        elif phase == "product-spec":
+            self.switch_screen(
+                ProductSpecScreen(
+                    idea=data.get("idea"),
+                    brief=data.get("brief"),
+                    history=data.get("history"),
+                )
+            )
+        # Future: add Waypoints screen
 
     def action_toggle_dark(self) -> None:
         """Toggle dark mode (saving handled by watch_theme)."""

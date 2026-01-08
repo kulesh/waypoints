@@ -16,6 +16,7 @@ from waypoints.tui.messages import (
     UserSubmitted,
 )
 from waypoints.tui.widgets.dialogue import ChatInput, DialoguePanel, DialogueView
+from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
 
 if TYPE_CHECKING:
     from waypoints.tui.widgets.dialogue import MessageWidget
@@ -35,6 +36,20 @@ class BaseDialogueScreen(Screen):
         Binding("escape", "focus_input", "Focus Input"),
     ]
 
+    DEFAULT_CSS = """
+    BaseDialogueScreen {
+        overflow: hidden;
+    }
+
+    BaseDialogueScreen ModelStatusIndicator {
+        dock: top;
+        layer: above;
+        margin: 0 0 0 1;
+        height: 1;
+        width: 2;
+    }
+    """
+
     # Override in subclasses
     phase_name: str = "base"
     input_hint: str | None = None
@@ -49,6 +64,7 @@ class BaseDialogueScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield ModelStatusIndicator(id="model-status")
         yield DialoguePanel(
             input_hint=self.input_hint,
             id="dialogue-panel",
@@ -97,6 +113,8 @@ class BaseDialogueScreen(Screen):
         self._current_streaming_widget = None
         # Show thinking indicator until first content arrives
         self.dialogue_view.show_thinking()
+        # Update model status indicator
+        self.query_one("#model-status", ModelStatusIndicator).set_thinking(True)
 
     def on_streaming_chunk(self, event: StreamingChunk) -> None:
         """Update streaming message with new chunk."""
@@ -114,6 +132,8 @@ class BaseDialogueScreen(Screen):
         """Finalize streaming and process response."""
         # Hide thinking indicator if still showing (no chunks received)
         self.dialogue_view.hide_thinking()
+        # Update model status indicator
+        self.query_one("#model-status", ModelStatusIndicator).set_thinking(False)
 
         if self._current_streaming_widget:
             # Ensure final content is displayed (important for error messages)

@@ -1,7 +1,15 @@
 """TUI screens for Waypoints phases."""
 
 from .base import BaseDialogueScreen
-from .shape import ShapeScreen
-from .spark import SparkScreen
+from .idea_brief import IdeaBriefScreen
+from .ideation import IdeationScreen
+from .ideation_qa import IdeationQAScreen
+from .product_spec import ProductSpecScreen
 
-__all__ = ["BaseDialogueScreen", "ShapeScreen", "SparkScreen"]
+__all__ = [
+    "BaseDialogueScreen",
+    "IdeaBriefScreen",
+    "IdeationScreen",
+    "IdeationQAScreen",
+    "ProductSpecScreen",
+]
