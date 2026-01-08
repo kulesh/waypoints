@@ -397,6 +397,15 @@ def main():
     if len(sys.argv) > 1:
         test_dir = Path(sys.argv[1]).resolve()
         cleanup = False
+
+        # Safety check: refuse to run in an existing git repo
+        if (test_dir / ".git").exists():
+            print("ERROR: Refusing to run in existing git repository!")
+            print(f"  Directory: {test_dir}")
+            print()
+            print("This test creates commits and tags that would pollute your repo.")
+            print("Please use a fresh directory or run without arguments for a temp dir.")
+            sys.exit(1)
     else:
         test_dir = Path(tempfile.mkdtemp(prefix="waypoints-git-test-"))
         cleanup = True
