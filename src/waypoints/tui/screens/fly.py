@@ -717,6 +717,9 @@ class FlyScreen(Screen):
         if include_in_progress:
             for wp in self.flight_plan.waypoints:
                 if wp.status in (WaypointStatus.IN_PROGRESS, WaypointStatus.FAILED):
+                    # Skip epics - only execute leaf waypoints
+                    if self.flight_plan.is_epic(wp.id):
+                        continue
                     self.current_waypoint = wp
                     detail_panel = self.query_one(
                         "#waypoint-detail", WaypointDetailPanel
@@ -727,6 +730,11 @@ class FlyScreen(Screen):
         # Then check for PENDING waypoints with met dependencies
         for wp in self.flight_plan.waypoints:
             if wp.status == WaypointStatus.PENDING:
+                # Skip epics (multi-hop waypoints) - only execute leaf waypoints
+                # Epics are auto-completed when all children are complete
+                if self.flight_plan.is_epic(wp.id):
+                    continue
+
                 # Check if dependencies are met
                 def dep_complete(dep_id: str) -> bool:
                     dep_wp = self.flight_plan.get_waypoint(dep_id)
@@ -905,8 +913,12 @@ class FlyScreen(Screen):
             if self.current_waypoint:
                 self.current_waypoint.status = WaypointStatus.COMPLETE
                 self.current_waypoint.completed_at = datetime.now()
-                self._save_flight_plan()
                 log.log_success(f"Waypoint {self.current_waypoint.id} complete!")
+
+                # Check if parent epic should be auto-completed
+                self._check_parent_completion(self.current_waypoint)
+
+                self._save_flight_plan()
 
             detail_panel.clear_iteration()
             list_panel.update_flight_plan(self.flight_plan)
@@ -960,6 +972,44 @@ class FlyScreen(Screen):
         """Save the flight plan to disk."""
         writer = FlightPlanWriter(self.project)
         writer.save(self.flight_plan)
+
+    def _check_parent_completion(self, completed_waypoint: Waypoint) -> None:
+        """Check if parent epic should be auto-completed.
+
+        When a child waypoint completes, check if all siblings are also complete.
+        If so, mark the parent epic as complete. This cascades up the tree.
+
+        Args:
+            completed_waypoint: The waypoint that just completed
+        """
+        if not completed_waypoint.parent_id:
+            return  # No parent, nothing to check
+
+        parent = self.flight_plan.get_waypoint(completed_waypoint.parent_id)
+        if not parent:
+            return
+
+        # Get all children of the parent
+        children = self.flight_plan.get_children(parent.id)
+        if not children:
+            return
+
+        # Check if ALL children are complete
+        all_complete = all(
+            child.status == WaypointStatus.COMPLETE for child in children
+        )
+
+        if all_complete:
+            # Mark parent as complete
+            parent.status = WaypointStatus.COMPLETE
+            parent.completed_at = datetime.now()
+            logger.info(
+                "Auto-completed parent epic %s (all %d children complete)",
+                parent.id, len(children)
+            )
+
+            # Recursively check grandparent
+            self._check_parent_completion(parent)
 
     def _reset_stale_in_progress(self) -> None:
         """Reset any stale IN_PROGRESS waypoints to PENDING.
