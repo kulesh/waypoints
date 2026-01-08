@@ -108,7 +108,7 @@ class FlightPlanTree(Tree[Waypoint]):
     ]
 
     def __init__(self, **kwargs: object) -> None:
-        super().__init__("FLIGHT PLAN", **kwargs)
+        super().__init__("PLAN", **kwargs)
         self._flight_plan: FlightPlan | None = None
         # Hide the root node - we just want to show waypoints
         self.show_root = False
@@ -190,12 +190,12 @@ class FlightPlanPanel(Vertical):
     FlightPlanPanel {
         width: 1fr;
         height: 100%;
-        border-right: solid $primary-darken-2;
+        border-right: solid $surface-lighten-1;
     }
 
     FlightPlanPanel .panel-title {
         text-style: bold;
-        color: $primary;
+        color: $text;
         padding: 1;
         border-bottom: solid $surface-lighten-1;
     }
@@ -214,7 +214,7 @@ class FlightPlanPanel(Vertical):
         self._flight_plan: FlightPlan | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static("FLIGHT PLAN", classes="panel-title")
+        yield Static("IMPLEMENTATION PLAN", classes="panel-title")
         yield FlightPlanTree(id="flight-tree")
         yield Static(
             "◉ Done  ◎ Active  ○ Pending  ◇ Epic", classes="legend"
@@ -258,7 +258,7 @@ class WaypointPreviewPanel(VerticalScroll):
 
     WaypointPreviewPanel .panel-title {
         text-style: bold;
-        color: $primary;
+        color: $text;
         padding-bottom: 1;
         border-bottom: solid $surface-lighten-1;
         margin-bottom: 1;
@@ -375,13 +375,13 @@ class WaypointDetailModal(ModalScreen[bool]):
         height: auto;
         max-height: 80%;
         background: $surface;
-        border: thick $primary;
+        border: thick $surface-lighten-2;
         padding: 1 2;
     }
 
     WaypointDetailModal .modal-title {
         text-style: bold;
-        color: $primary;
+        color: $text;
         text-align: center;
         padding-bottom: 1;
         border-bottom: solid $surface-lighten-1;
