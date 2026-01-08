@@ -111,9 +111,7 @@ class StatusHeader(Header):
     def compose(self) -> ComposeResult:
         yield StatusIcon(id="status-icon")
         yield HeaderTitle()
-        yield (
-            HeaderClockSpace()
-        )
+        yield (HeaderClockSpace())
 
     def set_thinking(self, thinking: bool) -> None:
         """Set the thinking state on the status icon."""

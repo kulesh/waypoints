@@ -156,8 +156,7 @@ def test_checklist(test_dir: Path) -> bool:
     # Verify file was created
     checklist_path = project_dir / "checklist.yaml"
     print_result(
-        checklist_path.exists(),
-        f"checklist.yaml created: {checklist_path.exists()}"
+        checklist_path.exists(), f"checklist.yaml created: {checklist_path.exists()}"
     )
 
     # Test 2: Custom checklist
@@ -165,10 +164,7 @@ def test_checklist(test_dir: Path) -> bool:
     custom = Checklist(items=["Custom check 1", "Custom check 2", "Custom check 3"])
     custom.save(project_dir)
     loaded = Checklist.load(project_dir)
-    print_result(
-        len(loaded.items) == 3,
-        f"Custom items loaded: {len(loaded.items)}"
-    )
+    print_result(len(loaded.items) == 3, f"Custom items loaded: {len(loaded.items)}")
     if len(loaded.items) != 3:
         all_passed = False
 
@@ -249,7 +245,7 @@ def test_receipt_validation(test_dir: Path) -> bool:
     latest = validator.find_latest_receipt(project_dir, "WP-001")
     print_result(
         latest is not None and "140000" in latest.name,
-        f"Found latest: {latest.name if latest else 'None'}"
+        f"Found latest: {latest.name if latest else 'None'}",
     )
 
     return all_passed
@@ -272,21 +268,20 @@ def test_git_config(test_dir: Path) -> bool:
     waypoints_dir = test_dir / ".waypoints"
     waypoints_dir.mkdir(parents=True, exist_ok=True)
 
-    custom_config = GitConfig(
-        auto_commit=True,
-        auto_init=True,
-        run_checklist=True,
-        create_phase_tags=False,
-        create_waypoint_tags=True,
-    )
+    # GitConfig object is not used directly here, just write config file
     config_path = waypoints_dir / "git-config.json"
-    config_path.write_text(json.dumps({
-        "auto_commit": True,
-        "auto_init": True,
-        "run_checklist": True,
-        "create_phase_tags": False,
-        "create_waypoint_tags": True,
-    }, indent=2))
+    config_path.write_text(
+        json.dumps(
+            {
+                "auto_commit": True,
+                "auto_init": True,
+                "run_checklist": True,
+                "create_phase_tags": False,
+                "create_waypoint_tags": True,
+            },
+            indent=2,
+        )
+    )
 
     # Can't easily test load() without mocking Path.cwd(), so just verify file
     print_result(config_path.exists(), f"Config saved: {config_path}")
@@ -324,7 +319,9 @@ def test_full_workflow(test_dir: Path) -> bool:
             ChecklistItem("All tests pass", "passed", "pytest - 5 passed"),
         ],
     )
-    receipt_path = receipts_dir / f"wp001-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+    receipt_path = (
+        receipts_dir / f"wp001-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+    )
     receipt.save(receipt_path)
 
     # Validate receipt (code's job)
@@ -352,7 +349,9 @@ def test_full_workflow(test_dir: Path) -> bool:
 
     # Try to find receipt (won't exist)
     missing_receipt = validator.find_latest_receipt(project_dir, "WP-002")
-    print_result(missing_receipt is None, f"No receipt found: {missing_receipt is None}")
+    print_result(
+        missing_receipt is None, f"No receipt found: {missing_receipt is None}"
+    )
 
     if missing_receipt is None:
         print_result(True, "Correctly skipping commit due to missing receipt")
@@ -371,7 +370,9 @@ def test_full_workflow(test_dir: Path) -> bool:
             ChecklistItem("All tests pass", "passed", "OK"),
         ],
     )
-    failed_path = receipts_dir / f"wp003-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+    failed_path = (
+        receipts_dir / f"wp003-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+    )
     failed_receipt.save(failed_path)
 
     result = validator.validate(failed_path)
@@ -404,13 +405,16 @@ def main():
             print(f"  Directory: {test_dir}")
             print()
             print("This test creates commits and tags that would pollute your repo.")
-            print("Please use a fresh directory or run without arguments for a temp dir.")
+            print(
+                "Please use a fresh directory or run without arguments for a temp dir."
+            )
             sys.exit(1)
     else:
         test_dir = Path(tempfile.mkdtemp(prefix="waypoints-git-test-"))
         cleanup = True
 
-    print(f"""
+    print(
+        f"""
 ╔══════════════════════════════════════════════════════════════╗
 ║          Waypoints Git Integration Test Suite                 ║
 ╠══════════════════════════════════════════════════════════════╣
@@ -420,7 +424,8 @@ def main():
 ╚══════════════════════════════════════════════════════════════╝
 
 Test directory: {test_dir}
-""")
+"""
+    )
 
     try:
         # Run all tests

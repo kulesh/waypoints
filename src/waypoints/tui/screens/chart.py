@@ -296,9 +296,7 @@ class ChartScreen(Screen):
             return
 
         waypoint = self.flight_plan.get_waypoint(event.waypoint_id)
-        is_epic = (
-            self.flight_plan.is_epic(event.waypoint_id) if waypoint else False
-        )
+        is_epic = self.flight_plan.is_epic(event.waypoint_id) if waypoint else False
         preview_panel = self.query_one("#preview-panel", WaypointPreviewPanel)
         preview_panel.show_waypoint(waypoint, is_epic)
 
@@ -372,9 +370,7 @@ class ChartScreen(Screen):
         """Start the break down process for a waypoint."""
         # Check if already an epic
         if self.flight_plan and self.flight_plan.is_epic(waypoint.id):
-            self.notify(
-                f"{waypoint.id} already has sub-waypoints", severity="warning"
-            )
+            self.notify(f"{waypoint.id} already has sub-waypoints", severity="warning")
             return
 
         self.notify(f"Breaking down {waypoint.id}...")
@@ -423,9 +419,7 @@ class ChartScreen(Screen):
 
         except Exception as e:
             logger.exception("Error generating sub-waypoints: %s", e)
-            self.app.call_from_thread(
-                self.notify, f"Error: {e}", severity="error"
-            )
+            self.app.call_from_thread(self.notify, f"Error: {e}", severity="error")
 
         self.app.call_from_thread(self._set_thinking, False)
 
@@ -534,9 +528,12 @@ class ChartScreen(Screen):
             return
 
         # Transition to FLY phase
-        self.app.switch_phase("fly", {
-            "project": self.project,
-            "flight_plan": self.flight_plan,
-            "spec": self.spec,
-            "from_phase": "chart",
-        })
+        self.app.switch_phase(
+            "fly",
+            {
+                "project": self.project,
+                "flight_plan": self.flight_plan,
+                "spec": self.spec,
+                "from_phase": "chart",
+            },
+        )

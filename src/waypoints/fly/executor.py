@@ -75,9 +75,7 @@ def _build_prompt(
     checklist: Checklist,
 ) -> str:
     """Build the execution prompt for a waypoint."""
-    criteria_list = "\n".join(
-        f"- [ ] {c}" for c in waypoint.acceptance_criteria
-    )
+    criteria_list = "\n".join(f"- [ ] {c}" for c in waypoint.acceptance_criteria)
 
     checklist_items = "\n".join(f"- {item}" for item in checklist.items)
     # Normalize waypoint ID for receipt filename
@@ -198,8 +196,7 @@ class WaypointExecutor:
         prompt = _build_prompt(self.waypoint, self.spec, project_path, checklist)
 
         logger.info(
-            "Starting execution of %s: %s",
-            self.waypoint.id, self.waypoint.title
+            "Starting execution of %s: %s", self.waypoint.id, self.waypoint.title
         )
 
         # Initialize execution log
@@ -244,11 +241,13 @@ class WaypointExecutor:
                         # Check for completion marker
                         if completion_marker in full_output:
                             logger.info("Completion marker found!")
-                            self.steps.append(ExecutionStep(
-                                iteration=iteration,
-                                action="complete",
-                                output=iteration_output,
-                            ))
+                            self.steps.append(
+                                ExecutionStep(
+                                    iteration=iteration,
+                                    action="complete",
+                                    output=iteration_output,
+                                )
+                            )
                             # Log completion marker found
                             self._log_writer.log_output(iteration, iteration_output)
                             self._log_writer.log_iteration_end(
@@ -262,8 +261,10 @@ class WaypointExecutor:
 
                             if receipt_valid:
                                 self._report_progress(
-                                    iteration, MAX_ITERATIONS,
-                                    "complete", "Waypoint complete with valid receipt!"
+                                    iteration,
+                                    MAX_ITERATIONS,
+                                    "complete",
+                                    "Waypoint complete with valid receipt!",
                                 )
                                 self._log_writer.log_completion(
                                     ExecutionResult.SUCCESS.value
@@ -277,8 +278,10 @@ class WaypointExecutor:
                                     "Git commit will be skipped."
                                 )
                                 self._report_progress(
-                                    iteration, MAX_ITERATIONS,
-                                    "complete", "Complete (receipt missing/invalid)"
+                                    iteration,
+                                    MAX_ITERATIONS,
+                                    "complete",
+                                    "Complete (receipt missing/invalid)",
                                 )
                                 self._log_writer.log_completion(
                                     ExecutionResult.SUCCESS.value
@@ -287,28 +290,27 @@ class WaypointExecutor:
 
                         # Report streaming progress
                         self._report_progress(
-                            iteration, MAX_ITERATIONS,
-                            "streaming", chunk.text
+                            iteration, MAX_ITERATIONS, "streaming", chunk.text
                         )
 
                     elif isinstance(chunk, StreamComplete):
                         iteration_cost = chunk.cost_usd
                         logger.info(
                             "Iteration %d complete, cost: $%.4f",
-                            iteration, chunk.cost_usd or 0
+                            iteration,
+                            chunk.cost_usd or 0,
                         )
 
             except Exception as e:
                 logger.exception("Error during iteration %d: %s", iteration, e)
-                self._report_progress(
-                    iteration, MAX_ITERATIONS,
-                    "error", f"Error: {e}"
+                self._report_progress(iteration, MAX_ITERATIONS, "error", f"Error: {e}")
+                self.steps.append(
+                    ExecutionStep(
+                        iteration=iteration,
+                        action="error",
+                        output=str(e),
+                    )
                 )
-                self.steps.append(ExecutionStep(
-                    iteration=iteration,
-                    action="error",
-                    output=str(e),
-                ))
                 # Log error
                 self._log_writer.log_error(iteration, str(e))
                 self._log_writer.log_completion(ExecutionResult.FAILED.value)
@@ -319,11 +321,13 @@ class WaypointExecutor:
             self._log_writer.log_iteration_end(iteration, iteration_cost)
 
             # Record step
-            self.steps.append(ExecutionStep(
-                iteration=iteration,
-                action="iterate",
-                output=iteration_output,
-            ))
+            self.steps.append(
+                ExecutionStep(
+                    iteration=iteration,
+                    action="iterate",
+                    output=iteration_output,
+                )
+            )
 
             # Check if agent is stuck or needs human help
             if self._needs_intervention(iteration_output):
@@ -334,9 +338,7 @@ class WaypointExecutor:
                 return ExecutionResult.INTERVENTION_NEEDED
 
         # Max iterations reached
-        logger.warning(
-            "Max iterations (%d) reached without completion", MAX_ITERATIONS
-        )
+        logger.warning("Max iterations (%d) reached without completion", MAX_ITERATIONS)
         self._log_writer.log_completion(ExecutionResult.MAX_ITERATIONS.value)
         return ExecutionResult.MAX_ITERATIONS
 

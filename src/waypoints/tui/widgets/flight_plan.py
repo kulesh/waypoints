@@ -214,8 +214,7 @@ class FlightPlanTree(Tree[Waypoint]):
                 if is_epic and fp:
                     children = fp.get_children(wp.id)
                     complete = sum(
-                        1 for c in children
-                        if c.status == WaypointStatus.COMPLETE
+                        1 for c in children if c.status == WaypointStatus.COMPLETE
                     )
                     epic_progress = (complete, len(children))
 
@@ -257,8 +256,7 @@ class FlightPlanTree(Tree[Waypoint]):
                 if is_epic and fp:
                     children = fp.get_children(node.data.id)
                     complete = sum(
-                        1 for c in children
-                        if c.status == WaypointStatus.COMPLETE
+                        1 for c in children if c.status == WaypointStatus.COMPLETE
                     )
                     epic_progress = (complete, len(children))
 
@@ -275,9 +273,7 @@ class FlightPlanTree(Tree[Waypoint]):
         for child in self.root.children:
             update_node(child)
 
-    def on_tree_node_highlighted(
-        self, event: Tree.NodeHighlighted[Waypoint]
-    ) -> None:
+    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted[Waypoint]) -> None:
         """Handle node highlight - emit WaypointSelected for preview update."""
         if event.node.data:
             self.post_message(WaypointSelected(event.node.data.id))
@@ -332,9 +328,7 @@ class FlightPlanPanel(Vertical):
     def compose(self) -> ComposeResult:
         yield Static("IMPLEMENTATION PLAN", classes="panel-title")
         yield FlightPlanTree(id="flight-tree")
-        yield Static(
-            "◉ Done  ◎ Active  ○ Pending  ◇ Epic", classes="legend"
-        )
+        yield Static("◉ Done  ◎ Active  ○ Pending  ◇ Epic", classes="legend")
 
     def update_flight_plan(self, flight_plan: FlightPlan) -> None:
         """Update the flight plan display."""
@@ -910,9 +904,7 @@ class WaypointEditModal(ModalScreen[Waypoint | None]):
                 )
 
                 yield Static("Acceptance Criteria", classes="field-label")
-                yield Static(
-                    "One criterion per line", classes="hint"
-                )
+                yield Static("One criterion per line", classes="hint")
                 criteria_text = "\n".join(self.waypoint.acceptance_criteria)
                 yield TextArea(
                     criteria_text,

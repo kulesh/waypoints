@@ -289,13 +289,15 @@ class ExecutionLogReader:
                     elif entry_type == "tool_call":
                         content = f"{data.get('tool_name')}: {data.get('tool_input')}"
 
-                    entries.append(ExecutionEntry(
-                        entry_type=entry_type,
-                        content=content,
-                        timestamp=datetime.fromisoformat(data["timestamp"]),
-                        iteration=data.get("iteration", 0),
-                        metadata=data,
-                    ))
+                    entries.append(
+                        ExecutionEntry(
+                            entry_type=entry_type,
+                            content=content,
+                            timestamp=datetime.fromisoformat(data["timestamp"]),
+                            iteration=data.get("iteration", 0),
+                            metadata=data,
+                        )
+                    )
 
         if not log:
             raise ValueError(f"Invalid execution log file: {file_path}")

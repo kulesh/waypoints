@@ -4,18 +4,14 @@ import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from waypoints.git import (
     Checklist,
     ChecklistItem,
     ChecklistReceipt,
     GitConfig,
-    GitResult,
     GitService,
-    ReceiptValidationResult,
     ReceiptValidator,
 )
 
@@ -196,18 +192,22 @@ class TestReceiptValidator:
 
         # Create two receipts with different timestamps
         (receipts_dir / "wp001-20260108-100000.json").write_text(
-            json.dumps({
-                "waypoint_id": "WP-001",
-                "completed_at": "2026-01-08T10:00:00",
-                "checklist": [],
-            })
+            json.dumps(
+                {
+                    "waypoint_id": "WP-001",
+                    "completed_at": "2026-01-08T10:00:00",
+                    "checklist": [],
+                }
+            )
         )
         (receipts_dir / "wp001-20260108-120000.json").write_text(
-            json.dumps({
-                "waypoint_id": "WP-001",
-                "completed_at": "2026-01-08T12:00:00",
-                "checklist": [],
-            })
+            json.dumps(
+                {
+                    "waypoint_id": "WP-001",
+                    "completed_at": "2026-01-08T12:00:00",
+                    "checklist": [],
+                }
+            )
         )
 
         validator = ReceiptValidator()
@@ -331,10 +331,14 @@ class TestGitConfig:
         """Test loading config from a file."""
         config_path = tmp_path / ".waypoints" / "git-config.json"
         config_path.parent.mkdir(parents=True)
-        config_path.write_text(json.dumps({
-            "auto_commit": False,
-            "create_waypoint_tags": True,
-        }))
+        config_path.write_text(
+            json.dumps(
+                {
+                    "auto_commit": False,
+                    "create_waypoint_tags": True,
+                }
+            )
+        )
 
         with patch("waypoints.git.config.Path.cwd", return_value=tmp_path):
             config = GitConfig.load()

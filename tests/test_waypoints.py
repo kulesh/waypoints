@@ -1,6 +1,5 @@
 """Tests for waypoints."""
 
-
 from waypoints.models.dialogue import DialogueHistory, Message, MessageRole
 
 
