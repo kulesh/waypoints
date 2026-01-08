@@ -604,8 +604,25 @@ class FlyScreen(Screen):
             )
             detail_panel.show_waypoint(waypoint, active_waypoint_id=active_id)
 
-    def _select_next_waypoint(self) -> None:
-        """Find and select the next pending waypoint."""
+    def _select_next_waypoint(self, include_in_progress: bool = False) -> None:
+        """Find and select the next waypoint to execute.
+
+        Args:
+            include_in_progress: If True, also consider IN_PROGRESS waypoints
+                                (for resume after pause)
+        """
+        # If resuming, first check for IN_PROGRESS waypoints
+        if include_in_progress:
+            for wp in self.flight_plan.waypoints:
+                if wp.status == WaypointStatus.IN_PROGRESS:
+                    self.current_waypoint = wp
+                    detail_panel = self.query_one(
+                        "#waypoint-detail", WaypointDetailPanel
+                    )
+                    detail_panel.show_waypoint(wp, active_waypoint_id=None)
+                    return
+
+        # Then check for PENDING waypoints with met dependencies
         for wp in self.flight_plan.waypoints:
             if wp.status == WaypointStatus.PENDING:
                 # Check if dependencies are met
@@ -622,11 +639,10 @@ class FlyScreen(Screen):
                     detail_panel = self.query_one(
                         "#waypoint-detail", WaypointDetailPanel
                     )
-                    # No active execution yet when selecting next waypoint
                     detail_panel.show_waypoint(wp, active_waypoint_id=None)
                     return
 
-        # No pending waypoints with met dependencies
+        # No waypoints found
         self.current_waypoint = None
         self.execution_state = ExecutionState.DONE
 
@@ -652,6 +668,17 @@ class FlyScreen(Screen):
         """Start or resume waypoint execution."""
         if self.execution_state == ExecutionState.DONE:
             self.notify("All waypoints complete!")
+            return
+
+        # Handle resume from paused state
+        if self.execution_state == ExecutionState.PAUSED:
+            # Find waypoint to resume (in_progress first, then pending)
+            self._select_next_waypoint(include_in_progress=True)
+            if not self.current_waypoint:
+                self.notify("No waypoints to resume")
+                return
+            self.execution_state = ExecutionState.RUNNING
+            self._execute_current_waypoint()
             return
 
         if not self.current_waypoint:
