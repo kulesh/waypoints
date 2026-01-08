@@ -1,15 +1,18 @@
 """FLY screen for waypoint implementation."""
 
 import logging
+import re
 from datetime import datetime
 from enum import Enum
 
+from rich.syntax import Syntax
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Footer, Static, Tree
+from textual.widgets import Footer, RichLog, Static, Tree
 from textual.worker import Worker
 
 from waypoints.fly.executor import (
@@ -36,8 +39,12 @@ class ExecutionState(Enum):
     INTERVENTION = "intervention"
 
 
-class ExecutionLog(VerticalScroll):
-    """Scrollable log of execution output."""
+# Regex to detect code blocks in markdown
+CODE_BLOCK_PATTERN = re.compile(r"```(\w+)?\n(.*?)```", re.DOTALL)
+
+
+class ExecutionLog(RichLog):
+    """Rich log for execution output with syntax highlighting."""
 
     DEFAULT_CSS = """
     ExecutionLog {
@@ -49,56 +56,93 @@ class ExecutionLog(VerticalScroll):
         scrollbar-background: transparent;
         scrollbar-color: $surface-lighten-2;
     }
-
-    ExecutionLog .log-entry {
-        margin-bottom: 0;
-    }
-
-    ExecutionLog .log-entry.success {
-        color: $success;
-    }
-
-    ExecutionLog .log-entry.error {
-        color: $error;
-    }
-
-    ExecutionLog .log-entry.info {
-        color: $text-muted;
-    }
-
-    ExecutionLog .log-entry.command {
-        color: $warning;
-    }
     """
 
     def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._entries: list[Static] = []
+        super().__init__(highlight=True, markup=True, wrap=True, **kwargs)
 
     def log(self, message: str, level: str = "info") -> None:
-        """Add a log entry."""
-        entry = Static(message, classes=f"log-entry {level}")
-        self._entries.append(entry)
-        self.mount(entry)
-        self.scroll_end(animate=False)
+        """Add a log entry with Rich formatting."""
+        # Apply level-based styling
+        style_map = {
+            "info": "dim",
+            "success": "green",
+            "error": "red bold",
+            "command": "yellow",
+            "heading": "bold cyan",
+        }
+        style = style_map.get(level, "")
+
+        # Process message for code blocks
+        formatted = self._format_message(message, style)
+        if isinstance(formatted, list):
+            for item in formatted:
+                self.write(item)
+        else:
+            self.write(formatted)
+
+    def _format_message(
+        self, message: str, default_style: str
+    ) -> Text | list[Text | Syntax]:
+        """Format message, extracting code blocks for syntax highlighting."""
+        # Check for code blocks
+        matches = list(CODE_BLOCK_PATTERN.finditer(message))
+        if not matches:
+            # No code blocks - return styled text
+            return Text(message, style=default_style)
+
+        # Has code blocks - split and format
+        result: list[Text | Syntax] = []
+        last_end = 0
+
+        for match in matches:
+            # Add text before code block
+            if match.start() > last_end:
+                before_text = message[last_end : match.start()].strip()
+                if before_text:
+                    result.append(Text(before_text, style=default_style))
+
+            # Add syntax-highlighted code block
+            lang = match.group(1) or "text"
+            code = match.group(2).strip()
+            result.append(
+                Syntax(
+                    code,
+                    lang,
+                    theme="monokai",
+                    line_numbers=False,
+                    word_wrap=True,
+                )
+            )
+            last_end = match.end()
+
+        # Add remaining text after last code block
+        if last_end < len(message):
+            after_text = message[last_end:].strip()
+            if after_text:
+                result.append(Text(after_text, style=default_style))
+
+        return result
 
     def log_command(self, command: str) -> None:
         """Log a command being executed."""
-        self.log(f"$ {command}", "command")
+        self.write(Text(f"$ {command}", style="yellow bold"))
 
     def log_success(self, message: str) -> None:
         """Log a success message."""
-        self.log(f"✓ {message}", "success")
+        self.write(Text(f"✓ {message}", style="green bold"))
 
     def log_error(self, message: str) -> None:
         """Log an error message."""
-        self.log(f"✗ {message}", "error")
+        self.write(Text(f"✗ {message}", style="red bold"))
+
+    def log_heading(self, message: str) -> None:
+        """Log a heading/section marker."""
+        self.write(Text(f"── {message} ──", style="cyan bold"))
 
     def clear_log(self) -> None:
         """Clear all log entries."""
-        for entry in self._entries:
-            entry.remove()
-        self._entries.clear()
+        self.clear()
 
 
 class WaypointDetailPanel(Vertical):
@@ -463,7 +507,7 @@ class FlyScreen(Screen):
 
         log.clear_log()
         wp_title = f"{self.current_waypoint.id}: {self.current_waypoint.title}"
-        log.log(f"Starting {wp_title}")
+        log.log_heading(f"Starting {wp_title}")
         detail_panel.clear_iteration()
 
         # Create executor with progress callback
@@ -502,13 +546,11 @@ class FlyScreen(Screen):
 
         # Log based on step type
         if ctx.step == "executing":
-            log.log(f"Iteration {ctx.iteration}/{ctx.total_iterations}")
+            log.log_heading(f"Iteration {ctx.iteration}/{ctx.total_iterations}")
         elif ctx.step == "streaming":
-            # Truncate long streaming output for UI
-            output = ctx.output
-            if len(output) > 200:
-                output = output[:200] + "..."
-            if output.strip():
+            # Show streaming output (code blocks will be syntax-highlighted)
+            output = ctx.output.strip()
+            if output:
                 log.log(output)
         elif ctx.step == "complete":
             log.log_success(ctx.output)
