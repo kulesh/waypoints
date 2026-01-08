@@ -252,12 +252,7 @@ class ChartScreen(Screen):
 
         # Select first waypoint if none selected
         if plan_panel.selected_id is None and self.flight_plan.waypoints:
-            first_wp = self.flight_plan.waypoints[0]
-            plan_panel.selected_id = first_wp.id
-            # Also update preview directly
-            preview_panel = self.query_one("#preview-panel", WaypointPreviewPanel)
-            is_epic = self.flight_plan.is_epic(first_wp.id)
-            preview_panel.show_waypoint(first_wp, is_epic)
+            plan_panel.select_first()
 
         # Focus the flight plan panel
         plan_panel.focus()

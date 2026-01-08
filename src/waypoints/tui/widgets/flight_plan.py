@@ -4,16 +4,16 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
-from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, Markdown, Static
+from textual.widgets import Button, Markdown, Static, Tree
+from textual.widgets.tree import TreeNode
 
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 
 
 class WaypointSelected(Message):
-    """Waypoint was selected in the flight plan."""
+    """Waypoint was selected (highlighted) in the flight plan."""
 
     def __init__(self, waypoint_id: str) -> None:
         self.waypoint_id = waypoint_id
@@ -28,63 +28,125 @@ class WaypointOpenDetail(Message):
         super().__init__()
 
 
-class WaypointListItem(Static):
-    """Single waypoint item in the flight plan tree."""
+# Status icons for waypoints
+STATUS_ICONS = {
+    WaypointStatus.COMPLETE: "◉",
+    WaypointStatus.IN_PROGRESS: "◎",
+    WaypointStatus.PENDING: "○",
+}
+EPIC_ICON = "◇"
+
+
+def _format_waypoint_label(waypoint: Waypoint, is_epic: bool = False) -> str:
+    """Format a waypoint for display in the tree."""
+    icon = EPIC_ICON if is_epic else STATUS_ICONS[waypoint.status]
+    title = waypoint.title
+    if len(title) > 28:
+        title = title[:25] + "..."
+    return f"{icon} {waypoint.id}: {title}"
+
+
+class FlightPlanTree(Tree[Waypoint]):
+    """Tree widget for displaying the flight plan."""
 
     DEFAULT_CSS = """
-    WaypointListItem {
-        height: auto;
-        padding: 0 1;
-        margin: 0;
+    FlightPlanTree {
+        height: 1fr;
+        padding: 0;
     }
 
-    WaypointListItem.selected {
-        background: $primary-darken-2;
+    FlightPlanTree > .tree--guides {
+        color: $text-muted;
     }
 
-    WaypointListItem:hover {
-        background: $surface-lighten-1;
+    FlightPlanTree > .tree--cursor {
+        background: $primary;
+        color: $text;
     }
     """
 
-    STATUS_ICONS = {
-        WaypointStatus.COMPLETE: "◉",
-        WaypointStatus.IN_PROGRESS: "◎",
-        WaypointStatus.PENDING: "○",
-    }
-    EPIC_ICON = "◇"
+    BINDINGS = [
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
+    ]
 
-    def __init__(
-        self,
-        waypoint: Waypoint,
-        depth: int = 0,
-        is_epic: bool = False,
-        **kwargs: object,
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__("FLIGHT PLAN", **kwargs)
+        self._flight_plan: FlightPlan | None = None
+        # Hide the root node - we just want to show waypoints
+        self.show_root = False
+
+    def update_flight_plan(self, flight_plan: FlightPlan) -> None:
+        """Update the tree with a new flight plan."""
+        self._flight_plan = flight_plan
+        self._rebuild_tree()
+
+    def _rebuild_tree(self) -> None:
+        """Rebuild the tree from the flight plan."""
+        if not self._flight_plan:
+            return
+
+        # Clear existing nodes
+        self.root.remove_children()
+
+        # Build a map of parent_id -> children for efficient lookup
+        children_map: dict[str | None, list[Waypoint]] = {}
+        for wp in self._flight_plan.waypoints:
+            parent = wp.parent_id
+            if parent not in children_map:
+                children_map[parent] = []
+            children_map[parent].append(wp)
+
+        # Add root-level waypoints (those with no parent)
+        def add_children(
+            parent_node: TreeNode[Waypoint], parent_id: str | None
+        ) -> None:
+            for wp in children_map.get(parent_id, []):
+                fp = self._flight_plan
+                is_epic = fp.is_epic(wp.id) if fp else False
+                label = _format_waypoint_label(wp, is_epic)
+
+                # Check if this waypoint has children
+                has_children = wp.id in children_map
+
+                if has_children:
+                    # Add as expandable node
+                    child_node = parent_node.add(label, data=wp, expand=True)
+                    add_children(child_node, wp.id)
+                else:
+                    # Add as leaf node
+                    parent_node.add_leaf(label, data=wp)
+
+        add_children(self.root, None)
+
+        # Expand all nodes by default
+        self.root.expand_all()
+
+    def on_tree_node_highlighted(
+        self, event: Tree.NodeHighlighted[Waypoint]
     ) -> None:
-        self.waypoint = waypoint
-        self.depth = depth
-        self.is_epic = is_epic
-        super().__init__(**kwargs)
+        """Handle node highlight - emit WaypointSelected for preview update."""
+        if event.node.data:
+            self.post_message(WaypointSelected(event.node.data.id))
 
-    def compose(self) -> ComposeResult:
-        indent = "  " * self.depth
-        connector = "├─" if self.depth > 0 else ""
-        if self.is_epic:
-            icon = self.EPIC_ICON
-        else:
-            icon = self.STATUS_ICONS[self.waypoint.status]
+    def on_tree_node_selected(self, event: Tree.NodeSelected[Waypoint]) -> None:
+        """Handle node selection (Enter) - emit WaypointOpenDetail."""
+        if event.node.data:
+            self.post_message(WaypointOpenDetail(event.node.data.id))
 
-        title = self.waypoint.title
-        if len(title) > 30:
-            title = title[:27] + "..."
-
-        yield Static(f"{indent}{connector}{icon} {self.waypoint.id}: {title}")
-
-    def on_click(self) -> None:
-        self.post_message(WaypointSelected(self.waypoint.id))
+    def select_first(self) -> None:
+        """Highlight the first waypoint in the tree (for initial preview)."""
+        # Get the first child of root (first waypoint)
+        if self.root.children:
+            first_node = self.root.children[0]
+            # Move cursor to highlight (not select - that opens detail modal)
+            self.move_cursor(first_node)
+            # Emit message for preview update
+            if first_node.data:
+                self.post_message(WaypointSelected(first_node.data.id))
 
 
-class FlightPlanPanel(VerticalScroll):
+class FlightPlanPanel(Vertical):
     """Left panel showing the flight plan tree."""
 
     DEFAULT_CSS = """
@@ -92,48 +154,31 @@ class FlightPlanPanel(VerticalScroll):
         width: 1fr;
         height: 100%;
         border-right: solid $primary-darken-2;
-        padding: 1;
     }
 
     FlightPlanPanel .panel-title {
         text-style: bold;
         color: $primary;
-        padding-bottom: 1;
+        padding: 1;
         border-bottom: solid $surface-lighten-1;
-        margin-bottom: 1;
     }
 
     FlightPlanPanel .legend {
         dock: bottom;
         height: auto;
-        padding-top: 1;
+        padding: 1;
         border-top: solid $surface-lighten-1;
         color: $text-muted;
     }
-
-    FlightPlanPanel .waypoint-list {
-        height: auto;
-    }
     """
 
-    BINDINGS = [
-        Binding("j", "move_down", "Move Down", show=False),
-        Binding("k", "move_up", "Move Up", show=False),
-        Binding("down", "move_down", "Move Down", show=False),
-        Binding("up", "move_up", "Move Up", show=False),
-        Binding("enter", "open_detail", "Open Detail", show=False),
-    ]
-
-    selected_id: reactive[str | None] = reactive(None)
-
-    def __init__(self, flight_plan: FlightPlan | None = None, **kwargs: object) -> None:
+    def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        self._flight_plan = flight_plan or FlightPlan()
-        self._waypoint_items: list[WaypointListItem] = []
+        self._flight_plan: FlightPlan | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("FLIGHT PLAN", classes="panel-title")
-        yield Vertical(id="waypoint-list", classes="waypoint-list")
+        yield FlightPlanTree(id="flight-tree")
         yield Static(
             "◉ Done  ◎ Active  ○ Pending  ◇ Epic", classes="legend"
         )
@@ -141,81 +186,27 @@ class FlightPlanPanel(VerticalScroll):
     def update_flight_plan(self, flight_plan: FlightPlan) -> None:
         """Update the flight plan display."""
         self._flight_plan = flight_plan
-        self._rebuild_list()
+        tree = self.query_one("#flight-tree", FlightPlanTree)
+        tree.update_flight_plan(flight_plan)
 
-    def _rebuild_list(self) -> None:
-        """Rebuild the waypoint list from flight plan."""
-        container = self.query_one("#waypoint-list", Vertical)
+    @property
+    def selected_waypoint(self) -> Waypoint | None:
+        """Get the currently highlighted waypoint."""
+        tree = self.query_one("#flight-tree", FlightPlanTree)
+        if tree.cursor_node and tree.cursor_node.data:
+            return tree.cursor_node.data
+        return None
 
-        # Remove existing items
-        for item in self._waypoint_items:
-            item.remove()
-        self._waypoint_items.clear()
+    @property
+    def selected_id(self) -> str | None:
+        """Get the ID of the currently highlighted waypoint."""
+        wp = self.selected_waypoint
+        return wp.id if wp else None
 
-        # Add new items
-        for waypoint, depth in self._flight_plan.iterate_in_order():
-            is_epic = self._flight_plan.is_epic(waypoint.id)
-            item = WaypointListItem(waypoint, depth, is_epic)
-            if waypoint.id == self.selected_id:
-                item.add_class("selected")
-            self._waypoint_items.append(item)
-            container.mount(item)
-
-    def watch_selected_id(self, old_id: str | None, new_id: str | None) -> None:
-        """Update selection highlighting."""
-        for item in self._waypoint_items:
-            if item.waypoint.id == old_id:
-                item.remove_class("selected")
-            if item.waypoint.id == new_id:
-                item.add_class("selected")
-
-    def on_waypoint_selected(self, event: WaypointSelected) -> None:
-        """Handle waypoint selection from click - let event bubble to screen."""
-        self.selected_id = event.waypoint_id
-        # Don't stop - let it bubble up to ChartScreen
-
-    def action_move_down(self) -> None:
-        """Move selection down."""
-        if not self._waypoint_items:
-            return
-
-        new_id: str | None = None
-        if self.selected_id is None:
-            new_id = self._waypoint_items[0].waypoint.id
-        else:
-            for i, item in enumerate(self._waypoint_items):
-                if item.waypoint.id == self.selected_id:
-                    if i + 1 < len(self._waypoint_items):
-                        new_id = self._waypoint_items[i + 1].waypoint.id
-                    break
-
-        if new_id:
-            self.selected_id = new_id
-            self.post_message(WaypointSelected(new_id))
-
-    def action_move_up(self) -> None:
-        """Move selection up."""
-        if not self._waypoint_items:
-            return
-
-        new_id: str | None = None
-        if self.selected_id is None:
-            new_id = self._waypoint_items[-1].waypoint.id
-        else:
-            for i, item in enumerate(self._waypoint_items):
-                if item.waypoint.id == self.selected_id:
-                    if i > 0:
-                        new_id = self._waypoint_items[i - 1].waypoint.id
-                    break
-
-        if new_id:
-            self.selected_id = new_id
-            self.post_message(WaypointSelected(new_id))
-
-    def action_open_detail(self) -> None:
-        """Open detail modal for selected waypoint."""
-        if self.selected_id:
-            self.post_message(WaypointOpenDetail(self.selected_id))
+    def select_first(self) -> None:
+        """Select the first waypoint in the tree."""
+        tree = self.query_one("#flight-tree", FlightPlanTree)
+        tree.select_first()
 
 
 class WaypointPreviewPanel(VerticalScroll):

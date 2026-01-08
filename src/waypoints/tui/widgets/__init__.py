@@ -3,8 +3,8 @@
 from .dialogue import DialoguePanel, DialogueView, InputBar, MessageWidget
 from .flight_plan import (
     FlightPlanPanel,
+    FlightPlanTree,
     WaypointDetailModal,
-    WaypointListItem,
     WaypointPreviewPanel,
     WaypointSelected,
 )
@@ -16,6 +16,7 @@ __all__ = [
     "DialoguePanel",
     "DialogueView",
     "FlightPlanPanel",
+    "FlightPlanTree",
     "InputBar",
     "MessageWidget",
     "ModelStatusIndicator",
@@ -24,7 +25,6 @@ __all__ = [
     "StatusHeader",
     "StatusIcon",
     "WaypointDetailModal",
-    "WaypointListItem",
     "WaypointPreviewPanel",
     "WaypointSelected",
 ]
