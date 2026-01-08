@@ -823,11 +823,13 @@ class FlyScreen(Screen):
         elif result == ExecutionResult.INTERVENTION_NEEDED:
             log.log_error("Human intervention needed")
             self.execution_state = ExecutionState.INTERVENTION
+            self.query_one(StatusHeader).set_error()
             self.notify("Waypoint needs human intervention", severity="warning")
 
         elif result == ExecutionResult.MAX_ITERATIONS:
             log.log_error("Max iterations reached without completion")
             self.execution_state = ExecutionState.INTERVENTION
+            self.query_one(StatusHeader).set_error()
             self.notify("Max iterations reached", severity="error")
 
         elif result == ExecutionResult.CANCELLED:
@@ -837,6 +839,7 @@ class FlyScreen(Screen):
         else:  # FAILED or None
             log.log_error("Execution failed")
             self.execution_state = ExecutionState.INTERVENTION
+            self.query_one(StatusHeader).set_error()
             self.notify("Waypoint execution failed", severity="error")
 
     def _save_flight_plan(self) -> None:
