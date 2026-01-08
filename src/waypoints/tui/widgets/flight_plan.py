@@ -44,12 +44,13 @@ STATUS_ICONS_BLINK = {
     WaypointStatus.PENDING: ("○", "dim"),
 }
 EPIC_ICON = "◇"
-EPIC_COLOR = "magenta"
+EPIC_COLOR = ""  # Neutral color (same as regular text)
 
 
 def _format_waypoint_label(
     waypoint: Waypoint,
     is_epic: bool = False,
+    epic_progress: tuple[int, int] | None = None,
     width: int = 80,
     blink_visible: bool = True,
 ) -> Text:
@@ -57,7 +58,8 @@ def _format_waypoint_label(
 
     Args:
         waypoint: The waypoint to format.
-        is_epic: Whether this waypoint is an epic.
+        is_epic: Whether this waypoint is an epic (has children).
+        epic_progress: Tuple of (complete_count, total_count) for epics.
         width: Target width for padding (fills with spaces).
         blink_visible: Whether to show the icon (for blink animation).
 
@@ -81,8 +83,15 @@ def _format_waypoint_label(
 
     # Add waypoint ID and title
     id_text = f"{waypoint.id}: "
-    # Calculate max title length (accounting for icon + space + id)
-    used_width = 2 + len(id_text)  # icon + space + id
+
+    # Build progress suffix for epics
+    progress_suffix = ""
+    if is_epic and epic_progress:
+        complete, total = epic_progress
+        progress_suffix = f" ({complete}/{total})"
+
+    # Calculate max title length (accounting for icon + space + id + progress)
+    used_width = 2 + len(id_text) + len(progress_suffix)  # icon + space + id + progress
     max_title_len = width - used_width
 
     title = waypoint.title
@@ -92,8 +101,12 @@ def _format_waypoint_label(
     result.append(id_text)
     result.append(title)
 
+    # Add progress suffix for epics (in dim style)
+    if progress_suffix:
+        result.append(progress_suffix, style="dim")
+
     # Pad to full width
-    current_len = 2 + len(id_text) + len(title)
+    current_len = 2 + len(id_text) + len(title) + len(progress_suffix)
     if current_len < width:
         result.append(" " * (width - current_len))
 
@@ -195,8 +208,22 @@ class FlightPlanTree(Tree[Waypoint]):
             for wp in children_map.get(parent_id, []):
                 fp = self._flight_plan
                 is_epic = fp.is_epic(wp.id) if fp else False
+
+                # Calculate epic progress if this is an epic
+                epic_progress = None
+                if is_epic and fp:
+                    children = fp.get_children(wp.id)
+                    complete = sum(
+                        1 for c in children
+                        if c.status == WaypointStatus.COMPLETE
+                    )
+                    epic_progress = (complete, len(children))
+
                 label = _format_waypoint_label(
-                    wp, is_epic, blink_visible=self._blink_visible
+                    wp,
+                    is_epic=is_epic,
+                    epic_progress=epic_progress,
+                    blink_visible=self._blink_visible,
                 )
 
                 # Check if this waypoint has children
@@ -224,8 +251,22 @@ class FlightPlanTree(Tree[Waypoint]):
             if node.data and node.data.status == WaypointStatus.IN_PROGRESS:
                 fp = self._flight_plan
                 is_epic = fp.is_epic(node.data.id) if fp else False
+
+                # Calculate epic progress if this is an epic
+                epic_progress = None
+                if is_epic and fp:
+                    children = fp.get_children(node.data.id)
+                    complete = sum(
+                        1 for c in children
+                        if c.status == WaypointStatus.COMPLETE
+                    )
+                    epic_progress = (complete, len(children))
+
                 label = _format_waypoint_label(
-                    node.data, is_epic, blink_visible=self._blink_visible
+                    node.data,
+                    is_epic=is_epic,
+                    epic_progress=epic_progress,
+                    blink_visible=self._blink_visible,
                 )
                 node.set_label(label)
             for child in node.children:

@@ -263,9 +263,12 @@ class WaypointDetailPanel(Vertical):
     }
     """
 
-    def __init__(self, project: Project, **kwargs: object) -> None:
+    def __init__(
+        self, project: Project, flight_plan: FlightPlan, **kwargs: object
+    ) -> None:
         super().__init__(**kwargs)
         self._project = project
+        self._flight_plan = flight_plan
         self._waypoint: Waypoint | None = None
         self._showing_output_for: str | None = None  # Track which waypoint's output
         self._is_live_output: bool = False  # True if showing live streaming output
@@ -355,6 +358,11 @@ class WaypointDetailPanel(Vertical):
         self.clear_iteration()
         self._showing_output_for = waypoint.id
         self._is_live_output = False
+
+        # Check if this is an epic (multi-hop waypoint with children)
+        if self._flight_plan.is_epic(waypoint.id):
+            self._show_epic_details(waypoint)
+            return
 
         # Try to load historical execution log for completed/failed waypoints
         if waypoint.status in (WaypointStatus.COMPLETE, WaypointStatus.FAILED):
@@ -447,6 +455,61 @@ class WaypointDetailPanel(Vertical):
                 "Failed to load execution history for %s: %s", waypoint.id, e
             )
             return False
+
+    def _show_epic_details(self, waypoint: Waypoint) -> None:
+        """Display details for an epic (multi-hop waypoint with children).
+
+        Shows the epic's children and their status instead of execution output.
+
+        Args:
+            waypoint: The epic waypoint to display
+        """
+        log = self.log
+        children = self._flight_plan.get_children(waypoint.id)
+
+        log.log_heading("Multi-hop Waypoint")
+        log.log(f"This waypoint contains {len(children)} child tasks.")
+        log.log("")
+
+        # Calculate progress
+        complete = sum(
+            1 for c in children if c.status == WaypointStatus.COMPLETE
+        )
+        failed = sum(1 for c in children if c.status == WaypointStatus.FAILED)
+        in_progress = sum(
+            1 for c in children if c.status == WaypointStatus.IN_PROGRESS
+        )
+
+        # Progress summary
+        if complete == len(children):
+            log.log_success(f"Progress: {complete}/{len(children)} complete")
+        elif failed > 0:
+            log.log(f"Progress: {complete}/{len(children)} complete, {failed} failed")
+        elif in_progress > 0:
+            log.log(f"Progress: {complete}/{len(children)} complete, 1 in progress")
+        else:
+            log.log(f"Progress: {complete}/{len(children)} complete")
+
+        log.log("")
+        log.log("Children:")
+
+        # Status icons
+        status_icons = {
+            WaypointStatus.COMPLETE: ("◉", "green"),
+            WaypointStatus.IN_PROGRESS: ("◎", "cyan"),
+            WaypointStatus.FAILED: ("✗", "red"),
+            WaypointStatus.PENDING: ("○", "dim"),
+        }
+
+        # Show each child
+        for child in children:
+            icon, style = status_icons.get(child.status, ("○", "dim"))
+            status_label = child.status.value.replace("_", " ").lower()
+            text = Text()
+            text.append(f"  {icon} ", style=style)
+            text.append(f"{child.id}: {child.title}")
+            text.append(f" ({status_label})", style="dim")
+            log.write(text)
 
     def update_iteration(self, iteration: int, total: int) -> None:
         """Update the iteration display."""
@@ -668,7 +731,11 @@ class FlyScreen(Screen):
         yield StatusHeader()
         with Horizontal(classes="main-container"):
             yield WaypointListPanel(id="waypoint-list")
-            yield WaypointDetailPanel(project=self.project, id="waypoint-detail")
+            yield WaypointDetailPanel(
+                project=self.project,
+                flight_plan=self.flight_plan,
+                id="waypoint-detail",
+            )
         yield Static(
             "Press Space to start execution", classes="status-bar", id="status-bar"
         )
