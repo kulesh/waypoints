@@ -5,7 +5,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Markdown, Static, Tree
+from textual.widgets import Button, Input, Markdown, Static, TextArea, Tree
 from textual.widgets.tree import TreeNode
 
 from waypoints.models.flight_plan import FlightPlan
@@ -473,13 +473,439 @@ class WaypointDetailModal(ModalScreen[bool]):
         self.dismiss(False)
 
     def action_edit(self) -> None:
-        """Edit waypoint (placeholder)."""
-        self.app.notify("Edit not yet implemented")
+        """Edit waypoint - handled by parent screen."""
+        self.dismiss(False)
+        self.app.post_message(WaypointRequestEdit(self.waypoint))
 
     def action_break_down(self) -> None:
-        """Break down waypoint (placeholder)."""
-        self.app.notify("Break down not yet implemented")
+        """Break down waypoint - handled by parent screen."""
+        self.dismiss(False)
+        self.app.post_message(WaypointRequestBreakDown(self.waypoint))
 
     def action_delete(self) -> None:
-        """Delete waypoint (placeholder)."""
-        self.app.notify("Delete not yet implemented")
+        """Delete waypoint - handled by parent screen."""
+        self.dismiss(False)
+        self.app.post_message(WaypointRequestDelete(self.waypoint.id))
+
+
+class WaypointRequestDelete(Message):
+    """Request to delete a waypoint (bubbles up to screen)."""
+
+    def __init__(self, waypoint_id: str) -> None:
+        self.waypoint_id = waypoint_id
+        super().__init__()
+
+
+class WaypointRequestEdit(Message):
+    """Request to edit a waypoint (bubbles up to screen)."""
+
+    def __init__(self, waypoint: Waypoint) -> None:
+        self.waypoint = waypoint
+        super().__init__()
+
+
+class WaypointRequestBreakDown(Message):
+    """Request to break down a waypoint (bubbles up to screen)."""
+
+    def __init__(self, waypoint: Waypoint) -> None:
+        self.waypoint = waypoint
+        super().__init__()
+
+
+class ConfirmDeleteModal(ModalScreen[bool]):
+    """Confirmation modal for deleting a waypoint."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("enter", "confirm", "Confirm", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    ConfirmDeleteModal {
+        align: center middle;
+    }
+
+    ConfirmDeleteModal > Vertical {
+        width: 60;
+        height: auto;
+        max-height: 20;
+        background: $surface;
+        border: thick $error;
+        padding: 1 2;
+    }
+
+    ConfirmDeleteModal .modal-title {
+        text-style: bold;
+        color: $error;
+        text-align: center;
+        padding-bottom: 1;
+        margin-bottom: 1;
+    }
+
+    ConfirmDeleteModal .modal-content {
+        height: auto;
+        padding: 0 1;
+    }
+
+    ConfirmDeleteModal .waypoint-info {
+        margin-bottom: 1;
+    }
+
+    ConfirmDeleteModal .warning {
+        color: $warning;
+        margin-top: 1;
+    }
+
+    ConfirmDeleteModal .modal-actions {
+        dock: bottom;
+        height: auto;
+        padding-top: 1;
+        align: center middle;
+    }
+
+    ConfirmDeleteModal Button {
+        margin: 0 1;
+    }
+    """
+
+    def __init__(
+        self,
+        waypoint_id: str,
+        waypoint_title: str,
+        has_children: bool = False,
+        dependents: list[str] | None = None,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.waypoint_id = waypoint_id
+        self.waypoint_title = waypoint_title
+        self.has_children = has_children
+        self.dependents = dependents or []
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Delete Waypoint?", classes="modal-title")
+            with Vertical(classes="modal-content"):
+                yield Static(
+                    f"{self.waypoint_id}: {self.waypoint_title}",
+                    classes="waypoint-info",
+                )
+                if self.has_children:
+                    yield Static(
+                        "⚠ This epic has sub-waypoints that will be orphaned.",
+                        classes="warning",
+                    )
+                if self.dependents:
+                    deps = ", ".join(self.dependents[:3])
+                    if len(self.dependents) > 3:
+                        deps += f" +{len(self.dependents) - 3} more"
+                    yield Static(
+                        f"⚠ {deps} depend on this waypoint.",
+                        classes="warning",
+                    )
+            with Horizontal(classes="modal-actions"):
+                yield Button("Delete", id="btn-delete", variant="error")
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "btn-delete":
+            self.dismiss(True)
+        else:
+            self.dismiss(False)
+
+    def action_confirm(self) -> None:
+        """Confirm deletion."""
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        """Cancel deletion."""
+        self.dismiss(False)
+
+
+class WaypointUpdated(Message):
+    """Waypoint was updated."""
+
+    def __init__(self, waypoint: Waypoint) -> None:
+        self.waypoint = waypoint
+        super().__init__()
+
+
+class WaypointEditModal(ModalScreen[Waypoint | None]):
+    """Modal for editing waypoint details."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+s", "save", "Save", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    WaypointEditModal {
+        align: center middle;
+    }
+
+    WaypointEditModal > Vertical {
+        width: 80%;
+        max-width: 100;
+        height: auto;
+        max-height: 90%;
+        background: $surface;
+        border: thick $surface-lighten-2;
+        padding: 1 2;
+    }
+
+    WaypointEditModal .modal-title {
+        text-style: bold;
+        color: $text;
+        text-align: center;
+        padding-bottom: 1;
+        border-bottom: solid $surface-lighten-1;
+        margin-bottom: 1;
+    }
+
+    WaypointEditModal .form-content {
+        height: auto;
+        max-height: 40;
+        padding: 0 1;
+    }
+
+    WaypointEditModal .field-label {
+        margin-top: 1;
+        margin-bottom: 0;
+        color: $text-muted;
+    }
+
+    WaypointEditModal Input {
+        margin-bottom: 1;
+    }
+
+    WaypointEditModal TextArea {
+        height: 6;
+        margin-bottom: 1;
+    }
+
+    WaypointEditModal .criteria-area {
+        height: 8;
+    }
+
+    WaypointEditModal .hint {
+        color: $text-disabled;
+        text-style: italic;
+        margin-bottom: 1;
+    }
+
+    WaypointEditModal .modal-actions {
+        dock: bottom;
+        height: auto;
+        padding-top: 1;
+        border-top: solid $surface-lighten-1;
+        align: center middle;
+    }
+
+    WaypointEditModal Button {
+        margin: 0 1;
+    }
+    """
+
+    def __init__(self, waypoint: Waypoint, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self.waypoint = waypoint
+        self._original_waypoint = waypoint
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(f"Edit {self.waypoint.id}", classes="modal-title")
+            with VerticalScroll(classes="form-content"):
+                yield Static("Title", classes="field-label")
+                yield Input(
+                    value=self.waypoint.title,
+                    placeholder="Waypoint title",
+                    id="input-title",
+                )
+
+                yield Static("Objective", classes="field-label")
+                yield TextArea(
+                    self.waypoint.objective,
+                    id="input-objective",
+                )
+
+                yield Static("Acceptance Criteria", classes="field-label")
+                yield Static(
+                    "One criterion per line", classes="hint"
+                )
+                criteria_text = "\n".join(self.waypoint.acceptance_criteria)
+                yield TextArea(
+                    criteria_text,
+                    id="input-criteria",
+                    classes="criteria-area",
+                )
+
+            with Horizontal(classes="modal-actions"):
+                yield Button("Save", id="btn-save", variant="primary")
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "btn-save":
+            self.action_save()
+        else:
+            self.action_cancel()
+
+    def action_save(self) -> None:
+        """Save changes and dismiss."""
+        title_input = self.query_one("#input-title", Input)
+        objective_area = self.query_one("#input-objective", TextArea)
+        criteria_area = self.query_one("#input-criteria", TextArea)
+
+        # Get values
+        new_title = title_input.value.strip()
+        new_objective = objective_area.text.strip()
+        criteria_lines = criteria_area.text.strip().split("\n")
+        new_criteria = [c.strip() for c in criteria_lines if c.strip()]
+
+        # Validate
+        if not new_title:
+            self.app.notify("Title is required", severity="error")
+            return
+        if not new_objective:
+            self.app.notify("Objective is required", severity="error")
+            return
+
+        # Create updated waypoint
+        updated = Waypoint(
+            id=self.waypoint.id,
+            title=new_title,
+            objective=new_objective,
+            acceptance_criteria=new_criteria,
+            parent_id=self.waypoint.parent_id,
+            dependencies=self.waypoint.dependencies,
+            status=self.waypoint.status,
+            created_at=self.waypoint.created_at,
+            completed_at=self.waypoint.completed_at,
+        )
+
+        self.dismiss(updated)
+
+    def action_cancel(self) -> None:
+        """Cancel editing."""
+        self.dismiss(None)
+
+
+class BreakDownPreviewModal(ModalScreen[bool]):
+    """Modal showing generated sub-waypoints for confirmation."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("enter", "confirm", "Confirm", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    BreakDownPreviewModal {
+        align: center middle;
+    }
+
+    BreakDownPreviewModal > Vertical {
+        width: 80%;
+        max-width: 100;
+        height: auto;
+        max-height: 80%;
+        background: $surface;
+        border: thick $surface-lighten-2;
+        padding: 1 2;
+    }
+
+    BreakDownPreviewModal .modal-title {
+        text-style: bold;
+        color: $text;
+        text-align: center;
+        padding-bottom: 1;
+        border-bottom: solid $surface-lighten-1;
+        margin-bottom: 1;
+    }
+
+    BreakDownPreviewModal .modal-content {
+        height: auto;
+        max-height: 40;
+        padding: 0 1;
+    }
+
+    BreakDownPreviewModal .parent-info {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    BreakDownPreviewModal .sub-waypoint {
+        margin-bottom: 1;
+        padding: 1;
+        background: $surface-lighten-1;
+    }
+
+    BreakDownPreviewModal .sub-title {
+        text-style: bold;
+    }
+
+    BreakDownPreviewModal .sub-objective {
+        color: $text-muted;
+    }
+
+    BreakDownPreviewModal .modal-actions {
+        dock: bottom;
+        height: auto;
+        padding-top: 1;
+        border-top: solid $surface-lighten-1;
+        align: center middle;
+    }
+
+    BreakDownPreviewModal Button {
+        margin: 0 1;
+    }
+    """
+
+    def __init__(
+        self,
+        parent_waypoint: Waypoint,
+        sub_waypoints: list[Waypoint],
+        **kwargs: object,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.parent_waypoint = parent_waypoint
+        self.sub_waypoints = sub_waypoints
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Add Sub-Waypoints?", classes="modal-title")
+            with VerticalScroll(classes="modal-content"):
+                parent_label = (
+                    f"Breaking down: {self.parent_waypoint.id} - "
+                    f"{self.parent_waypoint.title}"
+                )
+                yield Static(parent_label, classes="parent-info")
+                for wp in self.sub_waypoints:
+                    with Vertical(classes="sub-waypoint"):
+                        yield Static(f"{wp.id}: {wp.title}", classes="sub-title")
+                        objective = wp.objective
+                        if len(objective) > 80:
+                            objective = objective[:77] + "..."
+                        yield Static(objective, classes="sub-objective")
+            with Horizontal(classes="modal-actions"):
+                yield Button(
+                    f"Add {len(self.sub_waypoints)} Sub-Waypoints",
+                    id="btn-confirm",
+                    variant="primary",
+                )
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "btn-confirm":
+            self.dismiss(True)
+        else:
+            self.dismiss(False)
+
+    def action_confirm(self) -> None:
+        """Confirm adding sub-waypoints."""
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        """Cancel."""
+        self.dismiss(False)

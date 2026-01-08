@@ -38,10 +38,30 @@ class FlightPlan:
         """Check if a waypoint has children (is a multi-hop waypoint)."""
         return any(wp.parent_id == waypoint_id for wp in self.waypoints)
 
+    def get_dependents(self, waypoint_id: str) -> list[Waypoint]:
+        """Get waypoints that depend on this one."""
+        return [wp for wp in self.waypoints if waypoint_id in wp.dependencies]
+
     def add_waypoint(self, waypoint: Waypoint) -> None:
         """Add a waypoint to the plan."""
         self.waypoints.append(waypoint)
         self.updated_at = datetime.now()
+
+    def update_waypoint(self, waypoint: Waypoint) -> bool:
+        """Update an existing waypoint.
+
+        Args:
+            waypoint: The waypoint with updated fields.
+
+        Returns:
+            True if waypoint was found and updated, False otherwise.
+        """
+        for i, wp in enumerate(self.waypoints):
+            if wp.id == waypoint.id:
+                self.waypoints[i] = waypoint
+                self.updated_at = datetime.now()
+                return True
+        return False
 
     def remove_waypoint(self, waypoint_id: str) -> None:
         """Remove a waypoint and update dependencies."""

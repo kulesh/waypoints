@@ -18,15 +18,48 @@ from waypoints.models.flight_plan import FlightPlan, FlightPlanReader, FlightPla
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.flight_plan import (
+    BreakDownPreviewModal,
+    ConfirmDeleteModal,
     FlightPlanPanel,
     WaypointDetailModal,
+    WaypointEditModal,
     WaypointOpenDetail,
     WaypointPreviewPanel,
+    WaypointRequestBreakDown,
+    WaypointRequestDelete,
+    WaypointRequestEdit,
     WaypointSelected,
 )
 from waypoints.tui.widgets.header import StatusHeader
 
 logger = logging.getLogger(__name__)
+
+WAYPOINT_BREAKDOWN_PROMPT = """\
+Break down the following waypoint into 2-5 smaller sub-waypoints.
+
+Parent Waypoint:
+- ID: {parent_id}
+- Title: {title}
+- Objective: {objective}
+- Acceptance Criteria: {criteria}
+
+Each sub-waypoint should:
+1. Be independently testable
+2. Have clear acceptance criteria
+3. Be appropriately sized (1-3 hours of focused work)
+4. Together fully cover the parent waypoint's objective
+
+Output as a JSON array. Each sub-waypoint has:
+- id: String like "{parent_id}a", "{parent_id}b", etc.
+- title: Brief descriptive title
+- objective: What this sub-waypoint accomplishes
+- acceptance_criteria: Array of testable criteria
+- parent_id: "{parent_id}" (the parent waypoint ID)
+- dependencies: Array of sibling waypoint IDs this depends on (or empty)
+
+Output ONLY the JSON array, no markdown code blocks or other text.
+
+Generate the sub-waypoints JSON now:"""
 
 WAYPOINT_GENERATION_PROMPT = """\
 Based on the Product Specification below, generate a flight plan of waypoints
@@ -293,16 +326,195 @@ class ChartScreen(Screen):
         if plan_panel.selected_id and self.flight_plan:
             waypoint = self.flight_plan.get_waypoint(plan_panel.selected_id)
             if waypoint:
-                is_epic = self.flight_plan.is_epic(plan_panel.selected_id)
-                self.app.push_screen(WaypointDetailModal(waypoint, is_epic))
+                self._show_edit_modal(waypoint)
+
+    def on_waypoint_request_edit(self, event: WaypointRequestEdit) -> None:
+        """Handle edit request from detail modal."""
+        self._show_edit_modal(event.waypoint)
+
+    def _show_edit_modal(self, waypoint: Waypoint) -> None:
+        """Show edit modal for a waypoint."""
+
+        def handle_edit(updated: Waypoint | None) -> None:
+            if updated:
+                self._save_waypoint(updated)
+
+        self.app.push_screen(WaypointEditModal(waypoint), handle_edit)
+
+    def _save_waypoint(self, waypoint: Waypoint) -> None:
+        """Save an updated waypoint."""
+        if not self.flight_plan:
+            return
+
+        self.flight_plan.update_waypoint(waypoint)
+
+        # Save to disk
+        writer = FlightPlanWriter(self.project)
+        writer.save(self.flight_plan)
+
+        # Refresh the tree
+        self._update_panels()
+        self.notify(f"Updated {waypoint.id}")
 
     def action_break_down(self) -> None:
         """Break down selected waypoint into sub-waypoints."""
-        self.notify("Break down not yet implemented")
+        plan_panel = self.query_one("#flight-plan-panel", FlightPlanPanel)
+        if plan_panel.selected_id and self.flight_plan:
+            waypoint = self.flight_plan.get_waypoint(plan_panel.selected_id)
+            if waypoint:
+                self._start_break_down(waypoint)
+
+    def on_waypoint_request_break_down(self, event: WaypointRequestBreakDown) -> None:
+        """Handle break down request from detail modal."""
+        self._start_break_down(event.waypoint)
+
+    def _start_break_down(self, waypoint: Waypoint) -> None:
+        """Start the break down process for a waypoint."""
+        # Check if already an epic
+        if self.flight_plan and self.flight_plan.is_epic(waypoint.id):
+            self.notify(
+                f"{waypoint.id} already has sub-waypoints", severity="warning"
+            )
+            return
+
+        self.notify(f"Breaking down {waypoint.id}...")
+        self._generate_sub_waypoints(waypoint)
+
+    @work(thread=True)
+    def _generate_sub_waypoints(self, parent: Waypoint) -> None:
+        """Generate sub-waypoints via LLM."""
+        criteria_str = "\n".join(f"- {c}" for c in parent.acceptance_criteria)
+        if not criteria_str:
+            criteria_str = "(none specified)"
+
+        prompt = WAYPOINT_BREAKDOWN_PROMPT.format(
+            parent_id=parent.id,
+            title=parent.title,
+            objective=parent.objective,
+            criteria=criteria_str,
+        )
+
+        self.app.call_from_thread(self._set_thinking, True)
+
+        try:
+            system_prompt = (
+                "You are a technical project planner. Break down waypoints into "
+                "smaller, independently testable tasks. Output valid JSON only."
+            )
+
+            full_response = ""
+            for chunk in self.llm_client.stream_message(
+                messages=[{"role": "user", "content": prompt}],
+                system=system_prompt,
+            ):
+                full_response += chunk
+
+            # Parse the sub-waypoints
+            sub_waypoints = self._parse_waypoints(full_response)
+
+            # Ensure all have correct parent_id
+            for wp in sub_waypoints:
+                wp.parent_id = parent.id
+
+            # Show preview modal
+            self.app.call_from_thread(
+                self._show_break_down_preview, parent, sub_waypoints
+            )
+
+        except Exception as e:
+            logger.exception("Error generating sub-waypoints: %s", e)
+            self.app.call_from_thread(
+                self.notify, f"Error: {e}", severity="error"
+            )
+
+        self.app.call_from_thread(self._set_thinking, False)
+
+    def _show_break_down_preview(
+        self, parent: Waypoint, sub_waypoints: list[Waypoint]
+    ) -> None:
+        """Show the break down preview modal."""
+        if not sub_waypoints:
+            self.notify("No sub-waypoints generated", severity="warning")
+            return
+
+        def handle_confirm(confirmed: bool | None) -> None:
+            if confirmed:
+                self._add_sub_waypoints(parent, sub_waypoints)
+
+        self.app.push_screen(
+            BreakDownPreviewModal(parent, sub_waypoints),
+            handle_confirm,
+        )
+
+    def _add_sub_waypoints(
+        self, parent: Waypoint, sub_waypoints: list[Waypoint]
+    ) -> None:
+        """Add sub-waypoints to the flight plan."""
+        if not self.flight_plan:
+            return
+
+        for wp in sub_waypoints:
+            self.flight_plan.add_waypoint(wp)
+
+        # Save to disk
+        writer = FlightPlanWriter(self.project)
+        writer.save(self.flight_plan)
+
+        # Refresh the tree
+        self._update_panels()
+        self.notify(f"Added {len(sub_waypoints)} sub-waypoints to {parent.id}")
 
     def action_delete_waypoint(self) -> None:
         """Delete selected waypoint."""
-        self.notify("Delete not yet implemented")
+        plan_panel = self.query_one("#flight-plan-panel", FlightPlanPanel)
+        if plan_panel.selected_id and self.flight_plan:
+            self._show_delete_confirmation(plan_panel.selected_id)
+
+    def on_waypoint_request_delete(self, event: WaypointRequestDelete) -> None:
+        """Handle delete request from detail modal."""
+        self._show_delete_confirmation(event.waypoint_id)
+
+    def _show_delete_confirmation(self, waypoint_id: str) -> None:
+        """Show delete confirmation modal for a waypoint."""
+        if not self.flight_plan:
+            return
+
+        waypoint = self.flight_plan.get_waypoint(waypoint_id)
+        if not waypoint:
+            return
+
+        has_children = self.flight_plan.is_epic(waypoint_id)
+        dependents = self.flight_plan.get_dependents(waypoint_id)
+        dependent_ids = [wp.id for wp in dependents]
+
+        def handle_delete(confirmed: bool | None) -> None:
+            if confirmed:
+                self._delete_waypoint(waypoint_id)
+
+        self.app.push_screen(
+            ConfirmDeleteModal(
+                waypoint_id=waypoint_id,
+                waypoint_title=waypoint.title,
+                has_children=has_children,
+                dependents=dependent_ids,
+            ),
+            handle_delete,
+        )
+
+    def _delete_waypoint(self, waypoint_id: str) -> None:
+        """Actually delete the waypoint and refresh UI."""
+        if not self.flight_plan:
+            return
+
+        self.flight_plan.remove_waypoint(waypoint_id)
+
+        # Save to disk
+        writer = FlightPlanWriter(self.project)
+        writer.save(self.flight_plan)
+
+        # Refresh the tree
+        self._update_panels()
+        self.notify(f"Deleted {waypoint_id}")
 
     def action_help(self) -> None:
         """Show help overlay."""
