@@ -341,6 +341,21 @@ class WaypointListPanel(Vertical):
         super().__init__(**kwargs)
         self._flight_plan: FlightPlan | None = None
         self._execution_state: ExecutionState = ExecutionState.IDLE
+        self._blink_visible: bool = True
+        self._blink_timer: object = None
+
+    def on_mount(self) -> None:
+        """Start the blink timer."""
+        self._blink_timer = self.set_interval(0.5, self._toggle_blink)
+
+    def _toggle_blink(self) -> None:
+        """Toggle blink state for running indicator."""
+        if self._execution_state == ExecutionState.RUNNING:
+            self._blink_visible = not self._blink_visible
+            self._update_overall_progress()
+        elif not self._blink_visible:
+            # Reset to visible when not running
+            self._blink_visible = True
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="panel-header"):
@@ -407,7 +422,15 @@ class WaypointListPanel(Vertical):
             self._execution_state, ("", "")
         )
         if state_text:
-            text.append(state_text, style=state_style)
+            # Blink the play button when running
+            if (
+                self._execution_state == ExecutionState.RUNNING
+                and not self._blink_visible
+            ):
+                # Show just "Running" without the play symbol
+                text.append("   Running", style=state_style)
+            else:
+                text.append(state_text, style=state_style)
 
         progress_widget = self.query_one("#overall-progress", Static)
         progress_widget.update(text)
