@@ -1,5 +1,6 @@
 """Flight plan widgets for CHART phase."""
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -28,19 +29,20 @@ class WaypointOpenDetail(Message):
         super().__init__()
 
 
-# Status icons for waypoints
+# Status icons and colors for waypoints
 STATUS_ICONS = {
-    WaypointStatus.COMPLETE: "◉",
-    WaypointStatus.IN_PROGRESS: "◎",
-    WaypointStatus.PENDING: "○",
+    WaypointStatus.COMPLETE: ("◉", "green"),
+    WaypointStatus.IN_PROGRESS: ("◎", "bold cyan"),
+    WaypointStatus.PENDING: ("○", "dim"),
 }
 # Blink state icon (shown when blinking is "off")
 STATUS_ICONS_BLINK = {
-    WaypointStatus.COMPLETE: "◉",
-    WaypointStatus.IN_PROGRESS: " ",  # Blinks to empty
-    WaypointStatus.PENDING: "○",
+    WaypointStatus.COMPLETE: ("◉", "green"),
+    WaypointStatus.IN_PROGRESS: (" ", ""),  # Blinks to empty
+    WaypointStatus.PENDING: ("○", "dim"),
 }
 EPIC_ICON = "◇"
+EPIC_COLOR = "magenta"
 
 
 def _format_waypoint_label(
@@ -48,7 +50,7 @@ def _format_waypoint_label(
     is_epic: bool = False,
     width: int = 80,
     blink_visible: bool = True,
-) -> str:
+) -> Text:
     """Format a waypoint for display in the tree.
 
     Args:
@@ -56,22 +58,44 @@ def _format_waypoint_label(
         is_epic: Whether this waypoint is an epic.
         width: Target width for padding (fills with spaces).
         blink_visible: Whether to show the icon (for blink animation).
+
+    Returns:
+        Rich Text object with colored icon.
     """
+    result = Text()
+
+    # Get icon and color based on status
     if is_epic:
         icon = EPIC_ICON
+        icon_color = EPIC_COLOR
     elif blink_visible:
-        icon = STATUS_ICONS[waypoint.status]
+        icon, icon_color = STATUS_ICONS[waypoint.status]
     else:
-        icon = STATUS_ICONS_BLINK[waypoint.status]
-    # Calculate available space for title (width - icon - space - id - colon - space)
-    id_prefix = f"{icon} {waypoint.id}: "
-    max_title_len = width - len(id_prefix)
+        icon, icon_color = STATUS_ICONS_BLINK[waypoint.status]
+
+    # Add colored icon
+    result.append(icon, style=icon_color)
+    result.append(" ")
+
+    # Add waypoint ID and title
+    id_text = f"{waypoint.id}: "
+    # Calculate max title length (accounting for icon + space + id)
+    used_width = 2 + len(id_text)  # icon + space + id
+    max_title_len = width - used_width
+
     title = waypoint.title
     if len(title) > max_title_len:
         title = title[: max_title_len - 3] + "..."
-    label = f"{id_prefix}{title}"
+
+    result.append(id_text)
+    result.append(title)
+
     # Pad to full width
-    return label.ljust(width)
+    current_len = 2 + len(id_text) + len(title)
+    if current_len < width:
+        result.append(" " * (width - current_len))
+
+    return result
 
 
 class FlightPlanTree(Tree[Waypoint]):
