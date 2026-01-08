@@ -2,14 +2,18 @@
 """Test FlyScreen with an existing project's flight plan.
 
 This script loads an existing project and its flight plan, then launches
-the FLY screen with code generation sandboxed to a specified output folder.
+the FLY screen with code generation in the workspace folder.
 
 Usage:
-    python scripts/test_fly_screen.py <output-folder> <project-name>
+    python scripts/test_fly_screen.py <workspace-folder> <project-name>
+
+Arguments:
+    workspace-folder  Folder containing .waypoints/projects/ (also used for output)
+    project-name      Name or slug of existing project to load
 
 Examples:
-    python scripts/test_fly_screen.py /tmp/fly-test my-project
-    python scripts/test_fly_screen.py ~/sandbox/test ai-task-manager
+    python scripts/test_fly_screen.py .waypoints/src2 avaiator
+    python scripts/test_fly_screen.py ~/my-workspace my-project
 """
 
 import os
@@ -162,36 +166,44 @@ def load_spec(project: Project) -> str:
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: test_fly_screen.py <output-folder> <project-name>")
+        print("Usage: test_fly_screen.py <workspace-folder> <project-name>")
         print()
         print("Arguments:")
-        print("  output-folder  Folder where generated code will be placed")
-        print("  project-name   Name or slug of existing project to load")
+        print("  workspace-folder  Folder containing .waypoints/projects/")
+        print("  project-name      Name or slug of existing project to load")
         print()
         print("Examples:")
-        print("  python scripts/test_fly_screen.py /tmp/fly-test my-project")
-        print("  python scripts/test_fly_screen.py ~/sandbox/test ai-task-manager")
+        print("  python scripts/test_fly_screen.py .waypoints/src2 avaiator")
+        print("  python scripts/test_fly_screen.py ~/my-workspace my-project")
         print()
 
-        # List available projects
+        # List available projects in cwd
         all_projects = Project.list_all()
         if all_projects:
-            print("Available projects:")
+            print("Available projects in current directory:")
             for p in all_projects:
                 print(f"  - {p.slug} ({p.name})")
 
         sys.exit(1)
 
-    output_folder = Path(sys.argv[1]).resolve()
+    workspace_folder = Path(sys.argv[1]).resolve()
     project_name = sys.argv[2]
 
-    # Load project data (from current waypoints workspace)
+    # Change to workspace folder FIRST so project paths resolve correctly
+    if not workspace_folder.exists():
+        print(f"Workspace folder not found: {workspace_folder}")
+        sys.exit(1)
+
+    print(f"Workspace: {workspace_folder}")
+    os.chdir(workspace_folder)
+
+    # Load project data from the workspace
     project = load_project(project_name)
     flight_plan = load_flight_plan(project)
     spec = load_spec(project)
 
-    # Set up output folder
-    setup_output_folder(output_folder)
+    # Set up output folder (same as workspace)
+    setup_output_folder(workspace_folder)
 
     print()
     print("Waypoints to execute:")
@@ -207,15 +219,12 @@ def main():
         print(f"  {marker} {wp.id}: {wp.title}{deps}")
 
     print()
-    print(f"Output folder: {output_folder}")
-    print(f"Source code will be generated in: {output_folder}/src/")
+    print(f"Workspace: {workspace_folder}")
+    print(f"Source code will be generated in: {workspace_folder}/src/")
     print()
     print("Launching FlyScreen...")
-    print("Press Space to start execution, Ctrl+Q to quit")
+    print("Press 'r' to start execution, Ctrl+Q to quit")
     print()
-
-    # Change to output folder so generated code goes there
-    os.chdir(output_folder)
 
     app = TestFlyApp(
         project=project,
@@ -225,7 +234,7 @@ def main():
     app.run()
 
     print()
-    print(f"Done. Check {output_folder}/src/ for generated files.")
+    print(f"Done. Check {workspace_folder}/src/ for generated files.")
 
 
 if __name__ == "__main__":
