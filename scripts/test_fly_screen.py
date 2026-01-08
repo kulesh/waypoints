@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
-"""Test FlyScreen directly with a sandboxed output folder.
+"""Test FlyScreen with an existing project's flight plan.
 
-This script creates a test environment in a specified folder and launches
-the FLY screen for testing agentic waypoint execution without polluting
-the main source tree.
+This script loads an existing project and its flight plan, then launches
+the FLY screen with code generation sandboxed to a specified output folder.
 
 Usage:
-    python scripts/test_fly_screen.py <output-folder> [spec-file.md]
+    python scripts/test_fly_screen.py <output-folder> <project-name>
 
 Examples:
-    python scripts/test_fly_screen.py /tmp/fly-test
-    python scripts/test_fly_screen.py /tmp/fly-test docs/product-spec.md
+    python scripts/test_fly_screen.py /tmp/fly-test my-project
+    python scripts/test_fly_screen.py ~/sandbox/test ai-task-manager
 """
 
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 
 # Add src to path for imports
@@ -24,54 +22,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from textual.app import App
 from textual.binding import Binding
 
-from waypoints.models.flight_plan import FlightPlan
+from waypoints.models.flight_plan import FlightPlanReader
 from waypoints.models.project import Project
-from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.tui.screens.fly import FlyScreen
-
-# Sample spec for testing
-DEFAULT_SPEC = """# Test Project Specification
-
-## Overview
-A simple Python utility for greeting users.
-
-## Requirements
-- Create a greet.py module with a `greet(name)` function
-- The function should return "Hello, {name}!"
-- Add a main block that greets "World" by default
-
-## Technical Details
-- Python 3.10+
-- No external dependencies
-- Include basic tests
-"""
-
-# Sample waypoints for testing
-DEFAULT_WAYPOINTS = [
-    {
-        "id": "WP-001",
-        "title": "Create greeting module",
-        "objective": "Create a Python module with a greet function",
-        "acceptance_criteria": [
-            "File greet.py exists",
-            "Function greet(name) returns 'Hello, {name}!'",
-            "Module has a main block that prints greeting",
-        ],
-        "dependencies": [],
-    },
-    {
-        "id": "WP-002",
-        "title": "Add tests",
-        "objective": "Create pytest tests for the greeting module",
-        "acceptance_criteria": [
-            "File test_greet.py exists",
-            "Test verifies greet('World') returns 'Hello, World!'",
-            "Test verifies greet('Alice') returns 'Hello, Alice!'",
-            "All tests pass with pytest",
-        ],
-        "dependencies": ["WP-001"],
-    },
-]
 
 
 class TestFlyApp(App):
@@ -93,7 +46,7 @@ class TestFlyApp(App):
     def __init__(
         self,
         project: Project,
-        flight_plan: FlightPlan,
+        flight_plan,
         spec: str,
     ):
         super().__init__()
@@ -117,129 +70,152 @@ class TestFlyApp(App):
             self.exit()
 
 
-def setup_test_environment(output_folder: Path) -> None:
-    """Set up the test folder structure."""
+def setup_output_folder(output_folder: Path) -> None:
+    """Set up the output folder with src/ directory."""
     output_folder.mkdir(parents=True, exist_ok=True)
 
-    # Create .waypoints directory structure
-    waypoints_dir = output_folder / ".waypoints"
-    waypoints_dir.mkdir(exist_ok=True)
-    (waypoints_dir / "projects").mkdir(exist_ok=True)
+    # Create src/ directory for generated code
+    src_dir = output_folder / "src"
+    src_dir.mkdir(exist_ok=True)
 
-    # Create a simple README in the output folder
+    # Create a simple README
     readme = output_folder / "README.md"
     if not readme.exists():
         readme.write_text(
-            "# Test Project\n\n"
-            "This folder is used for testing FLY screen waypoint execution.\n"
+            "# FLY Test Output\n\n"
+            "This folder contains code generated during FLY screen testing.\n"
+            "Generated source code is in the `src/` directory.\n"
         )
 
-    print(f"✓ Set up test environment in {output_folder}")
+    print(f"✓ Output folder ready: {output_folder}")
+    print(f"  Source code will be generated in: {src_dir}")
 
 
-def create_test_project(output_folder: Path, name: str = "fly-test") -> Project:
-    """Create a test project in the output folder."""
-    # Change to output folder so Project creates files there
-    original_cwd = Path.cwd()
-    os.chdir(output_folder)
-
+def load_project(project_name: str) -> Project:
+    """Load an existing project by name/slug."""
+    # Try loading by slug first
     try:
-        project = Project.create(name=name, idea="Test project for FLY screen")
-        print(f"✓ Created project: {project.name} ({project.slug})")
+        project = Project.load(project_name)
+        print(f"✓ Loaded project: {project.name} ({project.slug})")
         return project
-    finally:
-        os.chdir(original_cwd)
+    except FileNotFoundError:
+        pass
+
+    # Try to find by name in all projects
+    all_projects = Project.list_all()
+    for p in all_projects:
+        if p.name.lower() == project_name.lower():
+            print(f"✓ Loaded project: {p.name} ({p.slug})")
+            return p
+        if p.slug == project_name.lower():
+            print(f"✓ Loaded project: {p.name} ({p.slug})")
+            return p
+
+    # List available projects
+    print(f"Project not found: {project_name}")
+    if all_projects:
+        print("\nAvailable projects:")
+        for p in all_projects:
+            print(f"  - {p.slug} ({p.name})")
+    else:
+        print("\nNo projects found. Create one first with: uv run waypoints")
+    sys.exit(1)
 
 
-def create_test_flight_plan(
-    project: Project,
-    waypoints_data: list[dict],
-    output_folder: Path,
-) -> FlightPlan:
-    """Create a test flight plan with sample waypoints."""
-    waypoints = []
-    for wp_data in waypoints_data:
-        wp = Waypoint(
-            id=wp_data["id"],
-            title=wp_data["title"],
-            objective=wp_data["objective"],
-            acceptance_criteria=wp_data.get("acceptance_criteria", []),
-            dependencies=wp_data.get("dependencies", []),
-            status=WaypointStatus.PENDING,
-            created_at=datetime.now(),
-        )
-        waypoints.append(wp)
+def load_flight_plan(project: Project):
+    """Load the flight plan for a project."""
+    reader = FlightPlanReader(project)
+    flight_plan = reader.load()
 
-    flight_plan = FlightPlan(
-        project_slug=project.slug,
-        waypoints=waypoints,
-        created_at=datetime.now(),
-    )
+    if not flight_plan:
+        print(f"No flight plan found for project: {project.name}")
+        print("Create a flight plan first in the CHART phase.")
+        sys.exit(1)
 
-    # Save flight plan
-    original_cwd = Path.cwd()
-    os.chdir(output_folder)
-    try:
-        from waypoints.models.flight_plan import FlightPlanWriter
-
-        writer = FlightPlanWriter(project)
-        writer.save(flight_plan)
-        print(f"✓ Created flight plan with {len(waypoints)} waypoints")
-    finally:
-        os.chdir(original_cwd)
+    pending = sum(1 for wp in flight_plan.waypoints if wp.status.value == "pending")
+    complete = sum(1 for wp in flight_plan.waypoints if wp.status.value == "complete")
+    print(f"✓ Loaded flight plan: {len(flight_plan.waypoints)} waypoints")
+    print(f"  {pending} pending, {complete} complete")
 
     return flight_plan
 
 
+def load_spec(project: Project) -> str:
+    """Load the product spec for a project."""
+    spec_path = project.get_docs_path() / "product-spec.md"
+    if spec_path.exists():
+        spec = spec_path.read_text()
+        print(f"✓ Loaded product spec: {len(spec)} chars")
+        return spec
+
+    # Try alternative locations
+    for alt_name in ["spec.md", "specification.md", "product_spec.md"]:
+        alt_path = project.get_docs_path() / alt_name
+        if alt_path.exists():
+            spec = alt_path.read_text()
+            print(f"✓ Loaded spec from {alt_name}: {len(spec)} chars")
+            return spec
+
+    print("⚠ No product spec found, using placeholder")
+    idea = project.initial_idea or "No specification available."
+    return f"# {project.name}\n\n{idea}"
+
+
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: test_fly_screen.py <output-folder> [spec-file.md]")
+    if len(sys.argv) < 3:
+        print("Usage: test_fly_screen.py <output-folder> <project-name>")
         print()
         print("Arguments:")
         print("  output-folder  Folder where generated code will be placed")
-        print("  spec-file.md   Optional product spec (uses default if omitted)")
+        print("  project-name   Name or slug of existing project to load")
         print()
         print("Examples:")
-        print("  python scripts/test_fly_screen.py /tmp/fly-test")
-        print("  python scripts/test_fly_screen.py /tmp/fly-test docs/spec.md")
+        print("  python scripts/test_fly_screen.py /tmp/fly-test my-project")
+        print("  python scripts/test_fly_screen.py ~/sandbox/test ai-task-manager")
+        print()
+
+        # List available projects
+        all_projects = Project.list_all()
+        if all_projects:
+            print("Available projects:")
+            for p in all_projects:
+                print(f"  - {p.slug} ({p.name})")
+
         sys.exit(1)
 
     output_folder = Path(sys.argv[1]).resolve()
+    project_name = sys.argv[2]
 
-    # Load spec
-    if len(sys.argv) > 2:
-        spec_path = Path(sys.argv[2])
-        if not spec_path.exists():
-            print(f"Spec file not found: {spec_path}")
-            sys.exit(1)
-        spec = spec_path.read_text()
-        print(f"✓ Loaded spec from {spec_path} ({len(spec)} chars)")
-    else:
-        spec = DEFAULT_SPEC
-        print("✓ Using default test spec")
+    # Load project data (from current waypoints workspace)
+    project = load_project(project_name)
+    flight_plan = load_flight_plan(project)
+    spec = load_spec(project)
 
-    # Set up environment
-    setup_test_environment(output_folder)
-
-    # Create project and flight plan
-    project = create_test_project(output_folder)
-    flight_plan = create_test_flight_plan(project, DEFAULT_WAYPOINTS, output_folder)
+    # Set up output folder
+    setup_output_folder(output_folder)
 
     print()
     print("Waypoints to execute:")
     for wp in flight_plan.waypoints:
+        status = wp.status.value
+        if status == "complete":
+            marker = "◉"
+        elif status == "in_progress":
+            marker = "◎"
+        else:
+            marker = "○"
         deps = f" (deps: {', '.join(wp.dependencies)})" if wp.dependencies else ""
-        print(f"  {wp.id}: {wp.title}{deps}")
+        print(f"  {marker} {wp.id}: {wp.title}{deps}")
 
     print()
     print(f"Output folder: {output_folder}")
-    print("Generated code will appear in this folder.")
+    print(f"Source code will be generated in: {output_folder}/src/")
     print()
     print("Launching FlyScreen...")
     print("Press Space to start execution, Ctrl+Q to quit")
     print()
 
-    # Change to output folder and run app
+    # Change to output folder so generated code goes there
     os.chdir(output_folder)
 
     app = TestFlyApp(
@@ -250,7 +226,7 @@ def main():
     app.run()
 
     print()
-    print(f"Done. Check {output_folder} for generated files.")
+    print(f"Done. Check {output_folder}/src/ for generated files.")
 
 
 if __name__ == "__main__":
