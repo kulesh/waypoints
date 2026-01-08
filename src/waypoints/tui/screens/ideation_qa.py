@@ -128,7 +128,7 @@ class IdeationQAScreen(BaseDialogueScreen):
 
     def on_mount(self) -> None:
         """Initialize Q&A with first question."""
-        self.app.sub_title = self.phase_name.upper()
+        self.app.sub_title = f"{self.project.name} · {self.phase_name}"
         self._start_qa()
 
     def handle_user_message(self, text: str) -> None:

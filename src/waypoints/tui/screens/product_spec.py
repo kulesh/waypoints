@@ -194,7 +194,7 @@ class ProductSpecScreen(Screen):
 
     def on_mount(self) -> None:
         """Start generating the specification."""
-        self.app.sub_title = "PRODUCT SPEC"
+        self.app.sub_title = f"{self.project.name} · Product Spec"
         self._generate_spec()
 
     @work(thread=True)
@@ -269,7 +269,7 @@ class ProductSpecScreen(Screen):
             editor.add_class("editing")
             editor.text = self.spec_content
             editor.focus()
-            self.app.sub_title = "PRODUCT SPEC (editing)"
+            self.app.sub_title = f"{self.project.name} · Product Spec (editing)"
         else:
             # Save edits
             self.spec_content = editor.text
@@ -278,7 +278,7 @@ class ProductSpecScreen(Screen):
             content_scroll.remove_class("editing")
             editor.remove_class("editing")
             self._save_to_disk()
-            self.app.sub_title = "PRODUCT SPEC"
+            self.app.sub_title = f"{self.project.name} · Product Spec"
 
     def action_save(self) -> None:
         """Save the current content to disk."""

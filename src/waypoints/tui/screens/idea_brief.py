@@ -166,7 +166,7 @@ class IdeaBriefScreen(Screen):
 
     def on_mount(self) -> None:
         """Start generating the brief."""
-        self.app.sub_title = "IDEA BRIEF"
+        self.app.sub_title = f"{self.project.name} · Idea Brief"
         self._generate_brief()
 
     @work(thread=True)
@@ -251,7 +251,7 @@ class IdeaBriefScreen(Screen):
             editor.add_class("editing")
             editor.text = self.brief_content
             editor.focus()
-            self.app.sub_title = "IDEA BRIEF (editing)"
+            self.app.sub_title = f"{self.project.name} · Idea Brief (editing)"
         else:
             # Save edits
             self.brief_content = editor.text
@@ -260,7 +260,7 @@ class IdeaBriefScreen(Screen):
             content_scroll.remove_class("editing")
             editor.remove_class("editing")
             self._save_to_disk()
-            self.app.sub_title = "IDEA BRIEF"
+            self.app.sub_title = f"{self.project.name} · Idea Brief"
 
     def action_save(self) -> None:
         """Save the current content to disk."""
