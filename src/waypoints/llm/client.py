@@ -7,7 +7,6 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
-from typing import Any
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -38,7 +37,11 @@ class ChatClient:
         """Stream response chunks from Claude via Agent SDK."""
         # Format conversation as a single prompt for the agent
         prompt = self._format_messages_as_prompt(messages)
-        logger.info("stream_message called: prompt=%d chars, system=%d chars", len(prompt), len(system))
+        logger.info(
+            "stream_message called: prompt=%d chars, system=%d chars",
+            len(prompt),
+            len(system),
+        )
 
         # Run async query in sync context
         try:
@@ -68,6 +71,7 @@ class ChatClient:
     def _run_agent_query(self, prompt: str, system: str) -> Iterator[str]:
         """Run agent query and yield text chunks."""
         import os
+
         # Clear invalid API key to force web auth
         env_backup = os.environ.pop("ANTHROPIC_API_KEY", None)
 
@@ -89,7 +93,9 @@ class ChatClient:
                                 chunks.append(block.text)
                                 logger.debug("Got chunk: %d chars", len(block.text))
                     elif isinstance(message, ResultMessage):
-                        logger.info("Query complete, cost: $%.4f", message.total_cost_usd or 0)
+                        logger.info(
+                            "Query complete, cost: $%.4f", message.total_cost_usd or 0
+                        )
                 return chunks
 
             chunks = loop.run_until_complete(collect_chunks())

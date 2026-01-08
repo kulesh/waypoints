@@ -36,10 +36,6 @@ def detect_terminal_theme() -> str:
         except (ValueError, IndexError):
             pass
 
-    # Check for common dark mode indicators
-    colorterm = os.environ.get("COLORTERM", "").lower()
-    term = os.environ.get("TERM", "").lower()
-
     # macOS Terminal.app in dark mode
     if os.environ.get("TERM_PROGRAM") == "Apple_Terminal":
         # Apple Terminal doesn't expose dark mode directly, default to dark
