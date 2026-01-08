@@ -390,18 +390,27 @@ class WaypointListPanel(Vertical):
         empty = 10 - filled
         bar = "■" * filled + "□" * empty
 
-        # Add execution state indicator
-        state_indicators = {
-            ExecutionState.IDLE: "",
-            ExecutionState.RUNNING: " ▶ Running",
-            ExecutionState.PAUSED: " ⏸ Paused",
-            ExecutionState.DONE: " ✓ Done",
-            ExecutionState.INTERVENTION: " ⚠ Needs Help",
+        # Build Rich Text with colored state indicator
+        text = Text()
+        text.append(bar, style="green")
+        text.append(f" {complete}/{total} ({percent}%)", style="dim")
+
+        # Add colored execution state indicator
+        state_styles = {
+            ExecutionState.IDLE: ("", ""),
+            ExecutionState.RUNNING: (" ▶ Running", "bold cyan"),
+            ExecutionState.PAUSED: (" ⏸ Paused", "bold yellow"),
+            ExecutionState.DONE: (" ✓ Done", "bold green"),
+            ExecutionState.INTERVENTION: (" ⚠ Needs Help", "bold red"),
         }
-        state_text = state_indicators.get(self._execution_state, "")
+        state_text, state_style = state_styles.get(
+            self._execution_state, ("", "")
+        )
+        if state_text:
+            text.append(state_text, style=state_style)
 
         progress_widget = self.query_one("#overall-progress", Static)
-        progress_widget.update(f"{bar} {complete}/{total} ({percent}%){state_text}")
+        progress_widget.update(text)
 
     @property
     def selected_waypoint(self) -> Waypoint | None:
