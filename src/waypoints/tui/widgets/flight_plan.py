@@ -67,6 +67,7 @@ class FlightPlanTree(Tree[Waypoint]):
         height: 1fr;
         padding: 0;
         width: 1fr;
+        overflow-x: hidden;
         scrollbar-gutter: stable;
         scrollbar-size: 1 1;
         scrollbar-background: $surface;
