@@ -9,7 +9,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Footer, Static
+from textual.widgets import Footer, Static, Tree
 from textual.worker import Worker
 
 from waypoints.fly.executor import (
@@ -329,6 +329,15 @@ class FlyScreen(Screen):
 
         wp_count = len(self.flight_plan.waypoints)
         logger.info("FlyScreen mounted with %d waypoints", wp_count)
+
+    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
+        """Update detail panel when tree selection changes."""
+        if event.node.data:
+            waypoint = event.node.data
+            detail_panel = self.query_one(
+                "#waypoint-detail", WaypointDetailPanel
+            )
+            detail_panel.show_waypoint(waypoint)
 
     def _select_next_waypoint(self) -> None:
         """Find and select the next pending waypoint."""
