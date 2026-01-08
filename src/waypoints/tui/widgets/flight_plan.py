@@ -37,13 +37,26 @@ STATUS_ICONS = {
 EPIC_ICON = "◇"
 
 
-def _format_waypoint_label(waypoint: Waypoint, is_epic: bool = False) -> str:
-    """Format a waypoint for display in the tree."""
+def _format_waypoint_label(
+    waypoint: Waypoint, is_epic: bool = False, width: int = 80
+) -> str:
+    """Format a waypoint for display in the tree.
+
+    Args:
+        waypoint: The waypoint to format.
+        is_epic: Whether this waypoint is an epic.
+        width: Target width for padding (fills with spaces).
+    """
     icon = EPIC_ICON if is_epic else STATUS_ICONS[waypoint.status]
+    # Calculate available space for title (width - icon - space - id - colon - space)
+    id_prefix = f"{icon} {waypoint.id}: "
+    max_title_len = width - len(id_prefix)
     title = waypoint.title
-    if len(title) > 28:
-        title = title[:25] + "..."
-    return f"{icon} {waypoint.id}: {title}"
+    if len(title) > max_title_len:
+        title = title[: max_title_len - 3] + "..."
+    label = f"{id_prefix}{title}"
+    # Pad to full width
+    return label.ljust(width)
 
 
 class FlightPlanTree(Tree[Waypoint]):
@@ -53,15 +66,36 @@ class FlightPlanTree(Tree[Waypoint]):
     FlightPlanTree {
         height: 1fr;
         padding: 0;
+        width: 1fr;
+        scrollbar-gutter: stable;
     }
 
     FlightPlanTree > .tree--guides {
         color: $text-muted;
     }
 
+    FlightPlanTree > .tree--guides-selected {
+        color: $primary;
+    }
+
     FlightPlanTree > .tree--cursor {
-        background: $primary;
+        background: $surface-lighten-1;
         color: $text;
+        text-style: none;
+    }
+
+    FlightPlanTree:focus > .tree--cursor {
+        background: $surface-lighten-2;
+        color: $primary-lighten-2;
+        text-style: bold;
+    }
+
+    FlightPlanTree > .tree--highlight {
+        text-style: none;
+    }
+
+    FlightPlanTree > .tree--highlight-line {
+        background: $surface-lighten-1;
     }
     """
 
