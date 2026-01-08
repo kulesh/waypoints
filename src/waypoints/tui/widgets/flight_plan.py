@@ -68,6 +68,9 @@ class FlightPlanTree(Tree[Waypoint]):
         padding: 0;
         width: 1fr;
         scrollbar-gutter: stable;
+        scrollbar-size: 1 1;
+        scrollbar-background: $surface;
+        scrollbar-color: $surface-lighten-2;
     }
 
     FlightPlanTree > .tree--guides {
@@ -75,7 +78,7 @@ class FlightPlanTree(Tree[Waypoint]):
     }
 
     FlightPlanTree > .tree--guides-selected {
-        color: $primary;
+        color: $text-muted;
     }
 
     FlightPlanTree > .tree--cursor {
@@ -86,7 +89,7 @@ class FlightPlanTree(Tree[Waypoint]):
 
     FlightPlanTree:focus > .tree--cursor {
         background: $surface-lighten-2;
-        color: $primary-lighten-2;
+        color: $text;
         text-style: bold;
     }
 
