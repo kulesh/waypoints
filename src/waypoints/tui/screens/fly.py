@@ -340,6 +340,7 @@ class WaypointListPanel(Vertical):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._flight_plan: FlightPlan | None = None
+        self._execution_state: ExecutionState = ExecutionState.IDLE
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="panel-header"):
@@ -350,15 +351,26 @@ class WaypointListPanel(Vertical):
         yield FlightPlanTree(id="waypoint-tree")
         yield Static("◉ Done  ◎ Active  ○ Pending", classes="legend")
 
-    def update_flight_plan(self, flight_plan: FlightPlan) -> None:
+    def update_flight_plan(
+        self,
+        flight_plan: FlightPlan,
+        execution_state: ExecutionState | None = None,
+    ) -> None:
         """Update the waypoint list and overall progress."""
         self._flight_plan = flight_plan
+        if execution_state is not None:
+            self._execution_state = execution_state
         tree = self.query_one("#waypoint-tree", FlightPlanTree)
         tree.update_flight_plan(flight_plan)
         self._update_overall_progress()
 
+    def update_execution_state(self, state: ExecutionState) -> None:
+        """Update the execution state indicator."""
+        self._execution_state = state
+        self._update_overall_progress()
+
     def _update_overall_progress(self) -> None:
-        """Update the overall progress bar."""
+        """Update the overall progress bar with execution state."""
         if not self._flight_plan:
             return
 
@@ -378,8 +390,18 @@ class WaypointListPanel(Vertical):
         empty = 10 - filled
         bar = "■" * filled + "□" * empty
 
+        # Add execution state indicator
+        state_indicators = {
+            ExecutionState.IDLE: "",
+            ExecutionState.RUNNING: " ▶ Running",
+            ExecutionState.PAUSED: " ⏸ Paused",
+            ExecutionState.DONE: " ✓ Done",
+            ExecutionState.INTERVENTION: " ⚠ Needs Help",
+        }
+        state_text = state_indicators.get(self._execution_state, "")
+
         progress_widget = self.query_one("#overall-progress", Static)
-        progress_widget.update(f"{bar} {complete}/{total} ({percent}%)")
+        progress_widget.update(f"{bar} {complete}/{total} ({percent}%){state_text}")
 
     @property
     def selected_waypoint(self) -> Waypoint | None:
@@ -504,15 +526,20 @@ class FlyScreen(Screen):
 
     def watch_execution_state(self, state: ExecutionState) -> None:
         """Update UI when execution state changes."""
+        # Update status bar message
         status_bar = self.query_one("#status-bar", Static)
         messages = {
-            ExecutionState.IDLE: "Press Space to start execution",
+            ExecutionState.IDLE: "Press 'r' to start execution",
             ExecutionState.RUNNING: "Executing waypoint...",
-            ExecutionState.PAUSED: "Paused. Press Space to resume",
+            ExecutionState.PAUSED: "Paused. Press 'r' to resume",
             ExecutionState.DONE: "All waypoints complete!",
             ExecutionState.INTERVENTION: "Human intervention needed",
         }
         status_bar.update(messages.get(state, ""))
+
+        # Update progress bar with execution state
+        list_panel = self.query_one("#waypoint-list", WaypointListPanel)
+        list_panel.update_execution_state(state)
 
     def action_start(self) -> None:
         """Start or resume waypoint execution."""
