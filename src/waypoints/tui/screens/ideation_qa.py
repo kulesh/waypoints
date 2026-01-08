@@ -10,6 +10,7 @@ from textual.containers import Vertical
 from textual.widgets import Footer, Header, Rule, Static
 
 from waypoints.llm.client import ChatClient
+from waypoints.models import Project, SessionWriter
 from waypoints.models.dialogue import MessageRole
 from waypoints.tui.messages import (
     StreamingChunk,
@@ -96,10 +97,14 @@ class IdeationQAScreen(BaseDialogueScreen):
     }
     """
 
-    def __init__(self, idea: str, **kwargs: object) -> None:
+    def __init__(self, project: Project, idea: str, **kwargs: object) -> None:
         super().__init__(**kwargs)
+        self.project = project
         self.idea = idea
         self.llm_client = ChatClient()
+        self.session_writer = SessionWriter(
+            project, "ideation", self.history.session_id
+        )
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -128,7 +133,8 @@ class IdeationQAScreen(BaseDialogueScreen):
 
     def handle_user_message(self, text: str) -> None:
         """Process user's answer."""
-        self.history.add_message(MessageRole.USER, text)
+        msg = self.history.add_message(MessageRole.USER, text)
+        self.session_writer.append_message(msg)
         self.dialogue_view.add_user_message(text)
         self._send_to_llm()
 
@@ -144,7 +150,8 @@ class IdeationQAScreen(BaseDialogueScreen):
             "Please help me crystallize this idea by asking clarifying questions."
         )
 
-        self.history.add_message(MessageRole.USER, initial_context)
+        initial_msg = self.history.add_message(MessageRole.USER, initial_context)
+        self.session_writer.append_message(initial_msg)
         logger.info("Starting ideation Q&A with idea: %s", self.idea[:100])
 
         self.app.call_from_thread(self.post_message, StreamingStarted())
@@ -166,7 +173,10 @@ class IdeationQAScreen(BaseDialogueScreen):
             response_content = f"Error: {e}"
             self.app.call_from_thread(self.notify, f"API Error: {e}", severity="error")
 
-        self.history.add_message(MessageRole.ASSISTANT, response_content)
+        assistant_msg = self.history.add_message(
+            MessageRole.ASSISTANT, response_content
+        )
+        self.session_writer.append_message(assistant_msg)
         self.app.call_from_thread(
             self.post_message, StreamingCompleted(message_id, response_content)
         )
@@ -193,7 +203,10 @@ class IdeationQAScreen(BaseDialogueScreen):
             response_content = f"Error: {e}"
             self.app.call_from_thread(self.notify, f"API Error: {e}", severity="error")
 
-        self.history.add_message(MessageRole.ASSISTANT, response_content)
+        assistant_msg = self.history.add_message(
+            MessageRole.ASSISTANT, response_content
+        )
+        self.session_writer.append_message(assistant_msg)
         self.app.call_from_thread(
             self.post_message, StreamingCompleted(message_id, response_content)
         )
@@ -203,6 +216,7 @@ class IdeationQAScreen(BaseDialogueScreen):
         self.app.switch_phase(  # type: ignore
             "idea-brief",
             {
+                "project": self.project,
                 "idea": self.idea,
                 "history": self.history,
             },

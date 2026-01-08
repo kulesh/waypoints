@@ -4,7 +4,9 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import Screen
-from textual.widgets import Footer, Header, Static, TextArea
+from textual.widgets import Footer, Header, Input, Static, TextArea
+
+from waypoints.models import Project
 
 
 class IdeationScreen(Screen):
@@ -30,9 +32,25 @@ class IdeationScreen(Screen):
         padding: 1 2;
     }
 
+    IdeationScreen .label {
+        color: $text-muted;
+        padding: 0 0 0 0;
+    }
+
+    IdeationScreen #project-name {
+        width: 100%;
+        margin: 0 0 1 0;
+        border: none;
+        background: transparent;
+    }
+
+    IdeationScreen #project-name:focus {
+        border: none;
+    }
+
     IdeationScreen .prompt {
         color: $text-muted;
-        padding: 0 0 1 0;
+        padding: 0 0 0 0;
     }
 
     IdeationScreen TextArea {
@@ -58,6 +76,8 @@ class IdeationScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(classes="content"):
+            yield Static("Project name:", classes="label")
+            yield Input(placeholder="e.g., AI Task Manager", id="project-name")
             yield Static("What would you like to build?", classes="prompt")
             yield TextArea(id="idea-input")
             yield Static(
@@ -68,14 +88,30 @@ class IdeationScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        """Focus the text area on mount."""
+        """Focus the project name input on mount."""
         self.app.sub_title = "Ideation"
-        self.query_one(TextArea).focus()
+        self.query_one("#project-name", Input).focus()
 
     def action_begin_journey(self) -> None:
         """Transition to Ideation Q&A phase with the idea."""
-        idea_text = self.query_one(TextArea).text.strip()
-        if not idea_text:
-            self.notify("Please enter an idea first", severity="warning")
+        project_name = self.query_one("#project-name", Input).value.strip()
+        idea_text = self.query_one("#idea-input", TextArea).text.strip()
+
+        if not project_name:
+            self.notify("Please enter a project name", severity="warning")
+            self.query_one("#project-name", Input).focus()
             return
-        self.app.switch_phase("ideation-qa", {"idea": idea_text})  # type: ignore
+
+        if not idea_text:
+            self.notify("Please enter an idea", severity="warning")
+            self.query_one("#idea-input", TextArea).focus()
+            return
+
+        # Create and save the project
+        project = Project.create(name=project_name, idea=idea_text)
+        self.notify(f"Created project: {project.slug}", severity="information")
+
+        self.app.switch_phase(  # type: ignore
+            "ideation-qa",
+            {"project": project, "idea": idea_text},
+        )

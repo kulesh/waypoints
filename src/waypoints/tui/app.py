@@ -48,14 +48,21 @@ class WaypointsApp(App):
     def switch_phase(self, phase: str, data: dict[str, Any] | None = None) -> None:
         """Switch to a different phase, optionally with data."""
         data = data or {}
+        project = data.get("project")
 
         if phase == "ideation":
             self.switch_screen(IdeationScreen())
         elif phase == "ideation-qa":
-            self.switch_screen(IdeationQAScreen(idea=data.get("idea", "")))
+            self.switch_screen(
+                IdeationQAScreen(
+                    project=project,
+                    idea=data.get("idea", ""),
+                )
+            )
         elif phase == "idea-brief":
             self.switch_screen(
                 IdeaBriefScreen(
+                    project=project,
                     idea=data.get("idea", ""),
                     history=data.get("history"),
                 )
@@ -63,6 +70,7 @@ class WaypointsApp(App):
         elif phase == "product-spec":
             self.switch_screen(
                 ProductSpecScreen(
+                    project=project,
                     idea=data.get("idea"),
                     brief=data.get("brief"),
                     history=data.get("history"),

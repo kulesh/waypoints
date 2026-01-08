@@ -12,6 +12,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, Markdown, Static, TextArea
 
 from waypoints.llm.client import ChatClient
+from waypoints.models import Project
 from waypoints.models.dialogue import DialogueHistory
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
@@ -78,13 +79,6 @@ Here is the Idea Brief to expand:
 {brief}
 
 Generate the complete Product Specification now:"""
-
-
-def get_docs_dir() -> Path:
-    """Get the .waypoints/docs directory, creating if needed."""
-    docs_dir = Path.cwd() / ".waypoints" / "docs"
-    docs_dir.mkdir(parents=True, exist_ok=True)
-    return docs_dir
 
 
 class ProductSpecScreen(Screen):
@@ -163,12 +157,14 @@ class ProductSpecScreen(Screen):
 
     def __init__(
         self,
+        project: Project,
         idea: str | None = None,
         brief: str | None = None,
         history: DialogueHistory | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
+        self.project = project
         self.idea = idea or ""
         self.brief = brief or ""
         self.history = history
@@ -180,7 +176,9 @@ class ProductSpecScreen(Screen):
     def _generate_file_path(self) -> Path:
         """Generate a unique file path for this spec."""
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        return get_docs_dir() / f"product-spec-{timestamp}.md"
+        docs_dir = self.project.get_docs_path()
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        return docs_dir / f"product-spec-{timestamp}.md"
 
     def compose(self) -> ComposeResult:
         yield Header()

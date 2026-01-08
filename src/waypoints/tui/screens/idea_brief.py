@@ -12,6 +12,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, Markdown, Static, TextArea
 
 from waypoints.llm.client import ChatClient
+from waypoints.models import Project
 from waypoints.models.dialogue import DialogueHistory, MessageRole
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
@@ -53,13 +54,6 @@ Here is the ideation conversation:
 {conversation}
 
 Generate the Idea Brief now:"""
-
-
-def get_docs_dir() -> Path:
-    """Get the .waypoints/docs directory, creating if needed."""
-    docs_dir = Path.cwd() / ".waypoints" / "docs"
-    docs_dir.mkdir(parents=True, exist_ok=True)
-    return docs_dir
 
 
 class IdeaBriefScreen(Screen):
@@ -137,11 +131,13 @@ class IdeaBriefScreen(Screen):
 
     def __init__(
         self,
+        project: Project,
         idea: str,
         history: DialogueHistory,
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)
+        self.project = project
         self.idea = idea
         self.history = history
         self.brief_content: str = ""
@@ -152,7 +148,9 @@ class IdeaBriefScreen(Screen):
     def _generate_file_path(self) -> Path:
         """Generate a unique file path for this brief."""
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        return get_docs_dir() / f"idea-brief-{timestamp}.md"
+        docs_dir = self.project.get_docs_path()
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        return docs_dir / f"idea-brief-{timestamp}.md"
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -283,6 +281,7 @@ class IdeaBriefScreen(Screen):
         self.app.switch_phase(  # type: ignore
             "product-spec",
             {
+                "project": self.project,
                 "idea": self.idea,
                 "brief": self.brief_content,
                 "history": self.history,
