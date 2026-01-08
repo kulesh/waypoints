@@ -199,6 +199,7 @@ class WaypointDetailPanel(Vertical):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._waypoint: Waypoint | None = None
+        self._showing_output_for: str | None = None  # Track which waypoint's output
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="panel-header"):
@@ -211,8 +212,17 @@ class WaypointDetailPanel(Vertical):
             yield Static("Output", classes="log-header")
             yield ExecutionLog(id="execution-log")
 
-    def show_waypoint(self, waypoint: Waypoint | None) -> None:
-        """Display waypoint details."""
+    def show_waypoint(
+        self,
+        waypoint: Waypoint | None,
+        active_waypoint_id: str | None = None,
+    ) -> None:
+        """Display waypoint details.
+
+        Args:
+            waypoint: The waypoint to display
+            active_waypoint_id: ID of the currently executing waypoint
+        """
         self._waypoint = waypoint
 
         title = self.query_one("#wp-title", Static)
@@ -227,10 +237,51 @@ class WaypointDetailPanel(Vertical):
             objective.update(obj_text)
             status_text = waypoint.status.value.replace("_", " ").title()
             status.update(f"Status: {status_text}")
+
+            # Update output based on whether this is the active waypoint
+            self._update_output_for_waypoint(waypoint, active_waypoint_id)
         else:
             title.update("Select a waypoint")
             objective.update("")
             status.update("Status: -")
+            self.clear_iteration()
+            self.log.clear_log()
+            self._showing_output_for = None
+
+    def _update_output_for_waypoint(
+        self, waypoint: Waypoint, active_waypoint_id: str | None
+    ) -> None:
+        """Update the output panel based on waypoint status."""
+        log = self.log
+
+        # If this is the active waypoint, keep showing live output
+        if waypoint.id == active_waypoint_id:
+            # Don't clear - live output is being streamed
+            self._showing_output_for = waypoint.id
+            return
+
+        # If we're already showing output for this waypoint, don't reload
+        if self._showing_output_for == waypoint.id:
+            return
+
+        # Clear and show appropriate content based on status
+        log.clear_log()
+        self.clear_iteration()
+        self._showing_output_for = waypoint.id
+
+        if waypoint.status == WaypointStatus.COMPLETE:
+            log.log_success("Waypoint completed")
+            if waypoint.completed_at:
+                completed = waypoint.completed_at.strftime("%Y-%m-%d %H:%M")
+                log.log(f"Completed: {completed}")
+        elif waypoint.status == WaypointStatus.IN_PROGRESS:
+            # In progress but not active (maybe from a previous session)
+            log.log("Execution in progress...")
+        else:  # PENDING
+            log.log("Waiting to execute")
+            if waypoint.dependencies:
+                deps = ", ".join(waypoint.dependencies)
+                log.log(f"Dependencies: {deps}")
 
     def update_iteration(self, iteration: int, total: int) -> None:
         """Update the iteration display."""
@@ -417,7 +468,13 @@ class FlyScreen(Screen):
             detail_panel = self.query_one(
                 "#waypoint-detail", WaypointDetailPanel
             )
-            detail_panel.show_waypoint(waypoint)
+            active_id = (
+                self.current_waypoint.id
+                if self.current_waypoint
+                and self.execution_state == ExecutionState.RUNNING
+                else None
+            )
+            detail_panel.show_waypoint(waypoint, active_waypoint_id=active_id)
 
     def _select_next_waypoint(self) -> None:
         """Find and select the next pending waypoint."""
@@ -437,7 +494,8 @@ class FlyScreen(Screen):
                     detail_panel = self.query_one(
                         "#waypoint-detail", WaypointDetailPanel
                     )
-                    detail_panel.show_waypoint(wp)
+                    # No active execution yet when selecting next waypoint
+                    detail_panel.show_waypoint(wp, active_waypoint_id=None)
                     return
 
         # No pending waypoints with met dependencies
@@ -505,10 +563,17 @@ class FlyScreen(Screen):
         self.current_waypoint.status = WaypointStatus.IN_PROGRESS
         self._save_flight_plan()
 
+        # Mark this as the active waypoint for output tracking
+        detail_panel._showing_output_for = self.current_waypoint.id
+
         log.clear_log()
         wp_title = f"{self.current_waypoint.id}: {self.current_waypoint.title}"
         log.log_heading(f"Starting {wp_title}")
         detail_panel.clear_iteration()
+
+        # Refresh the waypoint list to show blinking status
+        list_panel = self.query_one("#waypoint-list", WaypointListPanel)
+        list_panel.update_flight_plan(self.flight_plan)
 
         # Create executor with progress callback
         self._executor = WaypointExecutor(
