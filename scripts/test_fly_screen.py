@@ -124,8 +124,7 @@ def load_project(project_name: str) -> Project:
 
 def load_flight_plan(project: Project):
     """Load the flight plan for a project."""
-    reader = FlightPlanReader(project)
-    flight_plan = reader.load()
+    flight_plan = FlightPlanReader.load(project)
 
     if not flight_plan:
         print(f"No flight plan found for project: {project.name}")
