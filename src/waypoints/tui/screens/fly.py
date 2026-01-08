@@ -15,6 +15,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, RichLog, Static, Tree
 from textual.worker import Worker
 
+from waypoints.fly.execution_log import ExecutionLogReader
 from waypoints.fly.executor import (
     ExecutionContext,
     ExecutionResult,
@@ -262,10 +263,12 @@ class WaypointDetailPanel(Vertical):
     }
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, project: Project, **kwargs: object) -> None:
         super().__init__(**kwargs)
+        self._project = project
         self._waypoint: Waypoint | None = None
         self._showing_output_for: str | None = None  # Track which waypoint's output
+        self._is_live_output: bool = False  # True if showing live streaming output
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="panel-header"):
@@ -275,7 +278,7 @@ class WaypointDetailPanel(Vertical):
         with Vertical(classes="iteration-section"):
             yield Static("", classes="iteration-label", id="iteration-label")
         with Vertical(classes="log-section"):
-            yield Static("Output", classes="log-header")
+            yield Static("Output", classes="log-header", id="log-header")
             yield ExecutionLog(id="execution-log")
 
     def show_waypoint(
@@ -294,6 +297,7 @@ class WaypointDetailPanel(Vertical):
         title = self.query_one("#wp-title", Static)
         objective = self.query_one("#wp-objective", Static)
         status = self.query_one("#wp-status", Static)
+        log_header = self.query_one("#log-header", Static)
 
         if waypoint:
             title.update(f"{waypoint.id}: {waypoint.title}")
@@ -304,15 +308,20 @@ class WaypointDetailPanel(Vertical):
             status_text = waypoint.status.value.replace("_", " ").title()
             status.update(f"Status: {status_text}")
 
+            # Update log header with waypoint ID
+            log_header.update(f"Output · {waypoint.id}")
+
             # Update output based on whether this is the active waypoint
             self._update_output_for_waypoint(waypoint, active_waypoint_id)
         else:
             title.update("Select a waypoint")
             objective.update("")
             status.update("Status: -")
+            log_header.update("Output")
             self.clear_iteration()
             self.log.clear_log()
             self._showing_output_for = None
+            self._is_live_output = False
 
     def _update_output_for_waypoint(
         self, waypoint: Waypoint, active_waypoint_id: str | None
@@ -324,33 +333,120 @@ class WaypointDetailPanel(Vertical):
         if waypoint.id == active_waypoint_id:
             # Don't clear - live output is being streamed
             self._showing_output_for = waypoint.id
+            self._is_live_output = True
             return
 
-        # If we're already showing output for this waypoint, don't reload
-        if self._showing_output_for == waypoint.id:
+        # If we're showing live output for a DIFFERENT waypoint, don't switch away
+        # (user navigated to view a different waypoint while execution continues)
+        if self._is_live_output and self._showing_output_for == active_waypoint_id:
+            # We're showing live output for the active waypoint, but user selected
+            # a different waypoint. Clear and show the selected waypoint's history.
+            pass  # Fall through to show the selected waypoint
+
+        # If we're already showing historical output for this waypoint, don't reload
+        if (
+            self._showing_output_for == waypoint.id
+            and not self._is_live_output
+        ):
             return
 
         # Clear and show appropriate content based on status
         log.clear_log()
         self.clear_iteration()
         self._showing_output_for = waypoint.id
+        self._is_live_output = False
 
+        # Try to load historical execution log for completed/failed waypoints
+        if waypoint.status in (WaypointStatus.COMPLETE, WaypointStatus.FAILED):
+            if self._load_execution_history(waypoint):
+                return  # Successfully loaded history
+
+        # Fallback to status-based messages
         if waypoint.status == WaypointStatus.COMPLETE:
             log.log_success("Waypoint completed")
             if waypoint.completed_at:
                 completed = waypoint.completed_at.strftime("%Y-%m-%d %H:%M")
                 log.log(f"Completed: {completed}")
+            log.log("(No execution log found)")
         elif waypoint.status == WaypointStatus.FAILED:
             log.log_error("Last execution failed")
             log.log("Press 'r' to retry")
+            log.log("(No execution log found)")
         elif waypoint.status == WaypointStatus.IN_PROGRESS:
-            # In progress but not active (maybe from a previous session)
-            log.log("Execution in progress...")
+            # In progress but not active (stale from previous session)
+            log.log("Execution was in progress...")
+            log.log("(Session may have been interrupted)")
         else:  # PENDING
             log.log("Waiting to execute")
             if waypoint.dependencies:
                 deps = ", ".join(waypoint.dependencies)
                 log.log(f"Dependencies: {deps}")
+
+    def _load_execution_history(self, waypoint: Waypoint) -> bool:
+        """Load and display execution history from disk.
+
+        Args:
+            waypoint: The waypoint to load history for
+
+        Returns:
+            True if history was loaded, False otherwise
+        """
+        try:
+            exec_log = ExecutionLogReader.load_latest(
+                self._project, waypoint_id=waypoint.id
+            )
+            if not exec_log:
+                return False
+
+            log = self.log
+
+            # Show execution summary header
+            log.log_heading(f"Execution Log · {exec_log.execution_id[:8]}")
+            started = exec_log.started_at.strftime("%Y-%m-%d %H:%M")
+            log.log(f"Started: {started}")
+
+            if exec_log.completed_at:
+                completed = exec_log.completed_at.strftime("%Y-%m-%d %H:%M")
+                duration = (exec_log.completed_at - exec_log.started_at).seconds
+                log.log(f"Completed: {completed} ({duration}s)")
+
+            if exec_log.result:
+                if exec_log.result == "success":
+                    log.log_success(f"Result: {exec_log.result}")
+                else:
+                    log.log_error(f"Result: {exec_log.result}")
+
+            if exec_log.total_cost_usd > 0:
+                log.log(f"Cost: ${exec_log.total_cost_usd:.4f}")
+
+            log.log("")  # Blank line
+
+            # Show execution entries (summarized)
+            for entry in exec_log.entries:
+                if entry.entry_type == "iteration_start":
+                    log.log_heading(f"Iteration {entry.iteration}")
+                elif entry.entry_type == "output":
+                    # Show output content (may contain code blocks)
+                    if entry.content:
+                        # Truncate very long outputs
+                        content = entry.content
+                        if len(content) > 2000:
+                            content = content[:2000] + "\n... (truncated)"
+                        log.log(content)
+                elif entry.entry_type == "error":
+                    log.log_error(entry.content)
+                elif entry.entry_type == "iteration_end":
+                    cost = entry.metadata.get("cost_usd")
+                    if cost:
+                        log.log(f"(Iteration cost: ${cost:.4f})")
+
+            return True
+
+        except Exception as e:
+            logger.warning(
+                "Failed to load execution history for %s: %s", waypoint.id, e
+            )
+            return False
 
     def update_iteration(self, iteration: int, total: int) -> None:
         """Update the iteration display."""
@@ -572,7 +668,7 @@ class FlyScreen(Screen):
         yield StatusHeader()
         with Horizontal(classes="main-container"):
             yield WaypointListPanel(id="waypoint-list")
-            yield WaypointDetailPanel(id="waypoint-detail")
+            yield WaypointDetailPanel(project=self.project, id="waypoint-detail")
         yield Static(
             "Press Space to start execution", classes="status-bar", id="status-bar"
         )
