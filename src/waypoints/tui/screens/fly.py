@@ -131,18 +131,14 @@ class WaypointDetailPanel(Vertical):
         color: $text-muted;
     }
 
-    WaypointDetailPanel .progress-section {
+    WaypointDetailPanel .iteration-section {
         height: auto;
         padding: 1;
         border-bottom: solid $surface-lighten-1;
     }
 
-    WaypointDetailPanel .progress-label {
-        margin-bottom: 0;
-    }
-
-    WaypointDetailPanel .progress-bar {
-        color: $success;
+    WaypointDetailPanel .iteration-label {
+        color: $text-muted;
     }
 
     WaypointDetailPanel .log-section {
@@ -159,16 +155,14 @@ class WaypointDetailPanel(Vertical):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._waypoint: Waypoint | None = None
-        self._progress: int = 0
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="panel-header"):
             yield Static("Select a waypoint", classes="wp-title", id="wp-title")
             yield Static("", classes="wp-objective", id="wp-objective")
             yield Static("Status: Pending", classes="wp-status", id="wp-status")
-        with Vertical(classes="progress-section"):
-            yield Static("Progress:", classes="progress-label")
-            yield Static("□□□□□□□□□□ 0%", classes="progress-bar", id="progress-bar")
+        with Vertical(classes="iteration-section"):
+            yield Static("", classes="iteration-label", id="iteration-label")
         with Vertical(classes="log-section"):
             yield Static("Output", classes="log-header")
             yield ExecutionLog(id="execution-log")
@@ -194,13 +188,18 @@ class WaypointDetailPanel(Vertical):
             objective.update("")
             status.update("Status: -")
 
-    def update_progress(self, percent: int) -> None:
-        """Update the progress bar."""
-        self._progress = percent
-        filled = percent // 10
-        empty = 10 - filled
-        bar = "■" * filled + "□" * empty
-        self.query_one("#progress-bar", Static).update(f"{bar} {percent}%")
+    def update_iteration(self, iteration: int, total: int) -> None:
+        """Update the iteration display."""
+        if iteration > 0:
+            self.query_one("#iteration-label", Static).update(
+                f"Iteration {iteration}/{total}"
+            )
+        else:
+            self.query_one("#iteration-label", Static).update("")
+
+    def clear_iteration(self) -> None:
+        """Clear the iteration display."""
+        self.query_one("#iteration-label", Static).update("")
 
     @property
     def log(self) -> ExecutionLog:
@@ -218,11 +217,20 @@ class WaypointListPanel(Vertical):
         border-right: solid $surface-lighten-1;
     }
 
+    WaypointListPanel .panel-header {
+        height: auto;
+        padding: 1;
+        border-bottom: solid $surface-lighten-1;
+    }
+
     WaypointListPanel .panel-title {
         text-style: bold;
         color: $text;
-        padding: 1;
-        border-bottom: solid $surface-lighten-1;
+    }
+
+    WaypointListPanel .progress-bar {
+        color: $success;
+        margin-top: 1;
     }
 
     WaypointListPanel .legend {
@@ -239,15 +247,44 @@ class WaypointListPanel(Vertical):
         self._flight_plan: FlightPlan | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static("WAYPOINTS", classes="panel-title")
+        with Vertical(classes="panel-header"):
+            yield Static("WAYPOINTS", classes="panel-title")
+            yield Static(
+                "□□□□□□□□□□ 0/0", classes="progress-bar", id="overall-progress"
+            )
         yield FlightPlanTree(id="waypoint-tree")
         yield Static("◉ Done  ◎ Active  ○ Pending", classes="legend")
 
     def update_flight_plan(self, flight_plan: FlightPlan) -> None:
-        """Update the waypoint list."""
+        """Update the waypoint list and overall progress."""
         self._flight_plan = flight_plan
         tree = self.query_one("#waypoint-tree", FlightPlanTree)
         tree.update_flight_plan(flight_plan)
+        self._update_overall_progress()
+
+    def _update_overall_progress(self) -> None:
+        """Update the overall progress bar."""
+        if not self._flight_plan:
+            return
+
+        total = len(self._flight_plan.waypoints)
+        complete = sum(
+            1 for wp in self._flight_plan.waypoints
+            if wp.status == WaypointStatus.COMPLETE
+        )
+
+        # Build progress bar
+        if total > 0:
+            percent = int((complete / total) * 100)
+            filled = (complete * 10) // total if total > 0 else 0
+        else:
+            percent = 0
+            filled = 0
+        empty = 10 - filled
+        bar = "■" * filled + "□" * empty
+
+        progress_widget = self.query_one("#overall-progress", Static)
+        progress_widget.update(f"{bar} {complete}/{total} ({percent}%)")
 
     @property
     def selected_waypoint(self) -> Waypoint | None:
@@ -427,7 +464,7 @@ class FlyScreen(Screen):
         log.clear_log()
         wp_title = f"{self.current_waypoint.id}: {self.current_waypoint.title}"
         log.log(f"Starting {wp_title}")
-        detail_panel.update_progress(5)
+        detail_panel.clear_iteration()
 
         # Create executor with progress callback
         self._executor = WaypointExecutor(
@@ -460,14 +497,12 @@ class FlyScreen(Screen):
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
         log = detail_panel.log
 
-        # Calculate progress percentage based on iteration
-        max_iter = ctx.total_iterations
-        progress = min(95, (ctx.iteration / max_iter) * 90 + 5)
-        detail_panel.update_progress(int(progress))
+        # Update iteration display
+        detail_panel.update_iteration(ctx.iteration, ctx.total_iterations)
 
         # Log based on step type
         if ctx.step == "executing":
-            log.log(f"Iteration {ctx.iteration}/{max_iter}")
+            log.log(f"Iteration {ctx.iteration}/{ctx.total_iterations}")
         elif ctx.step == "streaming":
             # Truncate long streaming output for UI
             output = ctx.output
@@ -503,7 +538,7 @@ class FlyScreen(Screen):
                 self._save_flight_plan()
                 log.log_success(f"Waypoint {self.current_waypoint.id} complete!")
 
-            detail_panel.update_progress(100)
+            detail_panel.clear_iteration()
             list_panel.update_flight_plan(self.flight_plan)
 
             # Move to next waypoint if not paused
