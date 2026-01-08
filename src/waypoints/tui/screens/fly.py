@@ -39,8 +39,64 @@ class ExecutionState(Enum):
     INTERVENTION = "intervention"
 
 
-# Regex to detect code blocks in markdown
+# Regex patterns for markdown
 CODE_BLOCK_PATTERN = re.compile(r"```(\w+)?\n(.*?)```", re.DOTALL)
+BOLD_PATTERN = re.compile(r"\*\*(.+?)\*\*")
+ITALIC_PATTERN = re.compile(r"(?<!\*)\*([^*]+?)\*(?!\*)")
+INLINE_CODE_PATTERN = re.compile(r"`([^`]+)`")
+
+
+def _markdown_to_rich_text(text: str, base_style: str = "") -> Text:
+    """Convert markdown formatting to Rich Text.
+
+    Handles: **bold**, *italic*, `inline code`
+    """
+    result = Text()
+
+    # Process the text character by character, tracking markdown patterns
+    # This is a simplified approach - process patterns in order of precedence
+    remaining = text
+    while remaining:
+        # Try to find the earliest markdown pattern
+        bold_match = BOLD_PATTERN.search(remaining)
+        italic_match = ITALIC_PATTERN.search(remaining)
+        code_match = INLINE_CODE_PATTERN.search(remaining)
+
+        # Find the earliest match
+        matches = [
+            (bold_match, "bold"),
+            (italic_match, "italic"),
+            (code_match, "code"),
+        ]
+        matches = [(m, t) for m, t in matches if m is not None]
+
+        if not matches:
+            # No more patterns - add remaining text
+            result.append(remaining, style=base_style)
+            break
+
+        # Get earliest match
+        earliest_match, match_type = min(matches, key=lambda x: x[0].start())
+
+        # Add text before the match
+        if earliest_match.start() > 0:
+            result.append(remaining[: earliest_match.start()], style=base_style)
+
+        # Add the formatted text
+        inner_text = earliest_match.group(1)
+        if match_type == "bold":
+            style = f"{base_style} bold" if base_style else "bold"
+            result.append(inner_text, style=style)
+        elif match_type == "italic":
+            style = f"{base_style} italic" if base_style else "italic"
+            result.append(inner_text, style=style)
+        elif match_type == "code":
+            result.append(inner_text, style="cyan")
+
+        # Continue with remaining text
+        remaining = remaining[earliest_match.end() :]
+
+    return result
 
 
 class ExecutionLog(RichLog):
@@ -65,7 +121,7 @@ class ExecutionLog(RichLog):
         """Add a log entry with Rich formatting."""
         # Apply level-based styling
         style_map = {
-            "info": "dim",
+            "info": "",
             "success": "green",
             "error": "red bold",
             "command": "yellow",
@@ -73,7 +129,7 @@ class ExecutionLog(RichLog):
         }
         style = style_map.get(level, "")
 
-        # Process message for code blocks
+        # Process message for code blocks and markdown
         formatted = self._format_message(message, style)
         if isinstance(formatted, list):
             for item in formatted:
@@ -88,19 +144,21 @@ class ExecutionLog(RichLog):
         # Check for code blocks
         matches = list(CODE_BLOCK_PATTERN.finditer(message))
         if not matches:
-            # No code blocks - return styled text
-            return Text(message, style=default_style)
+            # No code blocks - convert markdown and return styled text
+            return _markdown_to_rich_text(message, default_style)
 
         # Has code blocks - split and format
         result: list[Text | Syntax] = []
         last_end = 0
 
         for match in matches:
-            # Add text before code block
+            # Add text before code block (with markdown conversion)
             if match.start() > last_end:
                 before_text = message[last_end : match.start()].strip()
                 if before_text:
-                    result.append(Text(before_text, style=default_style))
+                    result.append(
+                        _markdown_to_rich_text(before_text, default_style)
+                    )
 
             # Add syntax-highlighted code block
             lang = match.group(1) or "text"
@@ -120,7 +178,7 @@ class ExecutionLog(RichLog):
         if last_end < len(message):
             after_text = message[last_end:].strip()
             if after_text:
-                result.append(Text(after_text, style=default_style))
+                result.append(_markdown_to_rich_text(after_text, default_style))
 
         return result
 
