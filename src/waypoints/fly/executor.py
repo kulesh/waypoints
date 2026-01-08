@@ -18,6 +18,7 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
+from waypoints.fly.execution_log import ExecutionLogWriter
 from waypoints.llm.client import StreamChunk, StreamComplete, agent_query
 from waypoints.models.project import Project
 from waypoints.models.waypoint import Waypoint
@@ -131,6 +132,7 @@ class WaypointExecutor:
         self.on_progress = on_progress
         self.steps: list[ExecutionStep] = []
         self._cancelled = False
+        self._log_writer: ExecutionLogWriter | None = None
 
     def cancel(self) -> None:
         """Cancel the execution."""
@@ -149,6 +151,10 @@ class WaypointExecutor:
             self.waypoint.id, self.waypoint.title
         )
 
+        # Initialize execution log
+        self._log_writer = ExecutionLogWriter(self.project, self.waypoint)
+        logger.info("Execution log: %s", self._log_writer.file_path)
+
         iteration = 0
         full_output = ""
         completion_marker = f"<waypoint-complete>{self.waypoint.id}</waypoint-complete>"
@@ -156,6 +162,7 @@ class WaypointExecutor:
         while iteration < MAX_ITERATIONS:
             if self._cancelled:
                 logger.info("Execution cancelled")
+                self._log_writer.log_completion(ExecutionResult.CANCELLED.value)
                 return ExecutionResult.CANCELLED
 
             iteration += 1
@@ -165,11 +172,16 @@ class WaypointExecutor:
                 iteration, MAX_ITERATIONS, "executing", f"Iteration {iteration}"
             )
 
+            # Log iteration start
+            iter_prompt = prompt if iteration == 1 else "Continue implementing."
+            self._log_writer.log_iteration_start(iteration, iter_prompt)
+
             # Run agent query with file and bash tools
             iteration_output = ""
+            iteration_cost: float | None = None
             try:
                 async for chunk in agent_query(
-                    prompt=prompt if iteration == 1 else "Continue implementing.",
+                    prompt=iter_prompt,
                     system_prompt=self._get_system_prompt(),
                     allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
                     cwd=str(project_path),
@@ -190,6 +202,14 @@ class WaypointExecutor:
                                 action="complete",
                                 output=iteration_output,
                             ))
+                            # Log completion
+                            self._log_writer.log_output(iteration, iteration_output)
+                            self._log_writer.log_iteration_end(
+                                iteration, iteration_cost
+                            )
+                            self._log_writer.log_completion(
+                                ExecutionResult.SUCCESS.value
+                            )
                             return ExecutionResult.SUCCESS
 
                         # Report streaming progress
@@ -199,6 +219,7 @@ class WaypointExecutor:
                         )
 
                     elif isinstance(chunk, StreamComplete):
+                        iteration_cost = chunk.cost_usd
                         logger.info(
                             "Iteration %d complete, cost: $%.4f",
                             iteration, chunk.cost_usd or 0
@@ -215,7 +236,14 @@ class WaypointExecutor:
                     action="error",
                     output=str(e),
                 ))
+                # Log error
+                self._log_writer.log_error(iteration, str(e))
+                self._log_writer.log_completion(ExecutionResult.FAILED.value)
                 return ExecutionResult.FAILED
+
+            # Log iteration output and end
+            self._log_writer.log_output(iteration, iteration_output)
+            self._log_writer.log_iteration_end(iteration, iteration_cost)
 
             # Record step
             self.steps.append(ExecutionStep(
@@ -227,12 +255,16 @@ class WaypointExecutor:
             # Check if agent is stuck or needs human help
             if self._needs_intervention(iteration_output):
                 logger.info("Human intervention needed")
+                self._log_writer.log_completion(
+                    ExecutionResult.INTERVENTION_NEEDED.value
+                )
                 return ExecutionResult.INTERVENTION_NEEDED
 
         # Max iterations reached
         logger.warning(
             "Max iterations (%d) reached without completion", MAX_ITERATIONS
         )
+        self._log_writer.log_completion(ExecutionResult.MAX_ITERATIONS.value)
         return ExecutionResult.MAX_ITERATIONS
 
     def _get_system_prompt(self) -> str:
