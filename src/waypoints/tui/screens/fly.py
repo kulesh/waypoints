@@ -582,6 +582,9 @@ class FlyScreen(Screen):
         """Initialize the screen."""
         self.app.sub_title = f"{self.project.name} · Fly"
 
+        # Clean up stale IN_PROGRESS from previous sessions
+        self._reset_stale_in_progress()
+
         # Update waypoint list
         list_panel = self.query_one("#waypoint-list", WaypointListPanel)
         list_panel.update_flight_plan(self.flight_plan)
@@ -861,3 +864,19 @@ class FlyScreen(Screen):
         """Save the flight plan to disk."""
         writer = FlightPlanWriter(self.project)
         writer.save(self.flight_plan)
+
+    def _reset_stale_in_progress(self) -> None:
+        """Reset any stale IN_PROGRESS waypoints to PENDING.
+
+        Called on session start to clean up state from crashed/killed sessions.
+        Only one waypoint should be IN_PROGRESS at a time, and only during
+        active execution in the current session.
+        """
+        changed = False
+        for wp in self.flight_plan.waypoints:
+            if wp.status == WaypointStatus.IN_PROGRESS:
+                wp.status = WaypointStatus.PENDING
+                changed = True
+                logger.info("Reset stale IN_PROGRESS waypoint %s to PENDING", wp.id)
+        if changed:
+            self._save_flight_plan()
