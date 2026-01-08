@@ -453,7 +453,7 @@ class FlyScreen(Screen):
     def _on_execution_progress(self, ctx: ExecutionContext) -> None:
         """Handle progress updates from the executor."""
         # Use call_from_thread to safely update UI from worker
-        self.call_from_thread(self._update_progress_ui, ctx)
+        self.app.call_from_thread(self._update_progress_ui, ctx)
 
     def _update_progress_ui(self, ctx: ExecutionContext) -> None:
         """Update UI with progress (called on main thread)."""
