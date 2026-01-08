@@ -304,5 +304,6 @@ class ProductSpecScreen(Screen):
                 "idea": self.idea,
                 "brief": self.brief,
                 "history": self.history,
+                "from_phase": "product-spec",
             },
         )

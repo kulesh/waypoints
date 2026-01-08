@@ -285,5 +285,6 @@ class IdeaBriefScreen(Screen):
                 "idea": self.idea,
                 "brief": self.brief_content,
                 "history": self.history,
+                "from_phase": "idea-brief",
             },
         )

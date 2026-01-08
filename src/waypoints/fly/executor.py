@@ -9,6 +9,10 @@ Key patterns from Ralph Wiggum technique:
 - File system as context (Claude reads its own previous work)
 - Clear completion markers: <waypoint-complete>WP-XXX</waypoint-complete>
 - Git checkpoints for progress
+
+Model-centric architecture ("Pilot and Dog"):
+- Model runs conceptual checklist, produces receipt
+- Code validates receipt before allowing commit
 """
 
 import logging
@@ -19,6 +23,7 @@ from enum import Enum
 from pathlib import Path
 
 from waypoints.fly.execution_log import ExecutionLogWriter
+from waypoints.git.config import Checklist
 from waypoints.llm.client import StreamChunk, StreamComplete, agent_query
 from waypoints.models.project import Project
 from waypoints.models.waypoint import Waypoint
@@ -63,11 +68,20 @@ class ExecutionContext:
 ProgressCallback = Callable[[ExecutionContext], None]
 
 
-def _build_prompt(waypoint: Waypoint, spec: str, project_path: Path) -> str:
+def _build_prompt(
+    waypoint: Waypoint,
+    spec: str,
+    project_path: Path,
+    checklist: Checklist,
+) -> str:
     """Build the execution prompt for a waypoint."""
     criteria_list = "\n".join(
         f"- [ ] {c}" for c in waypoint.acceptance_criteria
     )
+
+    checklist_items = "\n".join(f"- {item}" for item in checklist.items)
+    # Normalize waypoint ID for receipt filename
+    safe_wp_id = waypoint.id.lower().replace("-", "")
 
     return f"""## Current Waypoint: {waypoint.id}
 {waypoint.title}
@@ -101,8 +115,41 @@ You are implementing a software waypoint. Your task is to:
 - Create tests before or alongside implementation
 - Run tests after each significant change
 
+## Pre-Completion Checklist
+Before marking this waypoint complete, verify the following:
+{checklist_items}
+
+For each item, interpret it conceptually based on this project's technology stack.
+For example, "Code passes linting" might mean running `ruff check .` for Python.
+
+## Checklist Receipt
+After verifying the checklist, produce a receipt file at:
+`.waypoints/projects/[project-slug]/receipts/{safe_wp_id}-[timestamp].json`
+
+The receipt must contain:
+```json
+{{
+  "waypoint_id": "{waypoint.id}",
+  "completed_at": "[ISO timestamp]",
+  "checklist": [
+    {{
+      "item": "Code passes linting",
+      "status": "passed",
+      "evidence": "Ran ruff check . - 0 errors"
+    }},
+    {{
+      "item": "All tests pass",
+      "status": "passed",
+      "evidence": "Ran pytest - 10 passed"
+    }}
+  ]
+}}
+```
+
+Status options: "passed", "failed", "skipped" (with "reason" field if skipped).
+
 **COMPLETION SIGNAL:**
-When ALL acceptance criteria are met and tests pass, output this marker:
+When ALL acceptance criteria are met, checklist verified, and receipt produced, output:
 <waypoint-complete>{waypoint.id}</waypoint-complete>
 
 Only output the completion marker when you are confident the waypoint is done.
@@ -144,7 +191,11 @@ class WaypointExecutor:
         Returns the execution result (success, failed, max_iterations, etc.)
         """
         project_path = Path.cwd()  # Assume we're in the project directory
-        prompt = _build_prompt(self.waypoint, self.spec, project_path)
+
+        # Load checklist from project (creates default if not exists)
+        checklist = Checklist.load(self.project.get_path())
+
+        prompt = _build_prompt(self.waypoint, self.spec, project_path, checklist)
 
         logger.info(
             "Starting execution of %s: %s",
@@ -193,24 +244,46 @@ class WaypointExecutor:
                         # Check for completion marker
                         if completion_marker in full_output:
                             logger.info("Completion marker found!")
-                            self._report_progress(
-                                iteration, MAX_ITERATIONS,
-                                "complete", "Waypoint complete!"
-                            )
                             self.steps.append(ExecutionStep(
                                 iteration=iteration,
                                 action="complete",
                                 output=iteration_output,
                             ))
-                            # Log completion
+                            # Log completion marker found
                             self._log_writer.log_output(iteration, iteration_output)
                             self._log_writer.log_iteration_end(
                                 iteration, iteration_cost
                             )
-                            self._log_writer.log_completion(
-                                ExecutionResult.SUCCESS.value
+
+                            # Run finalize step to verify receipt
+                            receipt_valid = await self._finalize_and_verify_receipt(
+                                project_path
                             )
-                            return ExecutionResult.SUCCESS
+
+                            if receipt_valid:
+                                self._report_progress(
+                                    iteration, MAX_ITERATIONS,
+                                    "complete", "Waypoint complete with valid receipt!"
+                                )
+                                self._log_writer.log_completion(
+                                    ExecutionResult.SUCCESS.value
+                                )
+                                return ExecutionResult.SUCCESS
+                            else:
+                                # Receipt missing/invalid - warn but still succeed
+                                # (code trusts but logs the issue)
+                                logger.warning(
+                                    "Waypoint marked complete but receipt invalid. "
+                                    "Git commit will be skipped."
+                                )
+                                self._report_progress(
+                                    iteration, MAX_ITERATIONS,
+                                    "complete", "Complete (receipt missing/invalid)"
+                                )
+                                self._log_writer.log_completion(
+                                    ExecutionResult.SUCCESS.value
+                                )
+                                return ExecutionResult.SUCCESS
 
                         # Report streaming progress
                         self._report_progress(
@@ -309,6 +382,100 @@ When complete, output the completion marker specified in the instructions."""
         ]
         lower_output = output.lower()
         return any(marker in lower_output for marker in intervention_markers)
+
+    async def _finalize_and_verify_receipt(self, project_path: Path) -> bool:
+        """Run finalize step to ensure receipt is produced.
+
+        This is Step 2 of the model guidance - after completion marker,
+        we remind the model about the receipt and verify it exists.
+
+        Returns True if receipt is valid, False otherwise.
+        """
+        from waypoints.git.receipt import ReceiptValidator
+
+        validator = ReceiptValidator()
+        receipt_path = validator.find_latest_receipt(
+            self.project.get_path(), self.waypoint.id
+        )
+
+        if receipt_path:
+            result = validator.validate(receipt_path)
+            if result.valid:
+                logger.info("Receipt already exists and is valid: %s", receipt_path)
+                return True
+            else:
+                logger.warning("Receipt exists but invalid: %s", result.message)
+
+        # Receipt missing or invalid - send finalize prompt
+        logger.info("Sending finalize prompt to ensure receipt is produced")
+
+        # Normalize waypoint ID for receipt filename
+        safe_wp_id = self.waypoint.id.lower().replace("-", "")
+
+        finalize_prompt = f"""Waypoint complete. Produce the checklist receipt.
+
+**Required:** Create a JSON receipt at:
+`.waypoints/projects/{self.project.slug}/receipts/{safe_wp_id}-{{timestamp}}.json`
+
+Run the pre-completion checklist and record results:
+1. Linting (e.g., `ruff check .`)
+2. Tests (e.g., `pytest`)
+3. Type checking (e.g., `mypy src/`)
+4. Formatting (e.g., `black --check .`)
+
+Receipt structure:
+```json
+{{
+  "waypoint_id": "{self.waypoint.id}",
+  "completed_at": "[ISO timestamp]",
+  "checklist": [
+    {{
+      "item": "Code passes linting",
+      "status": "passed|failed|skipped",
+      "evidence": "..."
+    }}
+  ]
+}}
+```
+
+Use "skipped" with "reason" if a check is not applicable.
+Create the receipt now.
+"""
+
+        self._report_progress(
+            MAX_ITERATIONS, MAX_ITERATIONS, "finalizing", "Verifying checklist..."
+        )
+
+        try:
+            async for chunk in agent_query(
+                prompt=finalize_prompt,
+                system_prompt="Finalize waypoint. Produce the checklist receipt.",
+                allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+                cwd=str(project_path),
+            ):
+                if isinstance(chunk, StreamChunk):
+                    self._report_progress(
+                        MAX_ITERATIONS, MAX_ITERATIONS, "finalizing", chunk.text
+                    )
+        except Exception as e:
+            logger.error("Error during finalize: %s", e)
+            return False
+
+        # Check for receipt again
+        receipt_path = validator.find_latest_receipt(
+            self.project.get_path(), self.waypoint.id
+        )
+        if receipt_path:
+            result = validator.validate(receipt_path)
+            if result.valid:
+                logger.info("Receipt created and validated: %s", receipt_path)
+                return True
+            else:
+                logger.warning("Receipt invalid after finalize: %s", result.message)
+                return False
+
+        logger.warning("No receipt found after finalize prompt")
+        return False
 
 
 async def execute_waypoint(

@@ -21,6 +21,7 @@ from waypoints.fly.executor import (
     ExecutionResult,
     WaypointExecutor,
 )
+from waypoints.git import GitConfig, GitService, ReceiptValidator
 from waypoints.models import Project
 from waypoints.models.flight_plan import FlightPlan, FlightPlanWriter
 from waypoints.models.waypoint import Waypoint, WaypointStatus
@@ -987,6 +988,9 @@ class FlyScreen(Screen):
 
                 self._save_flight_plan()
 
+                # Commit waypoint completion (validates receipt first)
+                self._commit_waypoint(self.current_waypoint)
+
             detail_panel.clear_iteration()
             list_panel.update_flight_plan(self.flight_plan)
 
@@ -1039,6 +1043,81 @@ class FlyScreen(Screen):
         """Save the flight plan to disk."""
         writer = FlightPlanWriter(self.project)
         writer.save(self.flight_plan)
+
+    def _commit_waypoint(self, waypoint: Waypoint) -> None:
+        """Commit waypoint completion if receipt is valid.
+
+        Implements the "trust but verify" pattern:
+        - Model already produced receipt during execution
+        - We validate receipt exists and is well-formed
+        - If valid, commit the changes
+        - If invalid, skip commit but don't block
+        """
+        config = GitConfig.load()
+
+        if not config.auto_commit:
+            logger.debug("Auto-commit disabled, skipping")
+            return
+
+        git = GitService()
+
+        # Auto-init if needed
+        if not git.is_git_repo():
+            if config.auto_init:
+                result = git.init_repo()
+                if result.success:
+                    self.notify("Initialized git repository")
+                else:
+                    logger.warning("Failed to init git repo: %s", result.message)
+                    return
+            else:
+                logger.debug("Not a git repo and auto-init disabled")
+                return
+
+        # Validate receipt (the "dog" checking the "pilot's" work)
+        if config.run_checklist:
+            validator = ReceiptValidator()
+            receipt_path = validator.find_latest_receipt(
+                self.project.get_path(), waypoint.id
+            )
+
+            if receipt_path:
+                result = validator.validate(receipt_path)
+                if not result.valid:
+                    logger.warning(
+                        "Skipping commit - receipt invalid: %s", result.message
+                    )
+                    self.notify(
+                        f"Skipping commit: {result.message}", severity="warning"
+                    )
+                    return
+                logger.info("Receipt validated: %s", receipt_path)
+            else:
+                logger.warning("Skipping commit - no receipt found for %s", waypoint.id)
+                self.notify(
+                    f"Skipping commit: no receipt for {waypoint.id}", severity="warning"
+                )
+                return
+
+        # Stage project files and commit
+        git.stage_project_files(self.project.slug)
+
+        # Build commit message
+        commit_msg = f"feat({self.project.slug}): Complete {waypoint.title}"
+        result = git.commit(commit_msg)
+
+        if result.success:
+            if "Nothing to commit" not in result.message:
+                logger.info("Committed: %s", commit_msg)
+                self.notify(f"Committed: {waypoint.id}")
+
+                # Create tag for waypoint if configured
+                if config.create_waypoint_tags:
+                    tag_name = f"{self.project.slug}/{waypoint.id}"
+                    git.tag(tag_name, f"Completed waypoint: {waypoint.title}")
+        else:
+            logger.error("Commit failed: %s", result.message)
+            self.notify(f"Commit failed: {result.message}", severity="error")
 
     def _check_parent_completion(self, completed_waypoint: Waypoint) -> None:
         """Check if parent epic should be auto-completed.

@@ -219,5 +219,6 @@ class IdeationQAScreen(BaseDialogueScreen):
                 "project": self.project,
                 "idea": self.idea,
                 "history": self.history,
+                "from_phase": "ideation-qa",
             },
         )
