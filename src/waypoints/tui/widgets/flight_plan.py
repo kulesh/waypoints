@@ -311,10 +311,16 @@ class WaypointPreviewPanel(VerticalScroll):
             else:
                 content.mount(Static("Depends on: None", classes="wp-meta"))
 
-            # Criteria count
-            criteria_count = len(waypoint.acceptance_criteria)
-            criteria_text = f"Criteria: {criteria_count} items"
-            content.mount(Static(criteria_text, classes="wp-meta"))
+            # Acceptance criteria preview (show first 3)
+            if waypoint.acceptance_criteria:
+                content.mount(Static("Criteria:", classes="wp-meta"))
+                for i, criterion in enumerate(waypoint.acceptance_criteria[:3]):
+                    # Truncate long criteria
+                    text = criterion if len(criterion) <= 40 else criterion[:37] + "..."
+                    content.mount(Static(f"  • {text}", classes="wp-meta"))
+                if len(waypoint.acceptance_criteria) > 3:
+                    remaining = len(waypoint.acceptance_criteria) - 3
+                    content.mount(Static(f"  ... +{remaining} more", classes="wp-meta"))
 
             # Hint
             content.mount(Static("Press Enter for details", classes="wp-hint"))
