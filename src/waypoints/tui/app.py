@@ -7,6 +7,7 @@ from textual.app import App
 from textual.binding import Binding
 
 from waypoints.config import settings
+from waypoints.tui.screens.chart import ChartScreen
 from waypoints.tui.screens.idea_brief import IdeaBriefScreen
 from waypoints.tui.screens.ideation import IdeationScreen
 from waypoints.tui.screens.ideation_qa import IdeationQAScreen
@@ -76,7 +77,16 @@ class WaypointsApp(App):
                     history=data.get("history"),
                 )
             )
-        # Future: add Waypoints screen
+        elif phase == "chart":
+            self.switch_screen(
+                ChartScreen(
+                    project=project,
+                    spec=data.get("spec", ""),
+                    idea=data.get("idea"),
+                    brief=data.get("brief"),
+                    history=data.get("history"),
+                )
+            )
 
     def action_toggle_dark(self) -> None:
         """Toggle dark mode (saving handled by watch_theme)."""

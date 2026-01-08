@@ -288,7 +288,7 @@ class ProductSpecScreen(Screen):
         self._save_to_disk()
 
     def action_proceed_to_waypoints(self) -> None:
-        """Proceed to Waypoints planning phase."""
+        """Proceed to CHART phase (waypoint planning)."""
         if self.is_editing:
             editor = self.query_one("#spec-editor", TextArea)
             self.spec_content = editor.text
@@ -296,5 +296,13 @@ class ProductSpecScreen(Screen):
         # Save before proceeding
         self._save_to_disk()
 
-        # Future: implement waypoints phase
-        self.notify("Waypoints phase coming soon!", severity="information")
+        self.app.switch_phase(  # type: ignore
+            "chart",
+            {
+                "project": self.project,
+                "spec": self.spec_content,
+                "idea": self.idea,
+                "brief": self.brief,
+                "history": self.history,
+            },
+        )
