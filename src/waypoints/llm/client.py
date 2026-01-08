@@ -141,25 +141,35 @@ async def agent_query(
 
     Yields StreamChunk for each text piece, then StreamComplete at the end.
     """
-    options = ClaudeAgentOptions(
-        allowed_tools=allowed_tools or [],
-        system_prompt=system_prompt,
-        cwd=cwd,
-    )
+    import os
 
-    full_text = ""
-    cost: float | None = None
+    # Clear invalid API key to force web auth
+    env_backup = os.environ.pop("ANTHROPIC_API_KEY", None)
 
-    async for message in query(prompt=prompt, options=options):
-        if isinstance(message, AssistantMessage):
-            for block in message.content:
-                if isinstance(block, TextBlock):
-                    full_text += block.text
-                    yield StreamChunk(text=block.text)
-        elif isinstance(message, ResultMessage):
-            cost = message.total_cost_usd
+    try:
+        options = ClaudeAgentOptions(
+            allowed_tools=allowed_tools or [],
+            system_prompt=system_prompt,
+            cwd=cwd,
+        )
 
-    yield StreamComplete(full_text=full_text, cost_usd=cost)
+        full_text = ""
+        cost: float | None = None
+
+        async for message in query(prompt=prompt, options=options):
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        full_text += block.text
+                        yield StreamChunk(text=block.text)
+            elif isinstance(message, ResultMessage):
+                cost = message.total_cost_usd
+
+        yield StreamComplete(full_text=full_text, cost_usd=cost)
+    finally:
+        # Restore env var if it was set
+        if env_backup is not None:
+            os.environ["ANTHROPIC_API_KEY"] = env_backup
 
 
 # Backwards compatibility alias
