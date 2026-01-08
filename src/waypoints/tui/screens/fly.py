@@ -166,9 +166,7 @@ class ExecutionLog(RichLog):
             if match.start() > last_end:
                 before_text = message[last_end : match.start()].strip()
                 if before_text:
-                    result.append(
-                        _markdown_to_rich_text(before_text, default_style)
-                    )
+                    result.append(_markdown_to_rich_text(before_text, default_style))
 
             # Add syntax-highlighted code block
             lang = match.group(1) or "text"
@@ -348,10 +346,7 @@ class WaypointDetailPanel(Vertical):
             pass  # Fall through to show the selected waypoint
 
         # If we're already showing historical output for this waypoint, don't reload
-        if (
-            self._showing_output_for == waypoint.id
-            and not self._is_live_output
-        ):
+        if self._showing_output_for == waypoint.id and not self._is_live_output:
             return
 
         # Clear and show appropriate content based on status
@@ -473,13 +468,9 @@ class WaypointDetailPanel(Vertical):
         log.log("")
 
         # Calculate progress
-        complete = sum(
-            1 for c in children if c.status == WaypointStatus.COMPLETE
-        )
+        complete = sum(1 for c in children if c.status == WaypointStatus.COMPLETE)
         failed = sum(1 for c in children if c.status == WaypointStatus.FAILED)
-        in_progress = sum(
-            1 for c in children if c.status == WaypointStatus.IN_PROGRESS
-        )
+        in_progress = sum(1 for c in children if c.status == WaypointStatus.IN_PROGRESS)
 
         # Progress summary
         if complete == len(children):
@@ -624,7 +615,8 @@ class WaypointListPanel(Vertical):
 
         total = len(self._flight_plan.waypoints)
         complete = sum(
-            1 for wp in self._flight_plan.waypoints
+            1
+            for wp in self._flight_plan.waypoints
             if wp.status == WaypointStatus.COMPLETE
         )
 
@@ -652,15 +644,17 @@ class WaypointListPanel(Vertical):
             ExecutionState.DONE: (" ✓ Done", "bold green"),
             ExecutionState.INTERVENTION: (" ⚠ Needs Help", "bold red"),
         }
-        state_text, state_style = state_styles.get(
-            self._execution_state, ("", "")
-        )
+        state_text, state_style = state_styles.get(self._execution_state, ("", ""))
         if state_text:
             # Blink the icon when running or pause pending
-            if self._execution_state in (
-                ExecutionState.RUNNING,
-                ExecutionState.PAUSE_PENDING,
-            ) and not self._blink_visible:
+            if (
+                self._execution_state
+                in (
+                    ExecutionState.RUNNING,
+                    ExecutionState.PAUSE_PENDING,
+                )
+                and not self._blink_visible
+            ):
                 # Show text without the icon symbol
                 if self._execution_state == ExecutionState.RUNNING:
                     text.append("   Running", style=state_style)
@@ -763,9 +757,7 @@ class FlyScreen(Screen):
         """Update detail panel when tree selection changes."""
         if event.node.data:
             waypoint = event.node.data
-            detail_panel = self.query_one(
-                "#waypoint-detail", WaypointDetailPanel
-            )
+            detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
             active_id = (
                 self.current_waypoint.id
                 if self.current_waypoint
@@ -807,8 +799,7 @@ class FlyScreen(Screen):
                 def dep_complete(dep_id: str) -> bool:
                     dep_wp = self.flight_plan.get_waypoint(dep_id)
                     return (
-                        dep_wp is not None
-                        and dep_wp.status == WaypointStatus.COMPLETE
+                        dep_wp is not None and dep_wp.status == WaypointStatus.COMPLETE
                     )
 
                 deps_met = all(dep_complete(dep_id) for dep_id in wp.dependencies)
@@ -885,10 +876,13 @@ class FlyScreen(Screen):
 
     def action_back(self) -> None:
         """Go back to CHART screen."""
-        self.app.switch_phase("chart", {
-            "project": self.project,
-            "spec": self.spec,
-        })
+        self.app.switch_phase(
+            "chart",
+            {
+                "project": self.project,
+                "spec": self.spec,
+            },
+        )
 
     def _execute_current_waypoint(self) -> None:
         """Execute the current waypoint using agentic AI."""
@@ -1151,7 +1145,8 @@ class FlyScreen(Screen):
             parent.completed_at = datetime.now()
             logger.info(
                 "Auto-completed parent epic %s (all %d children complete)",
-                parent.id, len(children)
+                parent.id,
+                len(children),
             )
 
             # Recursively check grandparent
