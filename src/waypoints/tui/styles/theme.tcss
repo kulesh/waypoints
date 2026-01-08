@@ -1,0 +1,23 @@
+/* Waypoints TUI Theme */
+
+/* Global styling */
+Screen {
+    background: $surface;
+}
+
+/* Header customization */
+Header {
+    dock: top;
+    background: $primary;
+}
+
+/* Footer customization */
+Footer {
+    dock: bottom;
+}
+
+/* Split layout for dialogue screens */
+.split-layout {
+    width: 100%;
+    height: 100%;
+}
