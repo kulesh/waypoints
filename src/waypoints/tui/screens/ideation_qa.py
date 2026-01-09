@@ -10,7 +10,7 @@ from textual.containers import Vertical
 from textual.widgets import Footer, Header, Rule, Static
 
 from waypoints.llm.client import ChatClient
-from waypoints.models import Project, SessionWriter
+from waypoints.models import JourneyState, Project, SessionWriter
 from waypoints.models.dialogue import MessageRole
 from waypoints.tui.messages import (
     StreamingChunk,
@@ -129,6 +129,10 @@ class IdeationQAScreen(BaseDialogueScreen):
     def on_mount(self) -> None:
         """Initialize Q&A with first question."""
         self.app.sub_title = f"{self.project.name} · {self.phase_name}"
+
+        # Transition journey state: SPARK_ENTERING -> SHAPE_QA
+        self.project.transition_journey(JourneyState.SHAPE_QA)
+
         self._start_qa()
 
     def handle_user_message(self, text: str) -> None:

@@ -12,7 +12,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Static
 
 from waypoints.llm.client import ChatClient
-from waypoints.models import Project
+from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader, FlightPlanWriter
 from waypoints.models.waypoint import Waypoint, WaypointStatus
@@ -180,7 +180,7 @@ class ChartScreen(Screen):
         self.flight_plan = FlightPlanReader.load(self.project)
 
         if self.flight_plan and self.flight_plan.waypoints:
-            # Show existing plan
+            # Show existing plan - already in CHART_REVIEW state
             self._show_panels()
             self._update_panels()
             logger.info(
@@ -189,6 +189,8 @@ class ChartScreen(Screen):
             )
         else:
             # Generate new plan
+            # Transition journey state: SHAPE_SPEC_REVIEW -> CHART_GENERATING
+            self.project.transition_journey(JourneyState.CHART_GENERATING)
             self._generate_waypoints()
 
     def _show_panels(self) -> None:
@@ -272,6 +274,10 @@ class ChartScreen(Screen):
         """Finalize after generation completes."""
         self._show_panels()
         self._update_panels()
+
+        # Transition journey state: CHART_GENERATING -> CHART_REVIEW
+        self.project.transition_journey(JourneyState.CHART_REVIEW)
+
         self.notify("Flight plan generated!", severity="information")
         logger.info("Flight plan generation complete")
 
@@ -526,6 +532,9 @@ class ChartScreen(Screen):
         if errors:
             self.notify(f"Fix issues: {errors[0]}", severity="error")
             return
+
+        # Transition journey state: CHART_REVIEW -> FLY_READY
+        self.project.transition_journey(JourneyState.FLY_READY)
 
         # Transition to FLY phase
         self.app.switch_phase(
