@@ -2,7 +2,7 @@
 
 import logging
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 
 from rich.syntax import Syntax
@@ -737,6 +737,10 @@ class FlyScreen(Screen):
         self._executor: WaypointExecutor | None = None
         self._current_intervention: Intervention | None = None
         self._additional_iterations: int = 0
+        # Timer tracking
+        self._execution_start: datetime | None = None
+        self._elapsed_before_pause: float = 0.0
+        self._ticker_timer: object | None = None
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()
@@ -834,10 +838,8 @@ class FlyScreen(Screen):
         self.current_waypoint = None
         self.execution_state = ExecutionState.DONE
 
-    def watch_execution_state(self, state: ExecutionState) -> None:
-        """Update UI when execution state changes."""
-        # Update status bar message
-        status_bar = self.query_one("#status-bar", Static)
+    def _get_state_message(self, state: ExecutionState) -> str:
+        """Get the status bar message for a given execution state."""
         messages = {
             ExecutionState.IDLE: "Press 'r' to start execution",
             ExecutionState.RUNNING: "Executing waypoint...",
@@ -846,7 +848,68 @@ class FlyScreen(Screen):
             ExecutionState.DONE: "All waypoints complete!",
             ExecutionState.INTERVENTION: "Human intervention needed",
         }
-        status_bar.update(messages.get(state, ""))
+        return messages.get(state, "")
+
+    def _update_ticker(self) -> None:
+        """Update the status bar with elapsed time and cost."""
+        if self._execution_start is None:
+            return
+
+        current_elapsed = (datetime.now(UTC) - self._execution_start).total_seconds()
+        total_elapsed = self._elapsed_before_pause + current_elapsed
+        minutes, seconds = divmod(int(total_elapsed), 60)
+
+        cost = (
+            self.app.metrics_collector.total_cost if self.app.metrics_collector else 0.0
+        )
+
+        status_bar = self.query_one("#status-bar", Static)
+        message = self._get_state_message(self.execution_state)
+        status_bar.update(f"⏱ {minutes}:{seconds:02d} | ${cost:.2f}    {message}")
+
+    def _update_status_bar(self, state: ExecutionState) -> None:
+        """Update the status bar with state message and optional cost."""
+        status_bar = self.query_one("#status-bar", Static)
+        message = self._get_state_message(state)
+
+        if state == ExecutionState.RUNNING and self._execution_start:
+            # Timer callback will handle updates
+            return
+
+        # Show cost even when not running (if there's any)
+        cost = (
+            self.app.metrics_collector.total_cost if self.app.metrics_collector else 0.0
+        )
+        if cost > 0:
+            status_bar.update(f"${cost:.2f}    {message}")
+        else:
+            status_bar.update(message)
+
+    def watch_execution_state(self, state: ExecutionState) -> None:
+        """Update UI when execution state changes."""
+        # Handle timer based on state transitions
+        if state == ExecutionState.RUNNING:
+            # Start or resume timer
+            self._execution_start = datetime.now(UTC)
+            self._ticker_timer = self.set_interval(1.0, self._update_ticker)
+        elif state == ExecutionState.PAUSED:
+            # Accumulate elapsed time before stopping
+            if self._execution_start:
+                elapsed = (datetime.now(UTC) - self._execution_start).total_seconds()
+                self._elapsed_before_pause += elapsed
+            if self._ticker_timer:
+                self._ticker_timer.stop()
+                self._ticker_timer = None
+        elif state in (ExecutionState.DONE, ExecutionState.IDLE):
+            # Reset everything
+            if self._ticker_timer:
+                self._ticker_timer.stop()
+                self._ticker_timer = None
+            self._elapsed_before_pause = 0.0
+            self._execution_start = None
+
+        # Update status bar
+        self._update_status_bar(state)
 
         # Update progress bar with execution state
         list_panel = self.query_one("#waypoint-list", WaypointListPanel)
