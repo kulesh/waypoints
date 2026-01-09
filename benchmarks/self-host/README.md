@@ -5,12 +5,12 @@ This directory contains the infrastructure for testing Waypoints by having it bu
 ## Quick Start (Semi-Automatic)
 
 ```bash
-# 1. Create isolated benchmark directory (OUTSIDE dev tree!)
-mkdir -p ~/benchmarks/waypoints-self-host
-cd ~/benchmarks/waypoints-self-host
+# 1. Create isolated flight test directory (OUTSIDE dev tree!)
+mkdir -p ~/flight-tests/waypoints-self-host
 
-# 2. Run Waypoints FROM dev tree, execute IN benchmark directory
-uv run --directory /Users/kulesh/dev/waypoints waypoints
+# 2. Run Waypoints FROM dev tree, artifacts go to flight test directory
+uv run --directory /Users/kulesh/dev/waypoints waypoints \
+    --workdir ~/flight-tests/waypoints-self-host
 
 # 3. Enter project details:
 #    Name: "Waypoints V2"
@@ -19,6 +19,10 @@ uv run --directory /Users/kulesh/dev/waypoints waypoints
 # 4. Follow the phases, observe results
 # 5. Fill out review-checklist.md
 ```
+
+**Note**: The `--workdir` flag is required when using `uv run --directory` because
+`--directory` changes the working directory. Without `--workdir`, artifacts would
+be written to the dev tree.
 
 ## Directory Structure
 
