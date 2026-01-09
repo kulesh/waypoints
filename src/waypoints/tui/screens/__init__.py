@@ -6,6 +6,7 @@ from .fly import FlyScreen
 from .idea_brief import IdeaBriefScreen
 from .ideation import IdeationScreen
 from .ideation_qa import IdeationQAScreen
+from .intervention import InterventionModal
 from .product_spec import ProductSpecScreen
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "IdeaBriefScreen",
     "IdeationScreen",
     "IdeationQAScreen",
+    "InterventionModal",
     "ProductSpecScreen",
 ]

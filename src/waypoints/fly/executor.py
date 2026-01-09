@@ -23,6 +23,11 @@ from enum import Enum
 from pathlib import Path
 
 from waypoints.fly.execution_log import ExecutionLogWriter
+from waypoints.fly.intervention import (
+    Intervention,
+    InterventionNeededError,
+    InterventionType,
+)
 from waypoints.git.config import Checklist
 from waypoints.llm.client import StreamChunk, StreamComplete, agent_query
 from waypoints.models.project import Project
@@ -170,11 +175,13 @@ class WaypointExecutor:
         waypoint: Waypoint,
         spec: str,
         on_progress: ProgressCallback | None = None,
+        max_iterations: int = MAX_ITERATIONS,
     ) -> None:
         self.project = project
         self.waypoint = waypoint
         self.spec = spec
         self.on_progress = on_progress
+        self.max_iterations = max_iterations
         self.steps: list[ExecutionStep] = []
         self._cancelled = False
         self._log_writer: ExecutionLogWriter | None = None
@@ -207,17 +214,17 @@ class WaypointExecutor:
         full_output = ""
         completion_marker = f"<waypoint-complete>{self.waypoint.id}</waypoint-complete>"
 
-        while iteration < MAX_ITERATIONS:
+        while iteration < self.max_iterations:
             if self._cancelled:
                 logger.info("Execution cancelled")
                 self._log_writer.log_completion(ExecutionResult.CANCELLED.value)
                 return ExecutionResult.CANCELLED
 
             iteration += 1
-            logger.info("Iteration %d/%d", iteration, MAX_ITERATIONS)
+            logger.info("Iteration %d/%d", iteration, self.max_iterations)
 
             self._report_progress(
-                iteration, MAX_ITERATIONS, "executing", f"Iteration {iteration}"
+                iteration, self.max_iterations, "executing", f"Iteration {iteration}"
             )
 
             # Log iteration start
@@ -290,7 +297,7 @@ class WaypointExecutor:
 
                         # Report streaming progress
                         self._report_progress(
-                            iteration, MAX_ITERATIONS, "streaming", chunk.text
+                            iteration, self.max_iterations, "streaming", chunk.text
                         )
 
                     elif isinstance(chunk, StreamComplete):
@@ -303,7 +310,9 @@ class WaypointExecutor:
 
             except Exception as e:
                 logger.exception("Error during iteration %d: %s", iteration, e)
-                self._report_progress(iteration, MAX_ITERATIONS, "error", f"Error: {e}")
+                self._report_progress(
+                    iteration, self.max_iterations, "error", f"Error: {e}"
+                )
                 self.steps.append(
                     ExecutionStep(
                         iteration=iteration,
@@ -314,7 +323,17 @@ class WaypointExecutor:
                 # Log error
                 self._log_writer.log_error(iteration, str(e))
                 self._log_writer.log_completion(ExecutionResult.FAILED.value)
-                return ExecutionResult.FAILED
+
+                # Raise InterventionNeededError for recoverable errors
+                intervention = Intervention(
+                    type=InterventionType.EXECUTION_ERROR,
+                    waypoint=self.waypoint,
+                    iteration=iteration,
+                    max_iterations=self.max_iterations,
+                    error_summary=str(e),
+                    context={"full_output": full_output[-2000:]},
+                )
+                raise InterventionNeededError(intervention) from e
 
             # Log iteration output and end
             self._log_writer.log_output(iteration, iteration_output)
@@ -335,12 +354,34 @@ class WaypointExecutor:
                 self._log_writer.log_completion(
                     ExecutionResult.INTERVENTION_NEEDED.value
                 )
-                return ExecutionResult.INTERVENTION_NEEDED
+                intervention = Intervention(
+                    type=InterventionType.USER_REQUESTED,
+                    waypoint=self.waypoint,
+                    iteration=iteration,
+                    max_iterations=self.max_iterations,
+                    error_summary=self._extract_intervention_reason(iteration_output),
+                    context={"full_output": full_output[-2000:]},
+                )
+                raise InterventionNeededError(intervention)
 
         # Max iterations reached
-        logger.warning("Max iterations (%d) reached without completion", MAX_ITERATIONS)
+        logger.warning(
+            "Max iterations (%d) reached without completion", self.max_iterations
+        )
         self._log_writer.log_completion(ExecutionResult.MAX_ITERATIONS.value)
-        return ExecutionResult.MAX_ITERATIONS
+
+        intervention = Intervention(
+            type=InterventionType.ITERATION_LIMIT,
+            waypoint=self.waypoint,
+            iteration=iteration,
+            max_iterations=self.max_iterations,
+            error_summary=(
+                f"Waypoint did not complete after {self.max_iterations} iterations. "
+                "The agent may be stuck or the task may be too complex."
+            ),
+            context={"full_output": full_output[-2000:]},
+        )
+        raise InterventionNeededError(intervention)
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the agent."""
@@ -384,6 +425,29 @@ When complete, output the completion marker specified in the instructions."""
         ]
         lower_output = output.lower()
         return any(marker in lower_output for marker in intervention_markers)
+
+    def _extract_intervention_reason(self, output: str) -> str:
+        """Extract a meaningful intervention reason from the output."""
+        intervention_markers = [
+            "cannot proceed",
+            "need human help",
+            "blocked by",
+            "unable to complete",
+            "requires manual",
+        ]
+        lower_output = output.lower()
+
+        # Find which marker was triggered
+        for marker in intervention_markers:
+            if marker in lower_output:
+                # Extract surrounding context
+                idx = lower_output.find(marker)
+                start = max(0, idx - 100)
+                end = min(len(output), idx + len(marker) + 200)
+                context = output[start:end].strip()
+                return f"Agent indicated: ...{context}..."
+
+        return "Agent requested human intervention"
 
     async def _finalize_and_verify_receipt(self, project_path: Path) -> bool:
         """Run finalize step to ensure receipt is produced.
@@ -445,7 +509,10 @@ Create the receipt now.
 """
 
         self._report_progress(
-            MAX_ITERATIONS, MAX_ITERATIONS, "finalizing", "Verifying checklist..."
+            self.max_iterations,
+            self.max_iterations,
+            "finalizing",
+            "Verifying checklist...",
         )
 
         try:
@@ -457,7 +524,10 @@ Create the receipt now.
             ):
                 if isinstance(chunk, StreamChunk):
                     self._report_progress(
-                        MAX_ITERATIONS, MAX_ITERATIONS, "finalizing", chunk.text
+                        self.max_iterations,
+                        self.max_iterations,
+                        "finalizing",
+                        chunk.text,
                     )
         except Exception as e:
             logger.error("Error during finalize: %s", e)
@@ -485,6 +555,7 @@ async def execute_waypoint(
     waypoint: Waypoint,
     spec: str,
     on_progress: ProgressCallback | None = None,
+    max_iterations: int = MAX_ITERATIONS,
 ) -> ExecutionResult:
     """Convenience function to execute a single waypoint.
 
@@ -493,9 +564,15 @@ async def execute_waypoint(
         waypoint: The waypoint to execute
         spec: The product specification for context
         on_progress: Optional callback for progress updates
+        max_iterations: Maximum iterations before intervention (default 10)
 
     Returns:
         ExecutionResult indicating success, failure, or other outcomes
+
+    Raises:
+        InterventionNeededError: When execution fails and needs human intervention
     """
-    executor = WaypointExecutor(project, waypoint, spec, on_progress)
+    executor = WaypointExecutor(
+        project, waypoint, spec, on_progress, max_iterations=max_iterations
+    )
     return await executor.execute()
