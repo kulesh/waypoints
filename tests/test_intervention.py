@@ -1,6 +1,5 @@
 """Tests for the Intervention protocol."""
 
-
 import pytest
 
 from waypoints.fly.intervention import (
