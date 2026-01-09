@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from waypoints.fly.execution_log import ExecutionLogWriter
 from waypoints.fly.intervention import (
@@ -32,6 +33,9 @@ from waypoints.git.config import Checklist
 from waypoints.llm.client import StreamChunk, StreamComplete, agent_query
 from waypoints.models.project import Project
 from waypoints.models.waypoint import Waypoint
+
+if TYPE_CHECKING:
+    from waypoints.llm.metrics import MetricsCollector
 
 logger = logging.getLogger(__name__)
 
@@ -176,12 +180,14 @@ class WaypointExecutor:
         spec: str,
         on_progress: ProgressCallback | None = None,
         max_iterations: int = MAX_ITERATIONS,
+        metrics_collector: "MetricsCollector | None" = None,
     ) -> None:
         self.project = project
         self.waypoint = waypoint
         self.spec = spec
         self.on_progress = on_progress
         self.max_iterations = max_iterations
+        self.metrics_collector = metrics_collector
         self.steps: list[ExecutionStep] = []
         self._cancelled = False
         self._log_writer: ExecutionLogWriter | None = None
@@ -240,6 +246,9 @@ class WaypointExecutor:
                     system_prompt=self._get_system_prompt(),
                     allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
                     cwd=str(project_path),
+                    metrics_collector=self.metrics_collector,
+                    phase="fly",
+                    waypoint_id=self.waypoint.id,
                 ):
                     if isinstance(chunk, StreamChunk):
                         iteration_output += chunk.text
@@ -521,6 +530,9 @@ Create the receipt now.
                 system_prompt="Finalize waypoint. Produce the checklist receipt.",
                 allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
                 cwd=str(project_path),
+                metrics_collector=self.metrics_collector,
+                phase="fly",
+                waypoint_id=self.waypoint.id,
             ):
                 if isinstance(chunk, StreamChunk):
                     self._report_progress(
@@ -556,6 +568,7 @@ async def execute_waypoint(
     spec: str,
     on_progress: ProgressCallback | None = None,
     max_iterations: int = MAX_ITERATIONS,
+    metrics_collector: "MetricsCollector | None" = None,
 ) -> ExecutionResult:
     """Convenience function to execute a single waypoint.
 
@@ -565,6 +578,7 @@ async def execute_waypoint(
         spec: The product specification for context
         on_progress: Optional callback for progress updates
         max_iterations: Maximum iterations before intervention (default 10)
+        metrics_collector: Optional collector for recording LLM metrics
 
     Returns:
         ExecutionResult indicating success, failure, or other outcomes
@@ -573,6 +587,11 @@ async def execute_waypoint(
         InterventionNeededError: When execution fails and needs human intervention
     """
     executor = WaypointExecutor(
-        project, waypoint, spec, on_progress, max_iterations=max_iterations
+        project,
+        waypoint,
+        spec,
+        on_progress,
+        max_iterations=max_iterations,
+        metrics_collector=metrics_collector,
     )
     return await executor.execute()

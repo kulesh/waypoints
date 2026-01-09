@@ -53,6 +53,7 @@ def _format_waypoint_label(
     epic_progress: tuple[int, int] | None = None,
     width: int = 80,
     blink_visible: bool = True,
+    cost: float | None = None,
 ) -> Text:
     """Format a waypoint for display in the tree.
 
@@ -62,6 +63,7 @@ def _format_waypoint_label(
         epic_progress: Tuple of (complete_count, total_count) for epics.
         width: Target width for padding (fills with spaces).
         blink_visible: Whether to show the icon (for blink animation).
+        cost: Optional cost in USD to display.
 
     Returns:
         Rich Text object with colored icon.
@@ -90,8 +92,13 @@ def _format_waypoint_label(
         complete, total = epic_progress
         progress_suffix = f" ({complete}/{total})"
 
-    # Calculate max title length (accounting for icon + space + id + progress)
-    used_width = 2 + len(id_text) + len(progress_suffix)  # icon + space + id + progress
+    # Build cost suffix for completed waypoints
+    cost_suffix = ""
+    if cost is not None and cost > 0:
+        cost_suffix = f" [${cost:.2f}]"
+
+    # Calculate max title length (accounting for icon + space + id + progress + cost)
+    used_width = 2 + len(id_text) + len(progress_suffix) + len(cost_suffix)
     max_title_len = width - used_width
 
     title = waypoint.title
@@ -105,8 +112,14 @@ def _format_waypoint_label(
     if progress_suffix:
         result.append(progress_suffix, style="dim")
 
+    # Add cost suffix (in green for visibility)
+    if cost_suffix:
+        result.append(cost_suffix, style="green")
+
     # Pad to full width
-    current_len = 2 + len(id_text) + len(title) + len(progress_suffix)
+    current_len = (
+        2 + len(id_text) + len(title) + len(progress_suffix) + len(cost_suffix)
+    )
     if current_len < width:
         result.append(" " * (width - current_len))
 
@@ -165,6 +178,7 @@ class FlightPlanTree(Tree[Waypoint]):
     def __init__(self, **kwargs: object) -> None:
         super().__init__("PLAN", **kwargs)
         self._flight_plan: FlightPlan | None = None
+        self._cost_by_waypoint: dict[str, float] = {}
         # Hide the root node - we just want to show waypoints
         self.show_root = False
         # Blink state for active waypoints
@@ -180,9 +194,19 @@ class FlightPlanTree(Tree[Waypoint]):
         self._blink_visible = not self._blink_visible
         self._update_active_labels()
 
-    def update_flight_plan(self, flight_plan: FlightPlan) -> None:
-        """Update the tree with a new flight plan."""
+    def update_flight_plan(
+        self,
+        flight_plan: FlightPlan,
+        cost_by_waypoint: dict[str, float] | None = None,
+    ) -> None:
+        """Update the tree with a new flight plan.
+
+        Args:
+            flight_plan: The flight plan to display.
+            cost_by_waypoint: Optional dict mapping waypoint ID to cost in USD.
+        """
         self._flight_plan = flight_plan
+        self._cost_by_waypoint = cost_by_waypoint or {}
         self._rebuild_tree()
 
     def _rebuild_tree(self) -> None:
@@ -218,11 +242,15 @@ class FlightPlanTree(Tree[Waypoint]):
                     )
                     epic_progress = (complete, len(children))
 
+                # Get cost for this waypoint
+                wp_cost = self._cost_by_waypoint.get(wp.id)
+
                 label = _format_waypoint_label(
                     wp,
                     is_epic=is_epic,
                     epic_progress=epic_progress,
                     blink_visible=self._blink_visible,
+                    cost=wp_cost,
                 )
 
                 # Check if this waypoint has children
@@ -260,11 +288,15 @@ class FlightPlanTree(Tree[Waypoint]):
                     )
                     epic_progress = (complete, len(children))
 
+                # Get cost for this waypoint
+                wp_cost = self._cost_by_waypoint.get(node.data.id)
+
                 label = _format_waypoint_label(
                     node.data,
                     is_epic=is_epic,
                     epic_progress=epic_progress,
                     blink_visible=self._blink_visible,
+                    cost=wp_cost,
                 )
                 node.set_label(label)
             for child in node.children:

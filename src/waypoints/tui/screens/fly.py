@@ -601,13 +601,20 @@ class WaypointListPanel(Vertical):
         self,
         flight_plan: FlightPlan,
         execution_state: ExecutionState | None = None,
+        cost_by_waypoint: dict[str, float] | None = None,
     ) -> None:
-        """Update the waypoint list and overall progress."""
+        """Update the waypoint list and overall progress.
+
+        Args:
+            flight_plan: The flight plan to display.
+            execution_state: Optional new execution state.
+            cost_by_waypoint: Optional dict mapping waypoint ID to cost in USD.
+        """
         self._flight_plan = flight_plan
         if execution_state is not None:
             self._execution_state = execution_state
         tree = self.query_one("#waypoint-tree", FlightPlanTree)
-        tree.update_flight_plan(flight_plan)
+        tree.update_flight_plan(flight_plan, cost_by_waypoint)
         self._update_overall_progress()
 
     def update_execution_state(self, state: ExecutionState) -> None:
@@ -749,12 +756,14 @@ class FlyScreen(Screen):
         """Initialize the screen."""
         self.app.sub_title = f"{self.project.name} · Fly"
 
+        # Set up metrics collection for this project
+        self.app.set_project_for_metrics(self.project)
+
         # Clean up stale IN_PROGRESS from previous sessions
         self._reset_stale_in_progress()
 
-        # Update waypoint list
-        list_panel = self.query_one("#waypoint-list", WaypointListPanel)
-        list_panel.update_flight_plan(self.flight_plan)
+        # Update waypoint list with cost data
+        self._refresh_waypoint_list()
 
         # Select first pending waypoint
         self._select_next_waypoint()
@@ -926,8 +935,7 @@ class FlyScreen(Screen):
         detail_panel.clear_iteration()
 
         # Refresh the waypoint list to show blinking status
-        list_panel = self.query_one("#waypoint-list", WaypointListPanel)
-        list_panel.update_flight_plan(self.flight_plan)
+        self._refresh_waypoint_list()
 
         # Calculate max iterations (default + any additional from retry)
         from waypoints.fly.executor import MAX_ITERATIONS
@@ -942,6 +950,7 @@ class FlyScreen(Screen):
             spec=self.spec,
             on_progress=self._on_execution_progress,
             max_iterations=max_iters,
+            metrics_collector=self.app.metrics_collector,
         )
 
         # Run execution in background worker
@@ -1011,7 +1020,9 @@ class FlyScreen(Screen):
         """Handle the result of waypoint execution."""
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
         log = detail_panel.log
-        list_panel = self.query_one("#waypoint-list", WaypointListPanel)
+
+        # Update header cost display after execution
+        self.app.update_header_cost()
 
         if result == ExecutionResult.SUCCESS:
             # Mark complete
@@ -1029,7 +1040,7 @@ class FlyScreen(Screen):
                 self._commit_waypoint(self.current_waypoint)
 
             detail_panel.clear_iteration()
-            list_panel.update_flight_plan(self.flight_plan)
+            self._refresh_waypoint_list()
 
             # Move to next waypoint if not paused/pausing
             if self.execution_state == ExecutionState.RUNNING:
@@ -1115,7 +1126,6 @@ class FlyScreen(Screen):
 
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
         log = detail_panel.log
-        list_panel = self.query_one("#waypoint-list", WaypointListPanel)
 
         if result.action == InterventionAction.RETRY:
             # Retry with additional iterations
@@ -1128,7 +1138,7 @@ class FlyScreen(Screen):
             if self.current_waypoint:
                 self.current_waypoint.status = WaypointStatus.IN_PROGRESS
                 self._save_flight_plan()
-                list_panel.update_flight_plan(self.flight_plan)
+                self._refresh_waypoint_list()
 
             # Transition: FLY_INTERVENTION -> FLY_EXECUTING
             self.project.transition_journey(JourneyState.FLY_EXECUTING)
@@ -1142,7 +1152,7 @@ class FlyScreen(Screen):
             if self.current_waypoint:
                 self.current_waypoint.status = WaypointStatus.SKIPPED
                 self._save_flight_plan()
-                list_panel.update_flight_plan(self.flight_plan)
+                self._refresh_waypoint_list()
 
             # Transition: FLY_INTERVENTION -> FLY_PAUSED -> FLY_EXECUTING
             self.project.transition_journey(JourneyState.FLY_PAUSED)
@@ -1227,8 +1237,23 @@ class FlyScreen(Screen):
             self.current_waypoint.status = WaypointStatus.FAILED
             self._save_flight_plan()
             # Update the tree display
-            list_panel = self.query_one("#waypoint-list", WaypointListPanel)
-            list_panel.update_flight_plan(self.flight_plan)
+            self._refresh_waypoint_list()
+
+    def _refresh_waypoint_list(
+        self, execution_state: ExecutionState | None = None
+    ) -> None:
+        """Refresh the waypoint list with current cost data.
+
+        Args:
+            execution_state: Optional execution state to update.
+        """
+        list_panel = self.query_one("#waypoint-list", WaypointListPanel)
+        cost_by_waypoint = None
+        if self.app.metrics_collector:
+            cost_by_waypoint = self.app.metrics_collector.cost_by_waypoint()
+        list_panel.update_flight_plan(
+            self.flight_plan, execution_state, cost_by_waypoint
+        )
 
     def _save_flight_plan(self) -> None:
         """Save the flight plan to disk."""

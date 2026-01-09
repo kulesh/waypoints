@@ -5,6 +5,8 @@ from textual.reactive import reactive
 from textual.widgets import Header, Static
 from textual.widgets._header import HeaderClockSpace, HeaderTitle
 
+from waypoints.tui.widgets.metrics import MetricsSummary
+
 
 class StatusIcon(Static):
     """Status indicator that replaces the header icon.
@@ -111,6 +113,7 @@ class StatusHeader(Header):
     def compose(self) -> ComposeResult:
         yield StatusIcon(id="status-icon")
         yield HeaderTitle()
+        yield MetricsSummary(id="metrics-summary")
         yield (HeaderClockSpace())
 
     def set_thinking(self, thinking: bool) -> None:
@@ -120,3 +123,15 @@ class StatusHeader(Header):
     def set_error(self) -> None:
         """Set the error state on the status icon."""
         self.query_one("#status-icon", StatusIcon).set_error()
+
+    def set_normal(self) -> None:
+        """Reset to normal ready state."""
+        self.query_one("#status-icon", StatusIcon).set_thinking(False)
+
+    def update_cost(self, cost: float) -> None:
+        """Update the displayed cost in the metrics summary."""
+        self.query_one("#metrics-summary", MetricsSummary).update_cost(cost)
+
+    def set_budget(self, budget: float | None) -> None:
+        """Set the budget limit for the metrics display."""
+        self.query_one("#metrics-summary", MetricsSummary).set_budget(budget)

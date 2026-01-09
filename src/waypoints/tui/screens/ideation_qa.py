@@ -9,7 +9,7 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import Footer, Header, Rule, Static
 
-from waypoints.llm.client import ChatClient
+from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
 from waypoints.models import JourneyState, Project, SessionWriter
 from waypoints.models.dialogue import MessageRole
 from waypoints.tui.messages import (
@@ -101,7 +101,7 @@ class IdeationQAScreen(BaseDialogueScreen):
         super().__init__(**kwargs)
         self.project = project
         self.idea = idea
-        self.llm_client = ChatClient()
+        self.llm_client: ChatClient | None = None
         self.session_writer = SessionWriter(
             project, "ideation", self.history.session_id
         )
@@ -130,6 +130,15 @@ class IdeationQAScreen(BaseDialogueScreen):
         """Initialize Q&A with first question."""
         self.app.sub_title = f"{self.project.name} · {self.phase_name}"
 
+        # Set up metrics collection for this project
+        self.app.set_project_for_metrics(self.project)
+
+        # Create ChatClient with metrics collector
+        self.llm_client = ChatClient(
+            metrics_collector=self.app.metrics_collector,
+            phase="ideation-qa",
+        )
+
         # Transition journey state: SPARK_ENTERING -> SHAPE_QA
         self.project.transition_journey(JourneyState.SHAPE_QA)
 
@@ -149,6 +158,8 @@ class IdeationQAScreen(BaseDialogueScreen):
     @work(thread=True)
     def _start_qa(self) -> None:
         """Start Q&A with the idea as context."""
+        assert self.llm_client is not None, "llm_client not initialized"
+
         initial_context = (
             f"I have an idea I'd like to refine:\n\n{self.idea}\n\n"
             "Please help me crystallize this idea by asking clarifying questions."
@@ -164,14 +175,18 @@ class IdeationQAScreen(BaseDialogueScreen):
         message_id = str(uuid4())
 
         try:
-            for chunk in self.llm_client.stream_message(
+            for result in self.llm_client.stream_message(
                 messages=self.history.to_api_format(),
                 system=SYSTEM_PROMPT,
             ):
-                response_content += chunk
-                self.app.call_from_thread(
-                    self.post_message, StreamingChunk(chunk, message_id)
-                )
+                if isinstance(result, StreamChunk):
+                    response_content += result.text
+                    self.app.call_from_thread(
+                        self.post_message, StreamingChunk(result.text, message_id)
+                    )
+                elif isinstance(result, StreamComplete):
+                    # Update header cost display
+                    self.app.call_from_thread(self.app.update_header_cost)
         except Exception as e:
             logger.exception("Error calling LLM: %s", e)
             response_content = f"Error: {e}"
@@ -188,20 +203,26 @@ class IdeationQAScreen(BaseDialogueScreen):
     @work(thread=True)
     def _send_to_llm(self) -> None:
         """Send conversation to LLM for next question."""
+        assert self.llm_client is not None, "llm_client not initialized"
+
         self.app.call_from_thread(self.post_message, StreamingStarted())
 
         response_content = ""
         message_id = str(uuid4())
 
         try:
-            for chunk in self.llm_client.stream_message(
+            for result in self.llm_client.stream_message(
                 messages=self.history.to_api_format(),
                 system=SYSTEM_PROMPT,
             ):
-                response_content += chunk
-                self.app.call_from_thread(
-                    self.post_message, StreamingChunk(chunk, message_id)
-                )
+                if isinstance(result, StreamChunk):
+                    response_content += result.text
+                    self.app.call_from_thread(
+                        self.post_message, StreamingChunk(result.text, message_id)
+                    )
+                elif isinstance(result, StreamComplete):
+                    # Update header cost display
+                    self.app.call_from_thread(self.app.update_header_cost)
         except Exception as e:
             logger.exception("Error calling LLM: %s", e)
             response_content = f"Error: {e}"
