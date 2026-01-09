@@ -11,6 +11,7 @@ from waypoints.config import settings
 from waypoints.git import GitConfig, GitService
 from waypoints.llm.metrics import MetricsCollector
 from waypoints.models import PHASE_TO_STATE, Project
+from waypoints.models.flight_plan import FlightPlanReader
 from waypoints.tui.screens.chart import ChartScreen
 from waypoints.tui.screens.fly import FlyScreen
 from waypoints.tui.screens.idea_brief import IdeaBriefScreen
@@ -95,12 +96,145 @@ class WaypointsApp(App):
             pass
 
     def on_mount(self) -> None:
-        """Start with SPARK phase and load saved settings."""
+        """Start app showing project selection screen."""
         # Load saved theme
         saved_theme = settings.theme
         logger.info("Loading saved theme: %s", saved_theme)
         self.theme = saved_theme
-        self.push_screen(IdeationScreen())
+
+        # Always show project selection screen first
+        from waypoints.tui.screens.project_selection import ProjectSelectionScreen
+
+        self.push_screen(ProjectSelectionScreen())
+
+    def _resume_project(self, project: Project) -> None:
+        """Resume a project from its current journey state."""
+        if project.journey is None:
+            logger.warning("Project %s has no journey, starting fresh", project.slug)
+            self.push_screen(IdeationScreen())
+            return
+
+        # Recover to a safe state if needed
+        journey = project.journey.recover()
+        if journey != project.journey:
+            logger.info(
+                "Recovered journey from %s to %s",
+                project.journey.state.value,
+                journey.state.value,
+            )
+            project.journey = journey
+            project.save()
+
+        phase = journey.phase
+        logger.info("Resuming project %s at phase: %s", project.slug, phase)
+
+        # Load necessary data based on phase
+        if phase == "ideation":
+            self.push_screen(IdeationScreen())
+        elif phase == "ideation-qa":
+            # Resume Q&A - need the initial idea
+            self.push_screen(
+                IdeationQAScreen(project=project, idea=project.initial_idea)
+            )
+        elif phase == "idea-brief":
+            # Resume brief review - load existing brief
+            brief = self._load_latest_doc(project, "idea-brief")
+            if brief:
+                self._resume_brief_review(project, brief)
+            else:
+                # No brief found, go back to ideation
+                logger.warning("No idea-brief found, starting fresh")
+                self.push_screen(IdeationScreen())
+        elif phase == "product-spec":
+            # Resume spec review - load existing spec and brief
+            spec = self._load_latest_doc(project, "product-spec")
+            brief = self._load_latest_doc(project, "idea-brief")
+            if spec:
+                self._resume_spec_review(project, spec, brief)
+            elif brief:
+                # No spec but have brief - go to spec generation
+                self.push_screen(ProductSpecScreen(project=project, brief=brief))
+            else:
+                logger.warning("No product-spec or brief found, starting fresh")
+                self.push_screen(IdeationScreen())
+        elif phase == "chart":
+            # Resume chart review - load spec
+            spec = self._load_latest_doc(project, "product-spec")
+            brief = self._load_latest_doc(project, "idea-brief")
+            if spec:
+                self._resume_chart_review(project, spec, brief)
+            else:
+                logger.warning("No product-spec found, starting fresh")
+                self.push_screen(IdeationScreen())
+        elif phase == "fly":
+            # Resume fly phase - load flight plan and spec
+            flight_plan = FlightPlanReader.load(project)
+            spec = self._load_latest_doc(project, "product-spec")
+            if flight_plan and spec:
+                self.push_screen(
+                    FlyScreen(project=project, flight_plan=flight_plan, spec=spec)
+                )
+            else:
+                logger.warning("No flight-plan or spec found, starting fresh")
+                self.push_screen(IdeationScreen())
+        else:
+            logger.warning("Unknown phase %s, starting fresh", phase)
+            self.push_screen(IdeationScreen())
+
+    def _load_latest_doc(self, project: Project, doc_type: str) -> str | None:
+        """Load the latest document of a given type from project docs.
+
+        Args:
+            project: The project to load from.
+            doc_type: Document type prefix (e.g., "idea-brief", "product-spec").
+
+        Returns:
+            Document content as string, or None if not found.
+        """
+        docs_path = project.get_docs_path()
+        if not docs_path.exists():
+            return None
+
+        # Find all matching files and get the latest by name (timestamp in filename)
+        pattern = f"{doc_type}-*.md"
+        matching_files = sorted(docs_path.glob(pattern), reverse=True)
+
+        if not matching_files:
+            return None
+
+        latest_file = matching_files[0]
+        logger.info("Loading %s from %s", doc_type, latest_file.name)
+        return latest_file.read_text()
+
+    def _resume_brief_review(self, project: Project, brief: str) -> None:
+        """Resume at brief review with existing content."""
+        from waypoints.tui.screens.idea_brief import IdeaBriefResumeScreen
+
+        self.push_screen(IdeaBriefResumeScreen(project=project, brief=brief))
+
+    def _resume_spec_review(
+        self, project: Project, spec: str, brief: str | None
+    ) -> None:
+        """Resume at spec review with existing content."""
+        from waypoints.tui.screens.product_spec import ProductSpecResumeScreen
+
+        self.push_screen(
+            ProductSpecResumeScreen(project=project, spec=spec, brief=brief)
+        )
+
+    def _resume_chart_review(
+        self, project: Project, spec: str, brief: str | None
+    ) -> None:
+        """Resume at chart review - load existing flight plan if any."""
+        flight_plan = FlightPlanReader.load(project)
+        if flight_plan:
+            # Have a flight plan, go directly to fly
+            self.push_screen(
+                FlyScreen(project=project, flight_plan=flight_plan, spec=spec)
+            )
+        else:
+            # No flight plan yet, go to chart screen
+            self.push_screen(ChartScreen(project=project, spec=spec, brief=brief))
 
     def watch_theme(self, new_theme: str) -> None:
         """Save theme whenever it changes (from any source)."""

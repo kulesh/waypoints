@@ -61,6 +61,7 @@ class IdeationQAScreen(BaseDialogueScreen):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", show=True),
         Binding("ctrl+d", "finish_ideation", "Done", show=True, priority=True),
+        Binding("ctrl+b", "back", "Back", show=True),
         Binding("escape", "focus_input", "Focus Input", show=False),
     ]
 
@@ -94,6 +95,7 @@ class IdeationQAScreen(BaseDialogueScreen):
         margin: 0 0 0 1;
         height: 1;
         width: 2;
+        background: transparent;
     }
     """
 
@@ -247,3 +249,9 @@ class IdeationQAScreen(BaseDialogueScreen):
                 "from_phase": "ideation-qa",
             },
         )
+
+    def action_back(self) -> None:
+        """Go back to project selection."""
+        from waypoints.tui.screens.project_selection import ProjectSelectionScreen
+
+        self.app.switch_screen(ProjectSelectionScreen())

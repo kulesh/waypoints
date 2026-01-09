@@ -102,6 +102,7 @@ class ChartScreen(Screen):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", show=True),
         Binding("ctrl+enter", "proceed", "Takeoff", show=True),
+        Binding("escape", "back", "Back", show=True),
         Binding("e", "edit_waypoint", "Edit", show=True),
         Binding("b", "break_down", "Break Down", show=True),
         Binding("d", "delete_waypoint", "Delete", show=True),
@@ -566,4 +567,17 @@ class ChartScreen(Screen):
                 "spec": self.spec,
                 "from_phase": "chart",
             },
+        )
+
+    def action_back(self) -> None:
+        """Go back to Product Spec screen."""
+        from waypoints.tui.screens.product_spec import ProductSpecResumeScreen
+
+        # Load spec and brief from disk to ensure we have content
+        spec = self.app._load_latest_doc(self.project, "product-spec")  # type: ignore[attr-defined]
+        brief = self.app._load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
+        self.app.switch_screen(
+            ProductSpecResumeScreen(
+                project=self.project, spec=spec or self.spec, brief=brief
+            )
         )

@@ -92,6 +92,7 @@ class ProductSpecScreen(Screen):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", show=True),
         Binding("ctrl+enter", "proceed_to_waypoints", "Continue", show=True),
+        Binding("escape", "back", "Back", show=True),
         Binding("ctrl+e", "toggle_edit", "Edit", show=True),
         Binding("ctrl+s", "save", "Save", show=True),
     ]
@@ -152,6 +153,7 @@ class ProductSpecScreen(Screen):
         margin: 0 0 0 1;
         height: 1;
         width: 2;
+        background: transparent;
     }
     """
 
@@ -330,3 +332,199 @@ class ProductSpecScreen(Screen):
                 "from_phase": "product-spec",
             },
         )
+
+    def action_back(self) -> None:
+        """Go back to Idea Brief screen."""
+        from waypoints.tui.screens.idea_brief import IdeaBriefResumeScreen
+
+        # Load brief from disk to ensure we have content
+        brief = self.app._load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
+        self.app.switch_screen(
+            IdeaBriefResumeScreen(project=self.project, brief=brief or "")
+        )
+
+
+class ProductSpecResumeScreen(Screen):
+    """
+    Resume screen for Product Spec - displays existing spec without regenerating.
+
+    Used when resuming a project that already has a generated specification.
+    """
+
+    BINDINGS = [
+        Binding("ctrl+q", "quit", "Quit", show=True),
+        Binding("ctrl+enter", "proceed_to_waypoints", "Continue", show=True),
+        Binding("escape", "back", "Back", show=True),
+        Binding("ctrl+f", "forward", "Forward", show=True),
+        Binding("ctrl+e", "toggle_edit", "Edit", show=True),
+        Binding("ctrl+s", "save", "Save", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    ProductSpecResumeScreen {
+        background: $surface;
+        overflow: hidden;
+    }
+
+    ProductSpecResumeScreen .content {
+        width: 100%;
+        height: 1fr;
+        padding: 1 2;
+    }
+
+    ProductSpecResumeScreen Markdown {
+        width: 100%;
+        padding: 0 2;
+        background: transparent;
+    }
+
+    ProductSpecResumeScreen TextArea {
+        width: 100%;
+        height: 1fr;
+        border: none;
+        background: transparent;
+        display: none;
+    }
+
+    ProductSpecResumeScreen TextArea.editing {
+        display: block;
+    }
+
+    ProductSpecResumeScreen VerticalScroll.editing {
+        display: none;
+    }
+
+    ProductSpecResumeScreen .file-path {
+        dock: bottom;
+        color: $text-muted;
+        padding: 0 2;
+    }
+    """
+
+    def __init__(
+        self,
+        project: Project,
+        spec: str,
+        brief: str | None = None,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.project = project
+        self.spec_content = spec
+        self.brief = brief or ""
+        self.is_editing: bool = False
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with VerticalScroll(classes="content", id="spec-content"):
+            yield Markdown(self.spec_content, id="spec-display")
+        yield TextArea(id="spec-editor")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        """Initialize the resumed spec view."""
+        self.app.sub_title = f"{self.project.name} · Product Spec"
+
+        # Set up metrics collection for this project
+        self.app.set_project_for_metrics(self.project)
+
+        # Pre-populate editor with existing content
+        editor = self.query_one("#spec-editor", TextArea)
+        editor.text = self.spec_content
+
+        logger.info("Resumed product spec for project: %s", self.project.slug)
+
+    def action_toggle_edit(self) -> None:
+        """Toggle between view and edit modes."""
+        self.is_editing = not self.is_editing
+
+        content_scroll = self.query_one("#spec-content", VerticalScroll)
+        editor = self.query_one("#spec-editor", TextArea)
+
+        if self.is_editing:
+            content_scroll.add_class("editing")
+            editor.add_class("editing")
+            editor.text = self.spec_content
+            editor.focus()
+            self.app.sub_title = f"{self.project.name} · Product Spec (editing)"
+        else:
+            # Save edits
+            self.spec_content = editor.text
+            display = self.query_one("#spec-display", Markdown)
+            display.update(self.spec_content)
+            content_scroll.remove_class("editing")
+            editor.remove_class("editing")
+            self._save_to_disk()
+            self.app.sub_title = f"{self.project.name} · Product Spec"
+
+    def action_save(self) -> None:
+        """Save the current content to disk."""
+        if self.is_editing:
+            editor = self.query_one("#spec-editor", TextArea)
+            self.spec_content = editor.text
+        self._save_to_disk()
+
+    def _save_to_disk(self) -> None:
+        """Save the spec content to disk (overwriting latest)."""
+        docs_dir = self.project.get_docs_path()
+        pattern = "product-spec-*.md"
+        matching_files = sorted(docs_dir.glob(pattern), reverse=True)
+
+        if matching_files:
+            file_path = matching_files[0]
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            file_path = docs_dir / f"product-spec-{timestamp}.md"
+
+        try:
+            file_path.write_text(self.spec_content)
+            logger.info("Saved spec to %s", file_path)
+            self.notify(f"Saved to {file_path.name}", severity="information")
+        except OSError as e:
+            logger.exception("Failed to save spec: %s", e)
+            self.notify(f"Failed to save: {e}", severity="error")
+
+    def action_proceed_to_waypoints(self) -> None:
+        """Proceed to CHART phase (waypoint planning)."""
+        if self.is_editing:
+            editor = self.query_one("#spec-editor", TextArea)
+            self.spec_content = editor.text
+
+        # Save before proceeding
+        self._save_to_disk()
+
+        self.app.switch_phase(  # type: ignore
+            "chart",
+            {
+                "project": self.project,
+                "spec": self.spec_content,
+                "idea": self.project.initial_idea,
+                "brief": self.brief,
+                "from_phase": "product-spec",
+            },
+        )
+
+    def action_back(self) -> None:
+        """Go back to Idea Brief screen."""
+        from waypoints.tui.screens.idea_brief import IdeaBriefResumeScreen
+
+        # Load brief from disk to ensure we have content
+        brief = self.app._load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
+        self.app.switch_screen(
+            IdeaBriefResumeScreen(project=self.project, brief=brief or "")
+        )
+
+    def action_forward(self) -> None:
+        """Go forward to Chart screen (if flight plan exists)."""
+        from waypoints.models.flight_plan import FlightPlanReader
+        from waypoints.tui.screens.chart import ChartScreen
+
+        flight_plan = FlightPlanReader.load(self.project)
+        if flight_plan:
+            self.app.switch_screen(
+                ChartScreen(
+                    project=self.project, spec=self.spec_content, brief=self.brief
+                )
+            )
+        else:
+            self.notify("No flight plan yet. Press Ctrl+Enter to generate one.")

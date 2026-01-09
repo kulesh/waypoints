@@ -906,11 +906,15 @@ class FlyScreen(Screen):
         ):
             self.project.transition_journey(JourneyState.CHART_REVIEW)
 
+        # Load spec and brief from disk to ensure we have content
+        spec = self.app._load_latest_doc(self.project, "product-spec")  # type: ignore[attr-defined]
+        brief = self.app._load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
         self.app.switch_phase(
             "chart",
             {
                 "project": self.project,
-                "spec": self.spec,
+                "spec": spec or self.spec,
+                "brief": brief,
             },
         )
 

@@ -66,6 +66,7 @@ class IdeaBriefScreen(Screen):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", show=True),
         Binding("ctrl+enter", "proceed_to_spec", "Continue", show=True),
+        Binding("escape", "back", "Back", show=True),
         Binding("ctrl+e", "toggle_edit", "Edit", show=True),
         Binding("ctrl+s", "save", "Save", show=True),
     ]
@@ -126,6 +127,7 @@ class IdeaBriefScreen(Screen):
         margin: 0 0 0 1;
         height: 1;
         width: 2;
+        background: transparent;
     }
     """
 
@@ -311,3 +313,187 @@ class IdeaBriefScreen(Screen):
                 "from_phase": "idea-brief",
             },
         )
+
+    def action_back(self) -> None:
+        """Go back to project selection."""
+        from waypoints.tui.screens.project_selection import ProjectSelectionScreen
+
+        self.app.switch_screen(ProjectSelectionScreen())
+
+
+class IdeaBriefResumeScreen(Screen):
+    """
+    Resume screen for Idea Brief - displays existing brief without regenerating.
+
+    Used when resuming a project that already has a generated brief.
+    """
+
+    BINDINGS = [
+        Binding("ctrl+q", "quit", "Quit", show=True),
+        Binding("ctrl+enter", "proceed_to_spec", "Continue", show=True),
+        Binding("escape", "back", "Back", show=True),
+        Binding("ctrl+f", "forward", "Forward", show=True),
+        Binding("ctrl+e", "toggle_edit", "Edit", show=True),
+        Binding("ctrl+s", "save", "Save", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    IdeaBriefResumeScreen {
+        background: $surface;
+        overflow: hidden;
+    }
+
+    IdeaBriefResumeScreen .content {
+        width: 100%;
+        height: 1fr;
+        padding: 1 2;
+    }
+
+    IdeaBriefResumeScreen Markdown {
+        width: 100%;
+        padding: 0 2;
+        background: transparent;
+    }
+
+    IdeaBriefResumeScreen TextArea {
+        width: 100%;
+        height: 1fr;
+        border: none;
+        background: transparent;
+        display: none;
+    }
+
+    IdeaBriefResumeScreen TextArea.editing {
+        display: block;
+    }
+
+    IdeaBriefResumeScreen VerticalScroll.editing {
+        display: none;
+    }
+
+    IdeaBriefResumeScreen .file-path {
+        dock: bottom;
+        color: $text-muted;
+        padding: 0 2;
+    }
+    """
+
+    def __init__(
+        self,
+        project: Project,
+        brief: str,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.project = project
+        self.brief_content = brief
+        self.is_editing: bool = False
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with VerticalScroll(classes="content", id="brief-content"):
+            yield Markdown(self.brief_content, id="brief-display")
+        yield TextArea(id="brief-editor")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        """Initialize the resumed brief view."""
+        self.app.sub_title = f"{self.project.name} · Idea Brief"
+
+        # Set up metrics collection for this project
+        self.app.set_project_for_metrics(self.project)
+
+        # Pre-populate editor with existing content
+        editor = self.query_one("#brief-editor", TextArea)
+        editor.text = self.brief_content
+
+        logger.info("Resumed idea brief for project: %s", self.project.slug)
+
+    def action_toggle_edit(self) -> None:
+        """Toggle between view and edit modes."""
+        self.is_editing = not self.is_editing
+
+        content_scroll = self.query_one("#brief-content", VerticalScroll)
+        editor = self.query_one("#brief-editor", TextArea)
+
+        if self.is_editing:
+            content_scroll.add_class("editing")
+            editor.add_class("editing")
+            editor.text = self.brief_content
+            editor.focus()
+            self.app.sub_title = f"{self.project.name} · Idea Brief (editing)"
+        else:
+            # Save edits
+            self.brief_content = editor.text
+            display = self.query_one("#brief-display", Markdown)
+            display.update(self.brief_content)
+            content_scroll.remove_class("editing")
+            editor.remove_class("editing")
+            self._save_to_disk()
+            self.app.sub_title = f"{self.project.name} · Idea Brief"
+
+    def action_save(self) -> None:
+        """Save the current content to disk."""
+        if self.is_editing:
+            editor = self.query_one("#brief-editor", TextArea)
+            self.brief_content = editor.text
+        self._save_to_disk()
+
+    def _save_to_disk(self) -> None:
+        """Save the brief content to disk (overwriting latest)."""
+        docs_dir = self.project.get_docs_path()
+        pattern = "idea-brief-*.md"
+        matching_files = sorted(docs_dir.glob(pattern), reverse=True)
+
+        if matching_files:
+            file_path = matching_files[0]
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            file_path = docs_dir / f"idea-brief-{timestamp}.md"
+
+        try:
+            file_path.write_text(self.brief_content)
+            logger.info("Saved brief to %s", file_path)
+            self.notify(f"Saved to {file_path.name}", severity="information")
+        except OSError as e:
+            logger.exception("Failed to save brief: %s", e)
+            self.notify(f"Failed to save: {e}", severity="error")
+
+    def action_proceed_to_spec(self) -> None:
+        """Proceed to Product Specification phase."""
+        if self.is_editing:
+            editor = self.query_one("#brief-editor", TextArea)
+            self.brief_content = editor.text
+
+        # Save before proceeding
+        self._save_to_disk()
+
+        self.app.switch_phase(  # type: ignore
+            "product-spec",
+            {
+                "project": self.project,
+                "idea": self.project.initial_idea,
+                "brief": self.brief_content,
+                "from_phase": "idea-brief",
+            },
+        )
+
+    def action_back(self) -> None:
+        """Go back to project selection."""
+        from waypoints.tui.screens.project_selection import ProjectSelectionScreen
+
+        self.app.switch_screen(ProjectSelectionScreen())
+
+    def action_forward(self) -> None:
+        """Go forward to Product Spec screen (if spec exists)."""
+        spec = self.app._load_latest_doc(self.project, "product-spec")  # type: ignore[attr-defined]
+        if spec:
+            from waypoints.tui.screens.product_spec import ProductSpecResumeScreen
+
+            self.app.switch_screen(
+                ProductSpecResumeScreen(
+                    project=self.project, spec=spec, brief=self.brief_content
+                )
+            )
+        else:
+            self.notify("No product spec yet. Press Ctrl+Enter to generate one.")

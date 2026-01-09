@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -64,9 +65,16 @@ class Project:
         project.save()
         return project
 
+    @classmethod
+    def _get_projects_dir(cls) -> Path:
+        """Get the projects directory from config."""
+        from waypoints.config import settings
+
+        return settings.project_directory
+
     def get_path(self) -> Path:
         """Get the project's root directory path."""
-        return Path.cwd() / ".waypoints" / "projects" / self.slug
+        return self._get_projects_dir() / self.slug
 
     def get_sessions_path(self) -> Path:
         """Get the sessions directory path."""
@@ -123,7 +131,7 @@ class Project:
     @classmethod
     def load(cls, slug: str) -> "Project":
         """Load a project by its slug."""
-        metadata_path = Path.cwd() / ".waypoints" / "projects" / slug / "project.json"
+        metadata_path = cls._get_projects_dir() / slug / "project.json"
         if not metadata_path.exists():
             raise FileNotFoundError(f"Project not found: {slug}")
         data = json.loads(metadata_path.read_text())
@@ -131,8 +139,8 @@ class Project:
 
     @classmethod
     def list_all(cls) -> list["Project"]:
-        """List all projects in the current workspace."""
-        projects_dir = Path.cwd() / ".waypoints" / "projects"
+        """List all projects in the configured projects directory."""
+        projects_dir = cls._get_projects_dir()
         if not projects_dir.exists():
             return []
         projects = []
@@ -148,6 +156,7 @@ class Project:
         """Transition the journey to a new state and save.
 
         If the project doesn't have a journey yet, one will be created.
+        If already in the target state, this is a no-op (idempotent).
 
         Args:
             target: The state to transition to.
@@ -160,5 +169,22 @@ class Project:
         if self.journey is None:
             self.journey = Journey.new(self.slug)
 
+        # Idempotent: if already in target state, nothing to do
+        if self.journey.state == target:
+            return
+
         self.journey = self.journey.transition(target)
         self.save()
+
+    def delete(self) -> None:
+        """Delete this project and all its files.
+
+        Removes the entire project directory including:
+        - project.json
+        - sessions/
+        - docs/
+        - flight-plan.jsonl
+        """
+        project_path = self.get_path()
+        if project_path.exists():
+            shutil.rmtree(project_path)

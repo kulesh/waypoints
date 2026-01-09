@@ -100,6 +100,24 @@ class Settings:
         """Set the theme."""
         self.set("theme", value)
 
+    @property
+    def project_directory(self) -> Path:
+        """Get the projects directory path.
+
+        Returns the configured project directory, or defaults to
+        cwd/.waypoints/projects if not set.
+        """
+        saved = self._data.get("project_directory")
+        if saved:
+            return Path(saved).expanduser().resolve()
+        # Default: cwd/.waypoints/projects
+        return Path.cwd() / ".waypoints" / "projects"
+
+    @project_directory.setter
+    def project_directory(self, value: str | Path) -> None:
+        """Set the projects directory."""
+        self.set("project_directory", str(value))
+
 
 # Global settings instance
 settings = Settings()
