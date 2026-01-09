@@ -16,6 +16,7 @@ Model-centric architecture ("Pilot and Dog"):
 """
 
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -203,6 +204,16 @@ class WaypointExecutor:
         """
         project_path = self.project.get_path()
 
+        # Defense in depth: ensure we're in the project directory
+        original_cwd = os.getcwd()
+        os.chdir(project_path)
+        try:
+            return await self._execute_impl(project_path)
+        finally:
+            os.chdir(original_cwd)
+
+    async def _execute_impl(self, project_path: Path) -> ExecutionResult:
+        """Internal implementation of execute, runs in project directory."""
         # Load checklist from project (creates default if not exists)
         checklist = Checklist.load(self.project.get_path())
 
