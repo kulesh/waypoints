@@ -19,6 +19,7 @@ class IdeationScreen(Screen):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+enter", "begin_journey", "Continue"),
+        Binding("escape", "back", "Back", show=True),
     ]
 
     DEFAULT_CSS = """
@@ -118,3 +119,9 @@ class IdeationScreen(Screen):
             "ideation-qa",
             {"project": project, "idea": idea_text},
         )
+
+    def action_back(self) -> None:
+        """Go back to project selection."""
+        from waypoints.tui.screens.project_selection import ProjectSelectionScreen
+
+        self.app.switch_screen(ProjectSelectionScreen())
