@@ -201,7 +201,7 @@ class WaypointExecutor:
 
         Returns the execution result (success, failed, max_iterations, etc.)
         """
-        project_path = Path.cwd()  # Assume we're in the project directory
+        project_path = self.project.get_path()
 
         # Load checklist from project (creates default if not exists)
         checklist = Checklist.load(self.project.get_path())
