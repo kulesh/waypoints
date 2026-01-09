@@ -12,7 +12,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, Markdown, Static, TextArea
 
 from waypoints.llm.client import ChatClient
-from waypoints.models import Project
+from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
@@ -195,6 +195,10 @@ class ProductSpecScreen(Screen):
     def on_mount(self) -> None:
         """Start generating the specification."""
         self.app.sub_title = f"{self.project.name} · Product Spec"
+
+        # Transition journey state: SHAPE_BRIEF_REVIEW -> SHAPE_SPEC_GENERATING
+        self.project.transition_journey(JourneyState.SHAPE_SPEC_GENERATING)
+
         self._generate_spec()
 
     @work(thread=True)
@@ -245,6 +249,10 @@ class ProductSpecScreen(Screen):
         editor = self.query_one("#spec-editor", TextArea)
         editor.text = self.spec_content
         self._save_to_disk()
+
+        # Transition journey state: SHAPE_SPEC_GENERATING -> SHAPE_SPEC_REVIEW
+        self.project.transition_journey(JourneyState.SHAPE_SPEC_REVIEW)
+
         logger.info("Spec generation complete: %d chars", len(self.spec_content))
 
     def _save_to_disk(self) -> None:

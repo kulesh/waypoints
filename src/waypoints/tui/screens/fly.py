@@ -22,7 +22,7 @@ from waypoints.fly.executor import (
     WaypointExecutor,
 )
 from waypoints.git import GitConfig, GitService, ReceiptValidator
-from waypoints.models import Project
+from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan, FlightPlanWriter
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.tui.widgets.flight_plan import FlightPlanTree
@@ -846,6 +846,8 @@ class FlyScreen(Screen):
             if not self.current_waypoint:
                 self.notify("No waypoints to resume")
                 return
+            # Transition journey state: FLY_PAUSED -> FLY_EXECUTING
+            self.project.transition_journey(JourneyState.FLY_EXECUTING)
             self.execution_state = ExecutionState.RUNNING
             self._execute_current_waypoint()
             return
@@ -856,6 +858,8 @@ class FlyScreen(Screen):
                 self.notify("No waypoints ready to execute")
                 return
 
+        # Transition journey state: FLY_READY -> FLY_EXECUTING
+        self.project.transition_journey(JourneyState.FLY_EXECUTING)
         self.execution_state = ExecutionState.RUNNING
         self._execute_current_waypoint()
 
@@ -876,6 +880,14 @@ class FlyScreen(Screen):
 
     def action_back(self) -> None:
         """Go back to CHART screen."""
+        # Transition journey state back to CHART_REVIEW if in FLY_READY or intervention
+        if self.project.journey and self.project.journey.state in (
+            JourneyState.FLY_READY,
+            JourneyState.FLY_INTERVENTION,
+            JourneyState.FLY_PAUSED,
+        ):
+            self.project.transition_journey(JourneyState.CHART_REVIEW)
+
         self.app.switch_phase(
             "chart",
             {
@@ -994,14 +1006,20 @@ class FlyScreen(Screen):
                 if self.current_waypoint:
                     self._execute_current_waypoint()
                 else:
+                    # Transition journey state: FLY_EXECUTING -> LANDED
+                    self.project.transition_journey(JourneyState.LANDED)
                     self.execution_state = ExecutionState.DONE
             elif self.execution_state == ExecutionState.PAUSE_PENDING:
                 # Pause was requested, now actually pause
+                # Transition journey state: FLY_EXECUTING -> FLY_PAUSED
+                self.project.transition_journey(JourneyState.FLY_PAUSED)
                 self.execution_state = ExecutionState.PAUSED
 
         elif result == ExecutionResult.INTERVENTION_NEEDED:
             log.log_error("Human intervention needed")
             self._mark_waypoint_failed()
+            # Transition journey state: FLY_EXECUTING -> FLY_INTERVENTION
+            self.project.transition_journey(JourneyState.FLY_INTERVENTION)
             self.execution_state = ExecutionState.INTERVENTION
             self.query_one(StatusHeader).set_error()
             self.notify("Waypoint needs human intervention", severity="warning")
@@ -1009,17 +1027,23 @@ class FlyScreen(Screen):
         elif result == ExecutionResult.MAX_ITERATIONS:
             log.log_error("Max iterations reached without completion")
             self._mark_waypoint_failed()
+            # Transition journey state: FLY_EXECUTING -> FLY_INTERVENTION
+            self.project.transition_journey(JourneyState.FLY_INTERVENTION)
             self.execution_state = ExecutionState.INTERVENTION
             self.query_one(StatusHeader).set_error()
             self.notify("Max iterations reached", severity="error")
 
         elif result == ExecutionResult.CANCELLED:
             log.log("Execution cancelled")
+            # Transition journey state: FLY_EXECUTING -> FLY_PAUSED
+            self.project.transition_journey(JourneyState.FLY_PAUSED)
             self.execution_state = ExecutionState.PAUSED
 
         else:  # FAILED or None
             log.log_error("Execution failed")
             self._mark_waypoint_failed()
+            # Transition journey state: FLY_EXECUTING -> FLY_INTERVENTION
+            self.project.transition_journey(JourneyState.FLY_INTERVENTION)
             self.execution_state = ExecutionState.INTERVENTION
             self.query_one(StatusHeader).set_error()
             self.notify("Waypoint execution failed", severity="error")

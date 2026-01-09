@@ -8,7 +8,7 @@ from textual.binding import Binding
 
 from waypoints.config import settings
 from waypoints.git import GitConfig, GitService
-from waypoints.models import Project
+from waypoints.models import PHASE_TO_STATE, Project
 from waypoints.tui.screens.chart import ChartScreen
 from waypoints.tui.screens.fly import FlyScreen
 from waypoints.tui.screens.idea_brief import IdeaBriefScreen
@@ -74,6 +74,18 @@ class WaypointsApp(App):
         data = data or {}
         project = data.get("project")
         from_phase = data.get("from_phase")
+
+        # Log journey state for debugging
+        if project:
+            target_state = PHASE_TO_STATE.get(phase)
+            current_state = project.journey.state if project.journey else None
+            logger.info(
+                "Phase switch: %s -> %s (journey: %s -> %s)",
+                from_phase,
+                phase,
+                current_state.value if current_state else "none",
+                target_state.value if target_state else "unknown",
+            )
 
         # Commit phase transition if we have a project and a from_phase
         if project and from_phase:

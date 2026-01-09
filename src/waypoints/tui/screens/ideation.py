@@ -6,7 +6,7 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Input, Static, TextArea
 
-from waypoints.models import Project
+from waypoints.models import JourneyState, Project
 
 
 class IdeationScreen(Screen):
@@ -110,6 +110,9 @@ class IdeationScreen(Screen):
         # Create and save the project
         project = Project.create(name=project_name, idea=idea_text)
         self.notify(f"Created project: {project.slug}", severity="information")
+
+        # Transition journey state: SPARK_IDLE -> SPARK_ENTERING
+        project.transition_journey(JourneyState.SPARK_ENTERING)
 
         self.app.switch_phase(  # type: ignore
             "ideation-qa",

@@ -12,7 +12,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, Markdown, Static, TextArea
 
 from waypoints.llm.client import ChatClient
-from waypoints.models import Project
+from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory, MessageRole
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
@@ -167,6 +167,10 @@ class IdeaBriefScreen(Screen):
     def on_mount(self) -> None:
         """Start generating the brief."""
         self.app.sub_title = f"{self.project.name} · Idea Brief"
+
+        # Transition journey state: SHAPE_QA -> SHAPE_BRIEF_GENERATING
+        self.project.transition_journey(JourneyState.SHAPE_BRIEF_GENERATING)
+
         self._generate_brief()
 
     @work(thread=True)
@@ -227,6 +231,10 @@ class IdeaBriefScreen(Screen):
         editor = self.query_one("#brief-editor", TextArea)
         editor.text = self.brief_content
         self._save_to_disk()
+
+        # Transition journey state: SHAPE_BRIEF_GENERATING -> SHAPE_BRIEF_REVIEW
+        self.project.transition_journey(JourneyState.SHAPE_BRIEF_REVIEW)
+
         logger.info("Brief generation complete: %d chars", len(self.brief_content))
 
     def _save_to_disk(self) -> None:

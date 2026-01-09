@@ -1,11 +1,16 @@
 """Project model for organizing waypoints work."""
 
+from __future__ import annotations
+
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from waypoints.models.journey import Journey, JourneyState
 
 
 def slugify(name: str) -> str:
@@ -37,10 +42,13 @@ class Project:
     created_at: datetime
     updated_at: datetime
     initial_idea: str = ""
+    journey: Journey | None = field(default=None, repr=False)
 
     @classmethod
     def create(cls, name: str, idea: str = "") -> "Project":
         """Create a new project with the given name."""
+        from waypoints.models.journey import Journey
+
         slug = slugify(name)
         now = datetime.now()
         project = cls(
@@ -49,6 +57,7 @@ class Project:
             created_at=now,
             updated_at=now,
             initial_idea=idea,
+            journey=Journey.new(slug),
         )
         # Create directory structure and save metadata
         project._ensure_directories()
@@ -82,23 +91,33 @@ class Project:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
-        return {
+        data: dict[str, Any] = {
             "name": self.name,
             "slug": self.slug,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "initial_idea": self.initial_idea,
         }
+        if self.journey is not None:
+            data["journey"] = self.journey.to_dict()
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Project":
         """Create from dictionary."""
+        from waypoints.models.journey import Journey
+
+        journey = None
+        if "journey" in data:
+            journey = Journey.from_dict(data["journey"])
+
         return cls(
             name=data["name"],
             slug=data["slug"],
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
             initial_idea=data.get("initial_idea", ""),
+            journey=journey,
         )
 
     @classmethod
@@ -124,3 +143,22 @@ class Project:
                 except (FileNotFoundError, json.JSONDecodeError):
                     pass  # Skip invalid projects
         return sorted(projects, key=lambda p: p.updated_at, reverse=True)
+
+    def transition_journey(self, target: JourneyState) -> None:
+        """Transition the journey to a new state and save.
+
+        If the project doesn't have a journey yet, one will be created.
+
+        Args:
+            target: The state to transition to.
+
+        Raises:
+            InvalidTransitionError: If the transition is not valid.
+        """
+        from waypoints.models.journey import Journey
+
+        if self.journey is None:
+            self.journey = Journey.new(self.slug)
+
+        self.journey = self.journey.transition(target)
+        self.save()
