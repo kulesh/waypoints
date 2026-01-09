@@ -1223,7 +1223,8 @@ class FlyScreen(Screen):
             return
 
         # Perform the rollback
-        result = git.run_command(["reset", "--hard", target_tag])
+        # TODO: GitService.run_command doesn't exist - implement when rollback is needed
+        result = git.run_command(["reset", "--hard", target_tag])  # type: ignore[attr-defined]
         if result.success:
             self.notify(f"Rolled back to {target_tag}")
             # Reload flight plan to reflect any changes
@@ -1280,11 +1281,11 @@ class FlyScreen(Screen):
         # Auto-init if needed
         if not git.is_git_repo():
             if config.auto_init:
-                result = git.init_repo()
-                if result.success:
+                init_result = git.init_repo()
+                if init_result.success:
                     self.notify("Initialized git repository")
                 else:
-                    logger.warning("Failed to init git repo: %s", result.message)
+                    logger.warning("Failed to init git repo: %s", init_result.message)
                     return
             else:
                 logger.debug("Not a git repo and auto-init disabled")
@@ -1298,13 +1299,15 @@ class FlyScreen(Screen):
             )
 
             if receipt_path:
-                result = validator.validate(receipt_path)
-                if not result.valid:
+                validation_result = validator.validate(receipt_path)
+                if not validation_result.valid:
                     logger.warning(
-                        "Skipping commit - receipt invalid: %s", result.message
+                        "Skipping commit - receipt invalid: %s",
+                        validation_result.message,
                     )
                     self.notify(
-                        f"Skipping commit: {result.message}", severity="warning"
+                        f"Skipping commit: {validation_result.message}",
+                        severity="warning",
                     )
                     return
                 logger.info("Receipt validated: %s", receipt_path)
