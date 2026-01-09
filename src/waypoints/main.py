@@ -1,5 +1,6 @@
 """Main module for waypoints."""
 
+import argparse
 import logging
 import os
 from pathlib import Path
@@ -27,9 +28,33 @@ def setup_logging() -> None:
     logging.info("Waypoints starting, logging to %s", log_file)
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Waypoints - AI-native software development"
+    )
+    parser.add_argument(
+        "--workdir",
+        "-w",
+        type=Path,
+        help="Working directory for project artifacts (default: current directory)",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
     """Entry point for the Waypoints TUI application."""
+    args = parse_args()
+
+    # Change to workdir if specified (before logging setup)
+    if args.workdir:
+        workdir = args.workdir.resolve()
+        workdir.mkdir(parents=True, exist_ok=True)
+        os.chdir(workdir)
+
     setup_logging()
+    logging.info("Working directory: %s", Path.cwd())
+
     app = WaypointsApp()
     app.run()
 
