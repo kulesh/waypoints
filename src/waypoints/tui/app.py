@@ -6,6 +6,7 @@ from typing import Any
 
 from textual.app import App
 from textual.binding import Binding
+from textual.command import DiscoveryHit, Hit, Hits, Provider
 
 from waypoints.config import settings
 from waypoints.git import GitConfig, GitService
@@ -43,11 +44,46 @@ PHASE_COMMITS: dict[str, dict[str, str | None]] = {
 }
 
 
+class WaypointsCommands(Provider):
+    """Command provider for Waypoints-specific commands."""
+
+    async def discover(self) -> Hits:
+        """Return default commands shown before user input."""
+        yield DiscoveryHit(
+            "Settings",
+            self._open_settings,
+            help="Open application settings",
+        )
+
+    async def search(self, query: str) -> Hits:
+        """Search for Waypoints commands."""
+        matcher = self.matcher(query)
+        command = "Settings"
+
+        # Filter by match score
+        match = matcher.match(command)
+        if match > 0:
+            yield Hit(
+                match,
+                matcher.highlight(command),
+                self._open_settings,
+                help="Open application settings",
+            )
+
+    async def _open_settings(self) -> None:
+        """Open the settings modal."""
+        from waypoints.tui.screens.settings import SettingsModal
+
+        self.app.push_screen(SettingsModal())
+
+
 class WaypointsApp(App):
     """Main Waypoints TUI application."""
 
     TITLE = "Waypoints"
     SUB_TITLE = "AI-native software development"
+
+    COMMANDS = App.COMMANDS | {WaypointsCommands}
 
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
