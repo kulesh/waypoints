@@ -107,6 +107,7 @@ class ChartScreen(Screen):
         Binding("b", "break_down", "Break Down", show=True),
         Binding("d", "delete_waypoint", "Delete", show=True),
         Binding("tab", "switch_panel", "Switch Panel", show=False),
+        Binding("ctrl+f", "forward", "Forward", show=True),
         Binding("?", "help", "Help", show=True),
     ]
 
@@ -579,5 +580,26 @@ class ChartScreen(Screen):
         self.app.switch_screen(
             ProductSpecResumeScreen(
                 project=self.project, spec=spec or self.spec, brief=brief
+            )
+        )
+
+    def action_forward(self) -> None:
+        """Go forward to Fly screen (if flight plan exists)."""
+        from waypoints.tui.screens.fly import FlyScreen
+
+        if not self.flight_plan:
+            self.notify("No flight plan yet. Press Ctrl+Enter to takeoff.")
+            return
+
+        # Transition to FLY_READY if currently in CHART_REVIEW
+        journey = self.project.journey
+        if journey and journey.state == JourneyState.CHART_REVIEW:
+            self.project.transition_journey(JourneyState.FLY_READY)
+
+        self.app.switch_screen(
+            FlyScreen(
+                project=self.project,
+                flight_plan=self.flight_plan,
+                spec=self.spec,
             )
         )
