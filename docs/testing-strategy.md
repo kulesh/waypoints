@@ -8,7 +8,7 @@ Waypoints is an AI-native software development system. Testing it requires valid
 
 | # | Layer | What to Test | Challenge |
 |---|-------|-------------|-----------|
-| 1 | LLM Prompts | Can build hello world → Waypoints itself | Non-deterministic, needs diverse benchmarks |
+| 1 | LLM Prompts | Can build hello world → Waypoints itself | Non-deterministic, needs diverse flight tests |
 | 2 | UX Quality | Q&A effectiveness, document quality | Subjective, needs human eval or LLM-as-judge |
 | 3 | Charting | Waypoint granularity, editing mechanisms | Both functional + quality judgment |
 | 4 | Execution | Consistent waypoint implementation | Reliability over many runs |
@@ -21,7 +21,7 @@ Waypoints is an AI-native software development system. Testing it requires valid
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    PILLAR 1: BENCHMARK SUITE                     │
+│                    PILLAR 1: FLIGHT TEST SUITE                     │
 │   Reference projects that Waypoints builds (hello world → self)  │
 ├─────────────────────────────────────────────────────────────────┤
 │                    PILLAR 2: QUALITY GATES                       │
@@ -34,11 +34,11 @@ Waypoints is an AI-native software development system. Testing it requires valid
 
 ---
 
-## Pillar 1: Benchmark Suite
+## Pillar 1: Flight Test Suite
 
 A set of reference projects with increasing complexity that Waypoints should be able to build.
 
-### Proposed Benchmarks
+### Proposed Flight Tests
 
 | Level | Project | Tests |
 |-------|---------|-------|
@@ -49,10 +49,10 @@ A set of reference projects with increasing complexity that Waypoints should be 
 | L4 | LLM Integration | API calls, streaming, prompt management |
 | L5 | Waypoints (self) | **The ultimate test**: can it build itself? |
 
-### Benchmark Execution
+### Flight Test Execution
 
 ```
-benchmarks/
+flight-tests/
 ├── L0-hello-world/
 │   ├── input/
 │   │   └── idea.txt              # "A CLI that prints hello world"
@@ -72,9 +72,9 @@ benchmarks/
 ...
 ```
 
-### Benchmark Metrics
+### Flight Test Metrics
 
-For each benchmark run, capture:
+For each flight test run, capture:
 - **Completion rate**: Did all waypoints complete?
 - **Iteration count**: How many executor iterations per waypoint?
 - **Total cost**: LLM token usage ($)
@@ -124,8 +124,8 @@ def evaluate_idea_brief(brief_content: str) -> QualityScore:
 
 For subjective quality that LLM-as-judge can't fully capture:
 
-1. **Periodic Reviews**: Every N benchmark runs, human reviews sample outputs
-2. **A/B Comparisons**: Compare prompt variants on same benchmark
+1. **Periodic Reviews**: Every N flight test runs, human reviews sample outputs
+2. **A/B Comparisons**: Compare prompt variants on same flight test
 3. **Regression Detection**: Flag quality drops vs historical baseline
 
 ---
@@ -137,7 +137,7 @@ Layered approach from automated to human:
 ### Layer 1: Smoke Tests (Automated)
 
 ```bash
-# Each benchmark has a smoke_test.sh
+# Each flight test has a smoke_test.sh
 cd $GENERATED_PROJECT
 uv sync 2>&1 | grep -v "^$"
 uv run pytest --tb=short
@@ -171,21 +171,21 @@ def verify_acceptance_criteria(waypoint: Waypoint, project_path: Path) -> list[b
 
 ### Layer 3: Human Review (On-demand)
 
-For critical benchmarks or before releases:
+For critical flight tests or before releases:
 - Review generated code for patterns, security, maintainability
 - Validate UX flow makes sense
 - Check that generated product matches user intent
 
 ---
 
-## Self-Hosting Test (The Ultimate Benchmark)
+## Self-Hosting Test (The Ultimate Flight Test)
 
 **Goal**: Waypoints builds Waypoints.
 
 ### Setup
 
 ```yaml
-# benchmarks/L5-waypoints-self/input/idea.txt
+# flight-tests/L5-waypoints-self/input/idea.txt
 Build an AI-native software development TUI called Waypoints.
 It should guide users from idea to working software through phases:
 ideation, product spec, flight planning, and execution.
@@ -196,7 +196,7 @@ The system should use Claude for LLM integration and Textual for TUI.
 
 1. All phases complete without human intervention
 2. Generated code passes existing Waypoints test suite
-3. Generated app can run through L0-L3 benchmarks
+3. Generated app can run through L0-L3 flight tests
 4. Human review confirms structural similarity to actual Waypoints
 
 ### Value
@@ -234,8 +234,8 @@ uv run pytest -m "not slow" --timeout=30
 # Full suite (CI on main)
 uv run pytest --timeout=120
 
-# Benchmark runs (scheduled/manual)
-python scripts/run_benchmarks.py --level L0-L4
+# Flight test runs (scheduled/manual)
+python scripts/run_flight_tests.py --level L0-L4
 ```
 
 ---
@@ -244,8 +244,8 @@ python scripts/run_benchmarks.py --level L0-L4
 
 ```
                     ┌─────────────────┐
-                    │   Benchmark     │
-                    │   Results       │
+                    │  Flight Test   │
+                    │    Results      │
                     └────────┬────────┘
                              │
               ┌──────────────┼──────────────┐
@@ -259,11 +259,11 @@ python scripts/run_benchmarks.py --level L0-L4
                            │
                     ┌──────▼──────┐
                     │   Re-run    │
-                    │  Benchmarks │
+                    │ Flight Tests│
                     └─────────────┘
 ```
 
-Key insight: Benchmark results inform prompt engineering, UX improvements, and code fixes - creating a continuous improvement cycle.
+Key insight: Flight test results inform prompt engineering, UX improvements, and code fixes - creating a continuous improvement cycle.
 
 ---
 
@@ -294,8 +294,8 @@ def verify_artifacts(project: Project) -> ArtifactReport:
 ## Implementation Roadmap
 
 ### Phase 1: Foundation
-1. Create `benchmarks/` directory structure
-2. Implement L0-L1 benchmarks (hello world, todo CLI)
+1. Create `flight-tests/` directory structure
+2. Implement L0-L1 flight tests (hello world, todo CLI)
 3. Create smoke test runner
 
 ### Phase 2: Quality Gates
@@ -304,12 +304,12 @@ def verify_artifacts(project: Project) -> ArtifactReport:
 6. Set up quality score tracking
 
 ### Phase 3: Self-Hosting
-7. Create L5 benchmark (Waypoints builds Waypoints)
+7. Create L5 flight test (Waypoints builds Waypoints)
 8. Document capability gaps found
 9. Iterate on prompts based on findings
 
 ### Phase 4: CI Integration
-10. Add benchmark runs to CI (scheduled, not every PR)
+10. Add flight test runs to CI (scheduled, not every PR)
 11. Set up quality score dashboards
 12. Create regression alerts
 
@@ -323,7 +323,7 @@ def verify_artifacts(project: Project) -> ArtifactReport:
 | L3-L4 pass rate | >80% | Smoke tests pass |
 | L5 (self) completion | Goal: 1 success | Full run without intervention |
 | Avg iterations/waypoint | <3 | Lower = better prompt effectiveness |
-| Cost per benchmark | Track | Optimization opportunity |
+| Cost per flight test | Track | Optimization opportunity |
 | Quality score trend | Improving | LLM-as-judge scores over time |
 
 ---
@@ -332,10 +332,10 @@ def verify_artifacts(project: Project) -> ArtifactReport:
 
 Traditional testing alone can't validate an AI-native development system. This strategy combines:
 
-1. **Benchmark Suite**: Objective measure of capability across project types
+1. **Flight Test Suite**: Objective measure of capability across project types
 2. **LLM-as-Judge**: Scalable quality evaluation for subjective artifacts
 3. **Output Validation**: Layered verification from smoke tests to human review
 4. **Self-Hosting Test**: Ultimate validation - can it build itself?
 5. **Traditional Tests**: For the code we control (TUI, models, git)
 
-The feedback loop from benchmarks → improvements → re-run creates a continuous validation and improvement cycle.
+The feedback loop from flight tests → improvements → re-run creates a continuous validation and improvement cycle.
