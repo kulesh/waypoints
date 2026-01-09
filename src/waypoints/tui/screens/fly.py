@@ -877,7 +877,11 @@ class FlyScreen(Screen):
                 self.notify("No waypoints ready to execute")
                 return
 
-        # Transition journey state: FLY_READY -> FLY_EXECUTING
+        # Transition journey state to FLY_EXECUTING
+        # Handle case where we came from Chart via Ctrl+F (state may be CHART_REVIEW)
+        journey = self.project.journey
+        if journey and journey.state == JourneyState.CHART_REVIEW:
+            self.project.transition_journey(JourneyState.FLY_READY)
         self.project.transition_journey(JourneyState.FLY_EXECUTING)
         self.execution_state = ExecutionState.RUNNING
         self._execute_current_waypoint()
