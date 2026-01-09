@@ -1,6 +1,7 @@
 """Main Waypoints TUI application."""
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from textual.app import App
@@ -8,6 +9,7 @@ from textual.binding import Binding
 
 from waypoints.config import settings
 from waypoints.git import GitConfig, GitService
+from waypoints.llm.metrics import MetricsCollector
 from waypoints.models import PHASE_TO_STATE, Project
 from waypoints.tui.screens.chart import ChartScreen
 from waypoints.tui.screens.fly import FlyScreen
@@ -15,6 +17,7 @@ from waypoints.tui.screens.idea_brief import IdeaBriefScreen
 from waypoints.tui.screens.ideation import IdeationScreen
 from waypoints.tui.screens.ideation_qa import IdeationQAScreen
 from waypoints.tui.screens.product_spec import ProductSpecScreen
+from waypoints.tui.widgets.header import StatusHeader
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +58,41 @@ class WaypointsApp(App):
         background: $surface;
     }
     """
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        # Initialize metrics collector with a default path
+        # Will be updated when a project is selected
+        self._metrics_collector: MetricsCollector | None = None
+        self._current_project_path: Path | None = None
+
+    @property
+    def metrics_collector(self) -> MetricsCollector | None:
+        """Get the metrics collector for the current project."""
+        return self._metrics_collector
+
+    def set_project_for_metrics(self, project: Project) -> None:
+        """Set the project for metrics collection.
+
+        Creates or updates the MetricsCollector for the project.
+        """
+        project_path = project.get_path()
+        if project_path != self._current_project_path:
+            self._current_project_path = project_path
+            self._metrics_collector = MetricsCollector(project_path)
+            logger.info("Metrics collector initialized for project: %s", project.slug)
+
+    def update_header_cost(self) -> None:
+        """Update the header cost display from the metrics collector."""
+        if self._metrics_collector is None:
+            return
+
+        try:
+            header = self.screen.query_one(StatusHeader)
+            header.update_cost(self._metrics_collector.total_cost)
+        except Exception:
+            # Header might not exist on all screens
+            pass
 
     def on_mount(self) -> None:
         """Start with SPARK phase and load saved settings."""

@@ -11,7 +11,7 @@ from textual.containers import VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Markdown, Static, TextArea
 
-from waypoints.llm.client import ChatClient
+from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
 from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory, MessageRole
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
@@ -142,7 +142,7 @@ class IdeaBriefScreen(Screen):
         self.history = history
         self.brief_content: str = ""
         self.is_editing: bool = False
-        self.llm_client = ChatClient()
+        self.llm_client: ChatClient | None = None
         self.file_path = self._generate_file_path()
 
     def _generate_file_path(self) -> Path:
@@ -168,6 +168,15 @@ class IdeaBriefScreen(Screen):
         """Start generating the brief."""
         self.app.sub_title = f"{self.project.name} · Idea Brief"
 
+        # Set up metrics collection for this project
+        self.app.set_project_for_metrics(self.project)
+
+        # Create ChatClient with metrics collector
+        self.llm_client = ChatClient(
+            metrics_collector=self.app.metrics_collector,
+            phase="idea-brief",
+        )
+
         # Transition journey state: SHAPE_QA -> SHAPE_BRIEF_GENERATING
         self.project.transition_journey(JourneyState.SHAPE_BRIEF_GENERATING)
 
@@ -176,6 +185,8 @@ class IdeaBriefScreen(Screen):
     @work(thread=True)
     def _generate_brief(self) -> None:
         """Generate idea brief from conversation history."""
+        assert self.llm_client is not None, "llm_client not initialized"
+
         conversation_text = self._format_conversation()
         prompt = BRIEF_GENERATION_PROMPT.format(conversation=conversation_text)
 
@@ -192,12 +203,16 @@ class IdeaBriefScreen(Screen):
             system_prompt = (
                 "You are a technical writer creating concise product documentation."
             )
-            for chunk in self.llm_client.stream_message(
+            for result in self.llm_client.stream_message(
                 messages=[{"role": "user", "content": prompt}],
                 system=system_prompt,
             ):
-                brief_content += chunk
-                self.app.call_from_thread(self._update_brief_display, brief_content)
+                if isinstance(result, StreamChunk):
+                    brief_content += result.text
+                    self.app.call_from_thread(self._update_brief_display, brief_content)
+                elif isinstance(result, StreamComplete):
+                    # Update header cost display
+                    self.app.call_from_thread(self.app.update_header_cost)
         except Exception as e:
             logger.exception("Error generating brief: %s", e)
             brief_content = f"# Error\n\nFailed to generate brief: {e}"

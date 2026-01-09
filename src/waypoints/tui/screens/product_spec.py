@@ -11,7 +11,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Markdown, Static, TextArea
 
-from waypoints.llm.client import ChatClient
+from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
 from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
@@ -170,7 +170,7 @@ class ProductSpecScreen(Screen):
         self.history = history
         self.spec_content: str = ""
         self.is_editing: bool = False
-        self.llm_client = ChatClient()
+        self.llm_client: ChatClient | None = None
         self.file_path = self._generate_file_path()
 
     def _generate_file_path(self) -> Path:
@@ -196,6 +196,15 @@ class ProductSpecScreen(Screen):
         """Start generating the specification."""
         self.app.sub_title = f"{self.project.name} · Product Spec"
 
+        # Set up metrics collection for this project
+        self.app.set_project_for_metrics(self.project)
+
+        # Create ChatClient with metrics collector
+        self.llm_client = ChatClient(
+            metrics_collector=self.app.metrics_collector,
+            phase="product-spec",
+        )
+
         # Transition journey state: SHAPE_BRIEF_REVIEW -> SHAPE_SPEC_GENERATING
         self.project.transition_journey(JourneyState.SHAPE_SPEC_GENERATING)
 
@@ -204,6 +213,8 @@ class ProductSpecScreen(Screen):
     @work(thread=True)
     def _generate_spec(self) -> None:
         """Generate product specification from idea brief."""
+        assert self.llm_client is not None, "llm_client not initialized"
+
         prompt = SPEC_GENERATION_PROMPT.format(brief=self.brief)
 
         logger.info("Generating product spec from brief: %d chars", len(self.brief))
@@ -218,12 +229,16 @@ class ProductSpecScreen(Screen):
             "product specifications. Be thorough but practical."
         )
         try:
-            for chunk in self.llm_client.stream_message(
+            for result in self.llm_client.stream_message(
                 messages=[{"role": "user", "content": prompt}],
                 system=system_prompt,
             ):
-                spec_content += chunk
-                self.app.call_from_thread(self._update_spec_display, spec_content)
+                if isinstance(result, StreamChunk):
+                    spec_content += result.text
+                    self.app.call_from_thread(self._update_spec_display, spec_content)
+                elif isinstance(result, StreamComplete):
+                    # Update header cost display
+                    self.app.call_from_thread(self.app.update_header_cost)
         except Exception as e:
             logger.exception("Error generating spec: %s", e)
             spec_content = f"# Error\n\nFailed to generate specification: {e}"

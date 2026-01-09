@@ -11,7 +11,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Static
 
-from waypoints.llm.client import ChatClient
+from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
 from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader, FlightPlanWriter
@@ -153,7 +153,7 @@ class ChartScreen(Screen):
         self.brief = brief
         self.history = history
         self.flight_plan: FlightPlan | None = None
-        self.llm_client = ChatClient()
+        self.llm_client: ChatClient | None = None
         self.file_path = project.get_path() / "flight-plan.jsonl"
         self._active_panel = "left"
 
@@ -171,6 +171,15 @@ class ChartScreen(Screen):
     def on_mount(self) -> None:
         """Load or generate flight plan."""
         self.app.sub_title = f"{self.project.name} · Chart"
+
+        # Set up metrics collection for this project
+        self.app.set_project_for_metrics(self.project)
+
+        # Create ChatClient with metrics collector
+        self.llm_client = ChatClient(
+            metrics_collector=self.app.metrics_collector,
+            phase="chart",
+        )
 
         # Hide panels initially
         self.query_one("#flight-plan-panel").display = False
@@ -206,6 +215,8 @@ class ChartScreen(Screen):
     @work(thread=True)
     def _generate_waypoints(self) -> None:
         """Generate waypoints from product spec via LLM."""
+        assert self.llm_client is not None, "llm_client not initialized"
+
         prompt = WAYPOINT_GENERATION_PROMPT.format(spec=self.spec)
 
         logger.info("Generating waypoints from spec: %d chars", len(self.spec))
@@ -219,11 +230,15 @@ class ChartScreen(Screen):
                 "You are a technical project planner. Create clear, testable "
                 "waypoints for software development. Output valid JSON only."
             )
-            for chunk in self.llm_client.stream_message(
+            for result in self.llm_client.stream_message(
                 messages=[{"role": "user", "content": prompt}],
                 system=system_prompt,
             ):
-                full_response += chunk
+                if isinstance(result, StreamChunk):
+                    full_response += result.text
+                elif isinstance(result, StreamComplete):
+                    # Update header cost display
+                    self.app.call_from_thread(self.app.update_header_cost)
 
             # Parse waypoints from response
             waypoints = self._parse_waypoints(full_response)
@@ -385,6 +400,8 @@ class ChartScreen(Screen):
     @work(thread=True)
     def _generate_sub_waypoints(self, parent: Waypoint) -> None:
         """Generate sub-waypoints via LLM."""
+        assert self.llm_client is not None, "llm_client not initialized"
+
         criteria_str = "\n".join(f"- {c}" for c in parent.acceptance_criteria)
         if not criteria_str:
             criteria_str = "(none specified)"
@@ -405,11 +422,15 @@ class ChartScreen(Screen):
             )
 
             full_response = ""
-            for chunk in self.llm_client.stream_message(
+            for result in self.llm_client.stream_message(
                 messages=[{"role": "user", "content": prompt}],
                 system=system_prompt,
             ):
-                full_response += chunk
+                if isinstance(result, StreamChunk):
+                    full_response += result.text
+                elif isinstance(result, StreamComplete):
+                    # Update header cost display
+                    self.app.call_from_thread(self.app.update_header_cost)
 
             # Parse the sub-waypoints
             sub_waypoints = self._parse_waypoints(full_response)

@@ -9,6 +9,7 @@ from .flight_plan import (
     WaypointSelected,
 )
 from .header import StatusHeader, StatusIcon
+from .metrics import MetricsSummary
 from .panels import RightPanel, SpecPanel
 from .status_indicator import ModelStatusIndicator
 
@@ -19,6 +20,7 @@ __all__ = [
     "FlightPlanTree",
     "InputBar",
     "MessageWidget",
+    "MetricsSummary",
     "ModelStatusIndicator",
     "RightPanel",
     "SpecPanel",
