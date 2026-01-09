@@ -4,16 +4,18 @@ Use this checklist when running Waypoints on itself (building Waypoints v2).
 
 ## Pre-Run Safety Check
 
-- [ ] Working directory is `~/benchmarks/waypoints-self-host/` (NOT dev tree)
-- [ ] `pwd` shows benchmark path, not `/Users/kulesh/dev/waypoints`
 - [ ] Dev tree is clean: `git status` in dev tree shows no changes
+- [ ] Flight test directory exists and is empty
 
 ## Setup
 
 ```bash
-mkdir -p ~/benchmarks/waypoints-self-host
-cd ~/benchmarks/waypoints-self-host
-uv run --directory /Users/kulesh/dev/waypoints waypoints
+# Create isolated flight test directory
+mkdir -p ~/flight-tests/waypoints-self-host
+
+# Run from source with artifacts going to flight test directory
+uv run --directory /Users/kulesh/dev/waypoints waypoints \
+    --workdir ~/flight-tests/waypoints-self-host
 ```
 
 ---
@@ -136,7 +138,7 @@ uv run --directory /Users/kulesh/dev/waypoints waypoints
 **Smoke tests on generated code**:
 
 ```bash
-cd ~/benchmarks/waypoints-self-host
+cd ~/flight-tests/waypoints-self-host
 uv sync
 uv run pytest
 uv run ruff check .
