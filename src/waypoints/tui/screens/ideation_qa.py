@@ -60,7 +60,7 @@ class IdeationQAScreen(BaseDialogueScreen):
 
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", show=True),
-        Binding("ctrl+d", "finish_ideation", "Done", show=True),
+        Binding("ctrl+d", "finish_ideation", "Done", show=True, priority=True),
         Binding("escape", "focus_input", "Focus Input", show=False),
     ]
 
