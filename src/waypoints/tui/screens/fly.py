@@ -813,14 +813,15 @@ class FlyScreen(Screen):
                 if self.flight_plan.is_epic(wp.id):
                     continue
 
-                # Check if dependencies are met
-                def dep_complete(dep_id: str) -> bool:
+                # Check if dependencies are met (COMPLETE or SKIPPED)
+                def dep_satisfied(dep_id: str) -> bool:
                     dep_wp = self.flight_plan.get_waypoint(dep_id)
-                    return (
-                        dep_wp is not None and dep_wp.status == WaypointStatus.COMPLETE
+                    return dep_wp is not None and dep_wp.status in (
+                        WaypointStatus.COMPLETE,
+                        WaypointStatus.SKIPPED,
                     )
 
-                deps_met = all(dep_complete(dep_id) for dep_id in wp.dependencies)
+                deps_met = all(dep_satisfied(dep_id) for dep_id in wp.dependencies)
                 if deps_met:
                     self.current_waypoint = wp
                     detail_panel = self.query_one(

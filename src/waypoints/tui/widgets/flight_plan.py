@@ -34,6 +34,7 @@ STATUS_ICONS = {
     WaypointStatus.COMPLETE: ("◉", "green"),
     WaypointStatus.IN_PROGRESS: ("◎", "bold cyan"),
     WaypointStatus.FAILED: ("✗", "bold red"),
+    WaypointStatus.SKIPPED: ("⊘", "yellow"),
     WaypointStatus.PENDING: ("○", "dim"),
 }
 # Blink state icon (shown when blinking is "off")
@@ -41,6 +42,7 @@ STATUS_ICONS_BLINK = {
     WaypointStatus.COMPLETE: ("◉", "green"),
     WaypointStatus.IN_PROGRESS: (" ", ""),  # Blinks to empty
     WaypointStatus.FAILED: ("✗", "bold red"),
+    WaypointStatus.SKIPPED: ("⊘", "yellow"),
     WaypointStatus.PENDING: ("○", "dim"),
 }
 EPIC_ICON = "◇"
