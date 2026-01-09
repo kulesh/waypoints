@@ -163,9 +163,7 @@ class InterventionModal(ModalScreen[InterventionResult | None]):
 
             # Action buttons - primary row
             with Horizontal(classes="button-row"):
-                yield Button(
-                    "Retry (+5 iterations)", id="btn-retry", variant="success"
-                )
+                yield Button("Retry (+5 iterations)", id="btn-retry", variant="success")
                 yield Button("Skip Waypoint", id="btn-skip", variant="warning")
 
             # Action buttons - secondary row
