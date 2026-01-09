@@ -180,6 +180,6 @@ ___
 ## Next Steps
 
 After completing this review:
-1. Copy this checklist to `benchmarks/self-host/results/{date}-review.md`
+1. Copy this checklist to `flight-tests/self-host/results/{date}-review.md`
 2. Create beads tickets for issues found
 3. Archive the generated project for reference

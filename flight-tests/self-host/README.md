@@ -1,4 +1,4 @@
-# Self-Hosting Benchmark
+# Self-Hosting Flight Test
 
 This directory contains the infrastructure for testing Waypoints by having it build itself.
 
@@ -27,7 +27,7 @@ be written to the dev tree.
 ## Directory Structure
 
 ```
-benchmarks/self-host/
+flight-tests/self-host/
 ├── README.md              # This file
 ├── review-checklist.md    # Manual review criteria
 ├── run.sh                 # Automation script (Phase 3)
@@ -35,7 +35,7 @@ benchmarks/self-host/
 └── results/               # Historical results
     └── {timestamp}.json
 
-~/benchmarks/waypoints-self-host/   # Isolated benchmark tree (NOT in dev)
+~/flight-tests/waypoints-self-host/   # Isolated flight test tree (NOT in dev)
 ├── .waypoints/projects/waypoints-v2/
 ├── src/                   # Generated code
 ├── tests/                 # Generated tests
@@ -44,10 +44,9 @@ benchmarks/self-host/
 
 ## Safety
 
-**The dev tree must NEVER be modified by self-hosting tests.**
+**The dev tree must NEVER be modified by flight tests.**
 
 Always verify before running:
-- `pwd` shows `~/benchmarks/waypoints-self-host/`, NOT dev tree
 - Dev tree is clean: `git status` shows no changes
 
 ## Phases
