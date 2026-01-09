@@ -21,10 +21,17 @@ from waypoints.fly.executor import (
     ExecutionResult,
     WaypointExecutor,
 )
+from waypoints.fly.intervention import (
+    Intervention,
+    InterventionAction,
+    InterventionNeededError,
+    InterventionResult,
+)
 from waypoints.git import GitConfig, GitService, ReceiptValidator
 from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan, FlightPlanWriter
 from waypoints.models.waypoint import Waypoint, WaypointStatus
+from waypoints.tui.screens.intervention import InterventionModal
 from waypoints.tui.widgets.flight_plan import FlightPlanTree
 from waypoints.tui.widgets.header import StatusHeader
 
@@ -721,6 +728,8 @@ class FlyScreen(Screen):
         self.spec = spec
         self.current_waypoint: Waypoint | None = None
         self._executor: WaypointExecutor | None = None
+        self._current_intervention: Intervention | None = None
+        self._additional_iterations: int = 0
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()
@@ -920,12 +929,19 @@ class FlyScreen(Screen):
         list_panel = self.query_one("#waypoint-list", WaypointListPanel)
         list_panel.update_flight_plan(self.flight_plan)
 
+        # Calculate max iterations (default + any additional from retry)
+        from waypoints.fly.executor import MAX_ITERATIONS
+
+        max_iters = MAX_ITERATIONS + self._additional_iterations
+        self._additional_iterations = 0  # Reset for next execution
+
         # Create executor with progress callback
         self._executor = WaypointExecutor(
             project=self.project,
             waypoint=self.current_waypoint,
             spec=self.spec,
             on_progress=self._on_execution_progress,
+            max_iterations=max_iters,
         )
 
         # Run execution in background worker
@@ -973,6 +989,21 @@ class FlyScreen(Screen):
             return
 
         if event.worker.is_finished:
+            # Check for InterventionNeededError exception
+            if event.worker.state.name == "ERROR":
+                # Worker raised an exception - check if it's an intervention
+                try:
+                    # Accessing result will re-raise the exception
+                    _ = event.worker.result
+                except InterventionNeededError as e:
+                    self._handle_intervention(e.intervention)
+                    return
+                except Exception as e:
+                    # Other exception - treat as failure
+                    logger.exception("Worker failed with exception: %s", e)
+                    self._handle_execution_result(ExecutionResult.FAILED)
+                    return
+
             result = event.worker.result
             self._handle_execution_result(result)
 
@@ -1047,6 +1078,148 @@ class FlyScreen(Screen):
             self.execution_state = ExecutionState.INTERVENTION
             self.query_one(StatusHeader).set_error()
             self.notify("Waypoint execution failed", severity="error")
+
+    def _handle_intervention(self, intervention: Intervention) -> None:
+        """Handle an intervention request by showing the modal."""
+        detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
+        log = detail_panel.log
+
+        # Log the intervention
+        type_label = intervention.type.value.replace("_", " ").title()
+        log.log_error(f"Intervention needed: {type_label}")
+        log.log(intervention.error_summary[:500])
+
+        # Store the intervention for retry handling
+        self._current_intervention = intervention
+
+        # Mark waypoint as failed (can be retried)
+        self._mark_waypoint_failed()
+
+        # Transition journey state: FLY_EXECUTING -> FLY_INTERVENTION
+        self.project.transition_journey(JourneyState.FLY_INTERVENTION)
+        self.execution_state = ExecutionState.INTERVENTION
+        self.query_one(StatusHeader).set_error()
+
+        # Show the intervention modal
+        self.push_screen(
+            InterventionModal(intervention),
+            callback=self._on_intervention_result,
+        )
+
+    def _on_intervention_result(self, result: InterventionResult | None) -> None:
+        """Handle the result of the intervention modal."""
+        if result is None:
+            # User cancelled - treat as abort
+            self.notify("Intervention cancelled")
+            return
+
+        detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
+        log = detail_panel.log
+        list_panel = self.query_one("#waypoint-list", WaypointListPanel)
+
+        if result.action == InterventionAction.RETRY:
+            # Retry with additional iterations
+            log.log(
+                f"Retrying with {result.additional_iterations} additional iterations"
+            )
+            self._additional_iterations = result.additional_iterations
+
+            # Reset waypoint status for retry
+            if self.current_waypoint:
+                self.current_waypoint.status = WaypointStatus.IN_PROGRESS
+                self._save_flight_plan()
+                list_panel.update_flight_plan(self.flight_plan)
+
+            # Transition: FLY_INTERVENTION -> FLY_EXECUTING
+            self.project.transition_journey(JourneyState.FLY_EXECUTING)
+            self.execution_state = ExecutionState.RUNNING
+            self.query_one(StatusHeader).set_normal()
+            self._execute_current_waypoint()
+
+        elif result.action == InterventionAction.SKIP:
+            # Skip this waypoint and move to next
+            log.log("Skipping waypoint")
+            if self.current_waypoint:
+                self.current_waypoint.status = WaypointStatus.SKIPPED
+                self._save_flight_plan()
+                list_panel.update_flight_plan(self.flight_plan)
+
+            # Transition: FLY_INTERVENTION -> FLY_PAUSED -> FLY_EXECUTING
+            self.project.transition_journey(JourneyState.FLY_PAUSED)
+            self.project.transition_journey(JourneyState.FLY_EXECUTING)
+            self.execution_state = ExecutionState.RUNNING
+            self.query_one(StatusHeader).set_normal()
+            self._select_next_waypoint()
+            if self.current_waypoint:
+                self._execute_current_waypoint()
+            else:
+                self.project.transition_journey(JourneyState.LANDED)
+                self.execution_state = ExecutionState.DONE
+                self.notify("All waypoints complete!")
+
+        elif result.action == InterventionAction.EDIT:
+            # Open waypoint editor - for now, just notify
+            log.log("Edit waypoint requested")
+            self.notify(
+                "Edit waypoint in flight plan, then press 'r' to retry",
+                severity="information",
+            )
+            # Stay in intervention state until user edits and retries
+            # Transition: FLY_INTERVENTION -> FLY_PAUSED
+            self.project.transition_journey(JourneyState.FLY_PAUSED)
+            self.execution_state = ExecutionState.PAUSED
+            self.query_one(StatusHeader).set_normal()
+
+        elif result.action == InterventionAction.ROLLBACK:
+            # Rollback to last safe tag
+            log.log("Rolling back to last safe tag")
+            self._rollback_to_safe_tag(result.rollback_tag)
+            # Transition: FLY_INTERVENTION -> FLY_READY
+            self.project.transition_journey(JourneyState.FLY_PAUSED)
+            self.project.transition_journey(JourneyState.FLY_READY)
+            self.execution_state = ExecutionState.IDLE
+            self.query_one(StatusHeader).set_normal()
+
+        elif result.action == InterventionAction.ABORT:
+            # Abort execution
+            log.log("Execution aborted")
+            # Transition: FLY_INTERVENTION -> FLY_PAUSED
+            self.project.transition_journey(JourneyState.FLY_PAUSED)
+            self.execution_state = ExecutionState.PAUSED
+            self.query_one(StatusHeader).set_normal()
+            self.notify("Execution aborted")
+
+        # Clear the current intervention
+        self._current_intervention = None
+
+    def _rollback_to_safe_tag(self, tag: str | None) -> None:
+        """Rollback git to the specified tag or find the last safe one."""
+        git = GitService()
+
+        if not git.is_git_repo():
+            self.notify("Not a git repository - cannot rollback", severity="error")
+            return
+
+        if tag:
+            # Use specified tag
+            target_tag = tag
+        else:
+            # Find last safe tag (project/WP-* pattern)
+            # This is a simplified version - a full implementation would list tags
+            self.notify(
+                "No rollback tag specified - please use git manually",
+                severity="warning",
+            )
+            return
+
+        # Perform the rollback
+        result = git.run_command(["reset", "--hard", target_tag])
+        if result.success:
+            self.notify(f"Rolled back to {target_tag}")
+            # Reload flight plan to reflect any changes
+            # TODO: Implement flight plan reload
+        else:
+            self.notify(f"Rollback failed: {result.message}", severity="error")
 
     def _mark_waypoint_failed(self) -> None:
         """Mark the current waypoint as failed and save."""

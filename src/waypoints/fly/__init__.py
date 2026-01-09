@@ -7,6 +7,13 @@ from .execution_log import (
     ExecutionLogWriter,
 )
 from .executor import ExecutionResult, WaypointExecutor
+from .intervention import (
+    Intervention,
+    InterventionAction,
+    InterventionNeededError,
+    InterventionResult,
+    InterventionType,
+)
 
 __all__ = [
     "ExecutionEntry",
@@ -14,5 +21,10 @@ __all__ = [
     "ExecutionLogReader",
     "ExecutionLogWriter",
     "ExecutionResult",
+    "Intervention",
+    "InterventionAction",
+    "InterventionNeededError",
+    "InterventionResult",
+    "InterventionType",
     "WaypointExecutor",
 ]
