@@ -47,6 +47,29 @@ class FlightPlan:
         self.waypoints.append(waypoint)
         self.updated_at = datetime.now()
 
+    def insert_waypoints_after(self, parent_id: str, waypoints: list[Waypoint]) -> None:
+        """Insert waypoints immediately after a parent waypoint.
+
+        This maintains file order so children are processed before
+        unrelated waypoints that appear later in the file.
+
+        Args:
+            parent_id: The ID of the parent waypoint to insert after.
+            waypoints: List of waypoints to insert.
+        """
+        parent_idx = next(
+            (i for i, wp in enumerate(self.waypoints) if wp.id == parent_id),
+            None,
+        )
+        if parent_idx is None:
+            # Parent not found, append at end
+            self.waypoints.extend(waypoints)
+        else:
+            # Insert after parent
+            for i, wp in enumerate(waypoints):
+                self.waypoints.insert(parent_idx + 1 + i, wp)
+        self.updated_at = datetime.now()
+
     def update_waypoint(self, waypoint: Waypoint) -> bool:
         """Update an existing waypoint.
 
