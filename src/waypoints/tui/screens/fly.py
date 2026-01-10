@@ -2,8 +2,10 @@
 
 import logging
 import re
+import subprocess
 from datetime import UTC, datetime
 from enum import Enum
+from pathlib import Path
 
 from rich.syntax import Syntax
 from rich.text import Text
@@ -54,6 +56,47 @@ CODE_BLOCK_PATTERN = re.compile(r"```(\w+)?\n(.*?)```", re.DOTALL)
 BOLD_PATTERN = re.compile(r"\*\*(.+?)\*\*")
 ITALIC_PATTERN = re.compile(r"(?<!\*)\*([^*]+?)\*(?!\*)")
 INLINE_CODE_PATTERN = re.compile(r"`([^`]+)`")
+
+
+def get_git_status_summary(project_path: Path) -> str:
+    """Get git status with colored indicator: 'branch [color]●[/] N changed'."""
+    try:
+        # Get current branch
+        branch_result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if branch_result.returncode != 0:
+            return ""  # Not a git repo
+        branch = branch_result.stdout.strip() or "HEAD"
+
+        # Get status
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        lines = [line for line in status_result.stdout.strip().split("\n") if line]
+
+        if not lines:
+            return f"{branch} [green]✓[/]"
+
+        # Count untracked (??) vs modified
+        untracked = sum(1 for line in lines if line.startswith("??"))
+
+        if untracked > 0:
+            # Red: has untracked files
+            return f"{branch} [red]●[/] {len(lines)} changed"
+        else:
+            # Yellow: modified only
+            return f"{branch} [yellow]●[/] {len(lines)} changed"
+    except Exception:
+        return ""
 
 
 def _markdown_to_rich_text(text: str, base_style: str = "") -> Text:
@@ -555,6 +598,11 @@ class WaypointListPanel(Vertical):
         margin-top: 1;
     }
 
+    WaypointListPanel .git-status {
+        color: $text-muted;
+        margin-top: 0;
+    }
+
     WaypointListPanel .panel-footer {
         dock: bottom;
         height: auto;
@@ -604,6 +652,7 @@ class WaypointListPanel(Vertical):
             yield Static(
                 "□□□□□□□□□□ 0/0", classes="progress-bar", id="overall-progress"
             )
+            yield Static("", classes="git-status", id="git-status")
         yield FlightPlanTree(id="waypoint-tree")
         with Vertical(classes="panel-footer"):
             yield Static("", classes="action-hint", id="action-hint")
@@ -612,6 +661,10 @@ class WaypointListPanel(Vertical):
     def update_action_hint(self, message: str) -> None:
         """Update the action hint text."""
         self.query_one("#action-hint", Static).update(message)
+
+    def update_git_status(self, message: str) -> None:
+        """Update the git status indicator."""
+        self.query_one("#git-status", Static).update(message)
 
     def update_flight_plan(
         self,
@@ -793,6 +846,16 @@ class FlyScreen(Screen):
 
         wp_count = len(self.flight_plan.waypoints)
         logger.info("FlyScreen mounted with %d waypoints", wp_count)
+
+        # Start git status polling
+        self._update_git_status()
+        self._git_status_timer = self.set_interval(10.0, self._update_git_status)
+
+    def _update_git_status(self) -> None:
+        """Update git status indicator in the left panel."""
+        status = get_git_status_summary(self.project.get_path())
+        list_panel = self.query_one(WaypointListPanel)
+        list_panel.update_git_status(status)
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
         """Update detail panel when tree selection changes."""
