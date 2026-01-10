@@ -545,8 +545,8 @@ class WaypointDetailPanel(Vertical):
                     if entry.content:
                         # Truncate very long outputs
                         content = entry.content
-                        if len(content) > 2000:
-                            content = content[:2000] + "\n... (truncated)"
+                        if len(content) > 24000:
+                            content = content[:24000] + "\n... (truncated)"
                         log.write_log(content)
                 elif entry.entry_type == "error":
                     log.log_error(entry.content)
