@@ -117,6 +117,8 @@ You are implementing a software waypoint. Your task is to:
 6. Iterate until all acceptance criteria are met
 
 **IMPORTANT RULES:**
+- **STAY IN THE PROJECT**: Only read/write files within {project_path}. Do NOT access files outside this directory.
+- If the project is empty, that's expected - build from scratch using the spec
 - Work iteratively - read, write, test, fix
 - Keep changes minimal and focused on the waypoint objective
 - Follow existing code patterns and style in the project
