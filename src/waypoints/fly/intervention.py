@@ -22,6 +22,9 @@ class InterventionType(Enum):
     PARSE_ERROR = "parse_error"  # Invalid output from LLM
     USER_REQUESTED = "user_requested"  # User pressed interrupt key
     EXECUTION_ERROR = "execution_error"  # General execution failure
+    RATE_LIMITED = "rate_limited"  # Claude API rate limit hit
+    API_UNAVAILABLE = "api_unavailable"  # Service temporarily down
+    BUDGET_EXCEEDED = "budget_exceeded"  # Daily/monthly budget hit
 
 
 class InterventionAction(Enum):
@@ -43,6 +46,9 @@ SUGGESTED_ACTIONS: dict[InterventionType, InterventionAction] = {
     InterventionType.PARSE_ERROR: InterventionAction.RETRY,
     InterventionType.USER_REQUESTED: InterventionAction.ABORT,
     InterventionType.EXECUTION_ERROR: InterventionAction.RETRY,
+    InterventionType.RATE_LIMITED: InterventionAction.RETRY,
+    InterventionType.API_UNAVAILABLE: InterventionAction.RETRY,
+    InterventionType.BUDGET_EXCEEDED: InterventionAction.ABORT,
 }
 
 

@@ -34,10 +34,12 @@ from waypoints.fly.intervention import (
 )
 from waypoints.git.config import Checklist
 from waypoints.llm.client import (
+    APIErrorType,
     StreamChunk,
     StreamComplete,
     StreamToolUse,
     agent_query,
+    classify_api_error,
 )
 from waypoints.models.project import Project
 from waypoints.models.waypoint import Waypoint
@@ -405,8 +407,36 @@ class WaypointExecutor:
 
             except Exception as e:
                 logger.exception("Error during iteration %d: %s", iteration, e)
+
+                # Classify the error for better user feedback
+                api_error_type = classify_api_error(e)
+
+                # Map API error type to intervention type
+                intervention_type = {
+                    APIErrorType.RATE_LIMITED: InterventionType.RATE_LIMITED,
+                    APIErrorType.API_UNAVAILABLE: InterventionType.API_UNAVAILABLE,
+                    APIErrorType.BUDGET_EXCEEDED: InterventionType.BUDGET_EXCEEDED,
+                }.get(api_error_type, InterventionType.EXECUTION_ERROR)
+
+                # Create user-friendly error summary
+                error_summaries = {
+                    APIErrorType.RATE_LIMITED: (
+                        "Claude API rate limit reached. "
+                        "Wait a few minutes and retry."
+                    ),
+                    APIErrorType.API_UNAVAILABLE: (
+                        "Claude service temporarily unavailable. "
+                        "Try again shortly."
+                    ),
+                    APIErrorType.BUDGET_EXCEEDED: (
+                        "Daily Claude budget exceeded. "
+                        "Execution paused until budget resets."
+                    ),
+                }
+                error_summary = error_summaries.get(api_error_type, str(e))
+
                 self._report_progress(
-                    iteration, self.max_iterations, "error", f"Error: {e}"
+                    iteration, self.max_iterations, "error", f"Error: {error_summary}"
                 )
                 self.steps.append(
                     ExecutionStep(
@@ -419,17 +449,21 @@ class WaypointExecutor:
                 self._log_writer.log_error(iteration, str(e))
                 self._log_writer.log_completion(ExecutionResult.FAILED.value)
 
-                # Raise InterventionNeededError for recoverable errors
+                # Raise InterventionNeededError with classified type
                 intervention = Intervention(
-                    type=InterventionType.EXECUTION_ERROR,
+                    type=intervention_type,
                     waypoint=self.waypoint,
                     iteration=iteration,
                     max_iterations=self.max_iterations,
-                    error_summary=str(e),
-                    context={"full_output": full_output[-2000:]},
+                    error_summary=error_summary,
+                    context={
+                        "full_output": full_output[-2000:],
+                        "api_error_type": api_error_type.value,
+                        "original_error": str(e),
+                    },
                 )
                 self._log_writer.log_intervention_needed(
-                    iteration, intervention.type.value, str(e)
+                    iteration, intervention.type.value, error_summary
                 )
                 raise InterventionNeededError(intervention) from e
 
