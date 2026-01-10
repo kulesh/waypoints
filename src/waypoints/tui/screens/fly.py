@@ -105,10 +105,20 @@ def get_git_status_summary(project_path: Path) -> str:
 
 
 def _markdown_to_rich_text(text: str, base_style: str = "") -> Text:
-    """Convert markdown formatting to Rich Text.
+    """Convert markdown and Rich markup formatting to Rich Text.
 
-    Handles: **bold**, *italic*, `inline code`
+    Handles:
+    - Rich markup: [green]text[/], [bold]text[/], etc.
+    - Markdown: **bold**, *italic*, `inline code`
     """
+    # Check if text contains Rich markup tags - use Rich's built-in processing
+    if "[" in text and "[/" in text:
+        result = Text.from_markup(text)
+        if base_style:
+            result.stylize(base_style)
+        return result
+
+    # Otherwise, process markdown patterns
     result = Text()
 
     # Process the text character by character, tracking markdown patterns
