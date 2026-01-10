@@ -1,6 +1,7 @@
 """TUI widgets for Waypoints."""
 
 from .dialogue import DialoguePanel, DialogueView, InputBar, MessageWidget
+from .file_preview import FilePreviewModal
 from .flight_plan import (
     FlightPlanPanel,
     FlightPlanTree,
@@ -17,6 +18,7 @@ from .status_indicator import ModelStatusIndicator
 __all__ = [
     "DialoguePanel",
     "DialogueView",
+    "FilePreviewModal",
     "FlightPlanPanel",
     "FlightPlanTree",
     "InputBar",
