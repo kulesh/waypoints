@@ -8,13 +8,14 @@ import logging
 import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ResultMessage,
     TextBlock,
+    ToolUseBlock,
     query,
 )
 
@@ -169,6 +170,14 @@ class StreamChunk:
 
 
 @dataclass
+class StreamToolUse:
+    """Agent is using a tool."""
+
+    tool_name: str
+    tool_input: dict[str, Any]
+
+
+@dataclass
 class StreamComplete:
     """Agent stream completion with metadata."""
 
@@ -184,14 +193,17 @@ async def agent_query(
     metrics_collector: "MetricsCollector | None" = None,
     phase: str = "fly",
     waypoint_id: str | None = None,
-) -> AsyncIterator[StreamChunk | StreamComplete]:
+) -> AsyncIterator[StreamChunk | StreamToolUse | StreamComplete]:
     """
     Run an agentic query using Claude Agent SDK.
 
     Use this for tasks that require file operations, bash commands, etc.
     For simple Q&A, use ChatClient instead.
 
-    Yields StreamChunk for each text piece, then StreamComplete at the end.
+    Yields:
+        StreamChunk: For each text piece from the assistant
+        StreamToolUse: When the agent calls a tool (name and input)
+        StreamComplete: At the end with full text and cost
 
     Args:
         prompt: The prompt to send.
@@ -223,6 +235,11 @@ async def agent_query(
                     if isinstance(block, TextBlock):
                         full_text += block.text
                         yield StreamChunk(text=block.text)
+                    elif isinstance(block, ToolUseBlock):
+                        yield StreamToolUse(
+                            tool_name=block.name,
+                            tool_input=block.input,
+                        )
             elif isinstance(message, ResultMessage):
                 cost = message.total_cost_usd
 

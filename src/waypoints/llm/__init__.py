@@ -5,6 +5,7 @@ from .client import (
     ChatClient,
     StreamChunk,
     StreamComplete,
+    StreamToolUse,
     agent_query,
 )
 from .metrics import (
@@ -23,5 +24,6 @@ __all__ = [
     "MetricsCollector",
     "StreamChunk",
     "StreamComplete",
+    "StreamToolUse",
     "agent_query",
 ]
