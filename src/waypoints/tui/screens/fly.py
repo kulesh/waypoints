@@ -795,13 +795,21 @@ class FlyScreen(Screen):
             include_in_progress: If True, also consider IN_PROGRESS and FAILED
                                 waypoints (for resume after pause/failure)
         """
+        logger.debug(
+            "=== Selection round (include_in_progress=%s) ===", include_in_progress
+        )
+
         # If resuming, first check for IN_PROGRESS or FAILED waypoints
         if include_in_progress:
             for wp in self.flight_plan.waypoints:
                 if wp.status in (WaypointStatus.IN_PROGRESS, WaypointStatus.FAILED):
                     # Skip epics - only execute leaf waypoints
                     if self.flight_plan.is_epic(wp.id):
+                        logger.debug("SKIP %s: is epic", wp.id)
                         continue
+                    logger.info(
+                        "SELECTED %s: resuming %s waypoint", wp.id, wp.status.value
+                    )
                     self.current_waypoint = wp
                     detail_panel = self.query_one(
                         "#waypoint-detail", WaypointDetailPanel
@@ -811,44 +819,67 @@ class FlyScreen(Screen):
 
         # Then check for PENDING waypoints with met dependencies
         for wp in self.flight_plan.waypoints:
-            if wp.status == WaypointStatus.PENDING:
-                # Skip epics (multi-hop waypoints) - only execute leaf waypoints
-                # Epics are auto-completed when all children are complete
-                if self.flight_plan.is_epic(wp.id):
-                    continue
+            if wp.status != WaypointStatus.PENDING:
+                logger.debug("SKIP %s: status=%s", wp.id, wp.status.value)
+                continue
 
-                # Check if dependencies are met (COMPLETE or SKIPPED)
-                def dep_satisfied(dep_id: str) -> bool:
-                    dep_wp = self.flight_plan.get_waypoint(dep_id)
-                    return dep_wp is not None and dep_wp.status in (
-                        WaypointStatus.COMPLETE,
-                        WaypointStatus.SKIPPED,
-                    )
+            # Skip epics (multi-hop waypoints) - only execute leaf waypoints
+            # Epics are auto-completed when all children are complete
+            if self.flight_plan.is_epic(wp.id):
+                logger.debug("SKIP %s: is epic", wp.id)
+                continue
 
-                deps_met = all(dep_satisfied(dep_id) for dep_id in wp.dependencies)
-                if deps_met:
-                    self.current_waypoint = wp
-                    detail_panel = self.query_one(
-                        "#waypoint-detail", WaypointDetailPanel
-                    )
-                    detail_panel.show_waypoint(wp, active_waypoint_id=None)
-                    return
+            # Check if dependencies are met (COMPLETE or SKIPPED)
+            unmet_deps = []
+            for dep_id in wp.dependencies:
+                dep_wp = self.flight_plan.get_waypoint(dep_id)
+                if dep_wp is None:
+                    unmet_deps.append(f"{dep_id}(not found)")
+                elif dep_wp.status not in (
+                    WaypointStatus.COMPLETE,
+                    WaypointStatus.SKIPPED,
+                ):
+                    unmet_deps.append(f"{dep_id}({dep_wp.status.value})")
+
+            if unmet_deps:
+                logger.debug("SKIP %s: blocked by %s", wp.id, ", ".join(unmet_deps))
+                continue
+
+            logger.info("SELECTED %s: all deps satisfied", wp.id)
+            self.current_waypoint = wp
+            detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
+            detail_panel.show_waypoint(wp, active_waypoint_id=None)
+            return
 
         # No waypoints found
+        logger.info("No eligible waypoints found - DONE")
         self.current_waypoint = None
         self.execution_state = ExecutionState.DONE
 
     def _get_state_message(self, state: ExecutionState) -> str:
         """Get the status bar message for a given execution state."""
-        messages = {
-            ExecutionState.IDLE: "Press 'r' to start execution",
-            ExecutionState.RUNNING: "Executing waypoint...",
-            ExecutionState.PAUSE_PENDING: "Pausing after current waypoint...",
-            ExecutionState.PAUSED: "Paused. Press 'r' to resume",
-            ExecutionState.DONE: "All waypoints complete!",
-            ExecutionState.INTERVENTION: "Human intervention needed",
-        }
-        return messages.get(state, "")
+        # Check for resumable waypoints (IN_PROGRESS or FAILED)
+        has_resumable = any(
+            wp.status in (WaypointStatus.IN_PROGRESS, WaypointStatus.FAILED)
+            and not self.flight_plan.is_epic(wp.id)
+            for wp in self.flight_plan.waypoints
+        )
+
+        if state == ExecutionState.IDLE:
+            if has_resumable:
+                return "Press 'r' to resume in-progress waypoint"
+            return "Press 'r' to start execution"
+        elif state == ExecutionState.RUNNING:
+            return "Executing waypoint..."
+        elif state == ExecutionState.PAUSE_PENDING:
+            return "Pausing after current waypoint..."
+        elif state == ExecutionState.PAUSED:
+            return "Paused. Press 'r' to resume"
+        elif state == ExecutionState.DONE:
+            return "All waypoints complete!"
+        elif state == ExecutionState.INTERVENTION:
+            return "Intervention needed. Press 'r' to retry"
+        return ""
 
     def _update_ticker(self) -> None:
         """Update the status bar with elapsed time and cost."""

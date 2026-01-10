@@ -476,8 +476,8 @@ class ChartScreen(Screen):
         if not self.flight_plan:
             return
 
-        for wp in sub_waypoints:
-            self.flight_plan.add_waypoint(wp)
+        # Insert after parent to maintain selection order
+        self.flight_plan.insert_waypoints_after(parent.id, sub_waypoints)
 
         # Save to disk
         writer = FlightPlanWriter(self.project)
