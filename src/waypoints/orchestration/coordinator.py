@@ -547,14 +547,57 @@ class JourneyCoordinator:
     def delete_waypoint(self, waypoint_id: str) -> list[str]:
         """Delete a waypoint and return IDs of orphaned dependents.
 
+        Also removes any children if it's an epic.
+
         Args:
             waypoint_id: ID of waypoint to delete
 
         Returns:
             List of waypoint IDs that had this as a dependency
         """
-        # TODO: Extract from ChartScreen._delete_waypoint()
-        raise NotImplementedError("Will be extracted from ChartScreen")
+        if self.flight_plan is None:
+            return []
+
+        # Get dependents before deletion
+        dependents = self.flight_plan.get_dependents(waypoint_id)
+        dependent_ids = [wp.id for wp in dependents]
+
+        # Remove the waypoint (FlightPlan handles children)
+        self.flight_plan.remove_waypoint(waypoint_id)
+
+        # Save to disk
+        self._save_flight_plan()
+
+        logger.info(
+            "Deleted waypoint %s (orphaned %d dependents)",
+            waypoint_id,
+            len(dependent_ids),
+        )
+        return dependent_ids
+
+    def add_sub_waypoints(self, parent_id: str, sub_waypoints: list[Waypoint]) -> None:
+        """Add sub-waypoints to a parent waypoint.
+
+        Inserts after parent to maintain tree order.
+
+        Args:
+            parent_id: ID of the parent waypoint
+            sub_waypoints: List of child waypoints to add
+        """
+        if self.flight_plan is None:
+            return
+
+        # Ensure all have correct parent_id
+        for wp in sub_waypoints:
+            wp.parent_id = parent_id
+
+        # Insert after parent
+        self.flight_plan.insert_waypoints_after(parent_id, sub_waypoints)
+
+        # Save to disk
+        self._save_flight_plan()
+
+        logger.info("Added %d sub-waypoints to %s", len(sub_waypoints), parent_id)
 
     # ─── IDEATION Phase: Q&A Dialogue ────────────────────────────────────
 
