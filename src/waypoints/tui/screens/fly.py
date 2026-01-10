@@ -616,15 +616,29 @@ class WaypointDetailPanel(Vertical):
                     details = entry.metadata.get("details", "")
                     log.write_log(f"[red]⚠ Security violation: {details}[/]")
 
-            # Update iteration label with final count and cost
+            # Update iteration label with stats
             if max_iteration > 0:
                 s = "s" if max_iteration > 1 else ""
                 parts = [f"{max_iteration} iteration{s}"]
-                # Use cost from metrics collector (passed via show_waypoint)
-                # Fall back to execution log cost if metrics not available
+
+                # Add duration
+                if exec_log.completed_at and exec_log.started_at:
+                    duration = (exec_log.completed_at - exec_log.started_at).seconds
+                    if duration >= 60:
+                        mins, secs = divmod(duration, 60)
+                        parts.append(f"{mins}m {secs}s")
+                    else:
+                        parts.append(f"{duration}s")
+
+                # Add cost from metrics collector (or fall back to execution log)
                 cost = self._waypoint_cost or exec_log.total_cost_usd
                 if cost and cost > 0:
                     parts.append(f"${cost:.2f}")
+
+                # Add start time
+                started = exec_log.started_at.strftime("%b %d, %H:%M")
+                parts.append(f"started {started}")
+
                 self.query_one("#iteration-label", Static).update(" · ".join(parts))
 
             # Show verification summary for historical waypoints
