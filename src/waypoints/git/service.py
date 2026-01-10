@@ -53,13 +53,13 @@ class GitResult:
 class GitService:
     """Handles all git operations for waypoints."""
 
-    def __init__(self, working_dir: Path | None = None) -> None:
+    def __init__(self, working_dir: Path) -> None:
         """Initialize git service.
 
         Args:
-            working_dir: Directory to run git commands in. Defaults to cwd.
+            working_dir: Directory to run git commands in. Required.
         """
-        self.working_dir = working_dir or Path.cwd()
+        self.working_dir = working_dir
 
     def _run_git(
         self, *args: str, check: bool = False
