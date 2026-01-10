@@ -564,6 +564,9 @@ class WaypointDetailPanel(Vertical):
                     f"Completed in {max_iteration} iteration{s}"
                 )
 
+            # Show verification summary for historical waypoints
+            self._log_historical_verification(waypoint, log)
+
             return True
 
         except Exception as e:
@@ -571,6 +574,55 @@ class WaypointDetailPanel(Vertical):
                 "Failed to load execution history for %s: %s", waypoint.id, e
             )
             return False
+
+    def _log_historical_verification(
+        self, waypoint: Waypoint, log: "ExecutionLog"
+    ) -> None:
+        """Log verification summary for historical waypoints.
+
+        Similar to _log_verification_summary but uses persisted data
+        instead of live tracking.
+        """
+        log.log_heading("Verification Summary")
+
+        # Get completed criteria from execution log
+        completed_criteria = ExecutionLogReader.get_completed_criteria(
+            self._project, waypoint.id
+        )
+        total_criteria = len(waypoint.acceptance_criteria)
+        completed_count = len(completed_criteria)
+
+        if total_criteria > 0:
+            for i, criterion in enumerate(waypoint.acceptance_criteria):
+                if i in completed_criteria:
+                    log.write_log(f"[green]✓[/] {criterion}")
+                else:
+                    log.write_log(f"[yellow]?[/] {criterion} [dim](not marked)[/]")
+
+            if completed_count == total_criteria:
+                log.write_log(f"\n[green]All {total_criteria} criteria verified[/]")
+            else:
+                log.write_log(
+                    f"\n[yellow]{completed_count}/{total_criteria} criteria marked[/]"
+                )
+
+        # Check receipt status
+        validator = ReceiptValidator()
+        receipt_path = validator.find_latest_receipt(
+            self._project.get_path(), waypoint.id
+        )
+
+        if receipt_path:
+            result = validator.validate(receipt_path)
+            if result.valid:
+                log.write_log("[green]✓ Receipt validated[/]")
+            else:
+                log.write_log(f"[yellow]⚠ Receipt: {result.message}[/]")
+                if result.receipt:
+                    for item in result.receipt.failed_items():
+                        log.write_log(f"  [red]✗[/] {item.item}: {item.evidence}")
+        else:
+            log.write_log("[yellow]⚠ No receipt found[/]")
 
     def _show_epic_details(self, waypoint: Waypoint) -> None:
         """Display details for an epic (multi-hop waypoint with children).
