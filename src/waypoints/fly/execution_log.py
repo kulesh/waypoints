@@ -287,9 +287,7 @@ class ExecutionLogWriter:
             entry["reason"] = reason
         self._append(entry)
 
-    def log_receipt_validated(
-        self, path: str, valid: bool, message: str = ""
-    ) -> None:
+    def log_receipt_validated(self, path: str, valid: bool, message: str = "") -> None:
         """Log receipt validation result."""
         entry: dict[str, Any] = {
             "type": "receipt_validated",
