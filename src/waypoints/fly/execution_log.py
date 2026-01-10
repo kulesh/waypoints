@@ -174,14 +174,21 @@ class ExecutionLogWriter:
         }
         self._append(entry)
 
-    def log_output(self, iteration: int, output: str) -> None:
-        """Log agent output/response."""
-        entry = {
+    def log_output(
+        self,
+        iteration: int,
+        output: str,
+        criteria_completed: set[int] | None = None,
+    ) -> None:
+        """Log agent output/response with optional criteria completion status."""
+        entry: dict[str, Any] = {
             "type": "output",
             "iteration": iteration,
             "content": output,
             "timestamp": datetime.now().isoformat(),
         }
+        if criteria_completed:
+            entry["criteria_completed"] = sorted(criteria_completed)
         self._append(entry)
 
     def log_tool_call(
@@ -352,3 +359,33 @@ class ExecutionLogReader:
         if not logs:
             return None
         return cls.load(logs[0])
+
+    @classmethod
+    def get_completed_criteria(
+        cls,
+        project: "Project",
+        waypoint_id: str,
+    ) -> set[int]:
+        """Get completed criteria indices from the most recent execution log.
+
+        Args:
+            project: The project to load from
+            waypoint_id: The waypoint ID to get criteria for
+
+        Returns:
+            Set of completed criteria indices
+        """
+        logs = cls.list_logs(project, waypoint_id)
+        if not logs:
+            return set()
+
+        completed: set[int] = set()
+        with open(logs[0]) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                data = json.loads(line)
+                if data.get("type") == "output" and "criteria_completed" in data:
+                    completed.update(data["criteria_completed"])
+        return completed

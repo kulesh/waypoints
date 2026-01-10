@@ -282,10 +282,12 @@ class AcceptanceCriteriaList(Static):
         self._criteria: list[str] = []
         self._completed: set[int] = set()
 
-    def set_criteria(self, criteria: list[str]) -> None:
-        """Set the list of criteria to display."""
+    def set_criteria(
+        self, criteria: list[str], completed: set[int] | None = None
+    ) -> None:
+        """Set the list of criteria to display with optional initial completed state."""
         self._criteria = criteria
-        self._completed = set()
+        self._completed = completed if completed is not None else set()
         self._refresh_display()
 
     def update_completed(self, completed: set[int]) -> None:
@@ -395,12 +397,14 @@ class WaypointDetailPanel(Vertical):
     def show_waypoint(
         self,
         waypoint: Waypoint | None,
+        project: "Project | None" = None,
         active_waypoint_id: str | None = None,
     ) -> None:
         """Display waypoint details.
 
         Args:
             waypoint: The waypoint to display
+            project: The project (for loading completed criteria from log)
             active_waypoint_id: ID of the currently executing waypoint
         """
         self._waypoint = waypoint
@@ -425,9 +429,18 @@ class WaypointDetailPanel(Vertical):
             status_text = waypoint.status.value.replace("_", " ").title()
             status.update(f"Status: {status_text}")
 
+            # Load completed criteria from execution log for completed waypoints
+            completed: set[int] | None = None
+            if project and waypoint.status.value == "complete":
+                from waypoints.fly.execution_log import ExecutionLogReader
+
+                completed = ExecutionLogReader.get_completed_criteria(
+                    project, waypoint.id
+                )
+
             # Update acceptance criteria
             if criteria_list:
-                criteria_list.set_criteria(waypoint.acceptance_criteria)
+                criteria_list.set_criteria(waypoint.acceptance_criteria, completed)
 
             # Update log header with waypoint ID
             log_header.update(f"Output · {waypoint.id}")
@@ -955,7 +968,44 @@ class FlyScreen(Screen[None]):
                 and self.execution_state == ExecutionState.RUNNING
                 else None
             )
-            detail_panel.show_waypoint(waypoint, active_waypoint_id=active_id)
+            detail_panel.show_waypoint(
+                waypoint, project=self.project, active_waypoint_id=active_id
+            )
+
+    def _get_completion_status(self) -> tuple[bool, int, int, int]:
+        """Analyze waypoint completion status.
+
+        Returns:
+            Tuple of (all_complete, pending_count, failed_count, blocked_count)
+        """
+        pending = 0
+        failed = 0
+        blocked = 0
+
+        for wp in self.flight_plan.waypoints:
+            # Skip epics - they auto-complete when children complete
+            if self.flight_plan.is_epic(wp.id):
+                continue
+
+            if wp.status == WaypointStatus.PENDING:
+                # Check if blocked by failed dependency
+                is_blocked = False
+                for dep_id in wp.dependencies:
+                    dep = self.flight_plan.get_waypoint(dep_id)
+                    if dep and dep.status == WaypointStatus.FAILED:
+                        is_blocked = True
+                        break
+                if is_blocked:
+                    blocked += 1
+                else:
+                    pending += 1
+            elif wp.status == WaypointStatus.FAILED:
+                failed += 1
+            elif wp.status == WaypointStatus.IN_PROGRESS:
+                pending += 1
+
+        all_complete = pending == 0 and failed == 0 and blocked == 0
+        return (all_complete, pending, failed, blocked)
 
     def _select_next_waypoint(self, include_in_progress: bool = False) -> None:
         """Find and select the next waypoint to execute.
@@ -983,7 +1033,9 @@ class FlyScreen(Screen[None]):
                     detail_panel = self.query_one(
                         "#waypoint-detail", WaypointDetailPanel
                     )
-                    detail_panel.show_waypoint(wp, active_waypoint_id=None)
+                    detail_panel.show_waypoint(
+                        wp, project=self.project, active_waypoint_id=None
+                    )
                     return
 
         # Then check for PENDING waypoints with met dependencies
@@ -1017,13 +1069,28 @@ class FlyScreen(Screen[None]):
             logger.info("SELECTED %s: all deps satisfied", wp.id)
             self.current_waypoint = wp
             detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
-            detail_panel.show_waypoint(wp, active_waypoint_id=None)
+            detail_panel.show_waypoint(
+                wp, project=self.project, active_waypoint_id=None
+            )
             return
 
-        # No waypoints found
-        logger.info("No eligible waypoints found - DONE")
+        # No eligible waypoints found - check why
+        all_complete, pending, failed, blocked = self._get_completion_status()
         self.current_waypoint = None
-        self.execution_state = ExecutionState.DONE
+
+        if all_complete:
+            logger.info("All waypoints complete - DONE")
+            self.execution_state = ExecutionState.DONE
+        elif blocked > 0:
+            logger.info("Waypoints blocked by %d failed waypoint(s)", failed)
+            self.execution_state = ExecutionState.PAUSED
+        elif pending > 0:
+            logger.info("%d waypoints pending with unmet dependencies", pending)
+            self.execution_state = ExecutionState.PAUSED
+        else:
+            # Only failed waypoints remain
+            logger.info("Only failed waypoints remain (%d)", failed)
+            self.execution_state = ExecutionState.PAUSED
 
     def _get_state_message(self, state: ExecutionState) -> str:
         """Get the status bar message for a given execution state."""
@@ -1041,9 +1108,23 @@ class FlyScreen(Screen[None]):
         elif state == ExecutionState.PAUSED:
             if self.current_waypoint:
                 return f"Paused. Press 'r' to run {self.current_waypoint.id}"
+            # No current waypoint - show why we're paused
+            all_complete, pending, failed, blocked = self._get_completion_status()
+            if blocked > 0:
+                return f"Blocked · {blocked} waypoint(s) need failed deps fixed"
+            elif pending > 0:
+                return f"Paused · {pending} waypoint(s) waiting"
             return "Paused. Press 'r' to continue"
         elif state == ExecutionState.DONE:
-            return "All waypoints complete!"
+            # Verify all waypoints are truly complete
+            all_complete, pending, failed, blocked = self._get_completion_status()
+            if all_complete:
+                return "All waypoints complete!"
+            elif blocked > 0:
+                return f"{blocked} waypoint(s) blocked by failures"
+            elif failed > 0:
+                return f"{failed} waypoint(s) failed"
+            return f"{pending} waypoint(s) waiting"
         elif state == ExecutionState.INTERVENTION:
             if self.current_waypoint:
                 return f"Intervention needed for {self.current_waypoint.id}"
@@ -1247,9 +1328,11 @@ class FlyScreen(Screen[None]):
         return await self._executor.execute()
 
     def _on_execution_progress(self, ctx: ExecutionContext) -> None:
-        """Handle progress updates from the executor."""
-        # Workers run in the same event loop, so we can update UI directly
-        self._update_progress_ui(ctx)
+        """Handle progress updates from the executor.
+
+        Uses call_later to safely schedule UI updates from any thread context.
+        """
+        self.app.call_later(self._update_progress_ui, ctx)
 
     def _update_progress_ui(self, ctx: ExecutionContext) -> None:
         """Update UI with progress (called on main thread)."""

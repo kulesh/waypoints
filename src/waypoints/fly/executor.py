@@ -316,8 +316,12 @@ class WaypointExecutor:
                                     output=iteration_output,
                                 )
                             )
-                            # Log completion marker found
-                            self._log_writer.log_output(iteration, iteration_output)
+                            # Parse criterion markers for logging
+                            criterion_matches = CRITERION_PATTERN.findall(full_output)
+                            final_completed = {int(m[0]) for m in criterion_matches}
+                            self._log_writer.log_output(
+                                iteration, iteration_output, final_completed
+                            )
                             self._log_writer.log_iteration_end(
                                 iteration, iteration_cost
                             )
@@ -404,8 +408,10 @@ class WaypointExecutor:
                 )
                 raise InterventionNeededError(intervention) from e
 
-            # Log iteration output and end
-            self._log_writer.log_output(iteration, iteration_output)
+            # Parse final criteria state and log iteration output
+            final_criteria = CRITERION_PATTERN.findall(full_output)
+            final_completed = {int(m[0]) for m in final_criteria}
+            self._log_writer.log_output(iteration, iteration_output, final_completed)
             self._log_writer.log_iteration_end(iteration, iteration_cost)
 
             # Record step
