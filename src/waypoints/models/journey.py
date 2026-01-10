@@ -83,6 +83,7 @@ VALID_TRANSITIONS: dict[JourneyState, set[JourneyState]] = {
     JourneyState.FLY_PAUSED: {
         JourneyState.FLY_EXECUTING,  # Resume
         JourneyState.FLY_READY,  # Back to ready
+        JourneyState.CHART_REVIEW,  # Edit plan
     },
     JourneyState.FLY_INTERVENTION: {
         JourneyState.FLY_EXECUTING,  # Retry
