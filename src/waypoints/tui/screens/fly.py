@@ -334,7 +334,7 @@ class WaypointDetailPanel(Vertical):
 
     WaypointDetailPanel .panel-header {
         height: auto;
-        padding: 1;
+        padding: 1 1 1 0;
         border-bottom: solid $surface-lighten-1;
     }
 
@@ -352,7 +352,7 @@ class WaypointDetailPanel(Vertical):
 
     WaypointDetailPanel .criteria-section {
         height: auto;
-        padding: 1;
+        padding: 1 1 1 0;
         border-bottom: solid $surface-lighten-1;
     }
 
