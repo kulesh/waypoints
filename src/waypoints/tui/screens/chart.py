@@ -20,6 +20,7 @@ from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader, FlightPlanWriter
 from waypoints.models.waypoint import Waypoint, WaypointStatus
+from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.flight_plan import (
     BreakDownPreviewModal,
@@ -151,6 +152,7 @@ class ChartScreen(Screen[None]):
         idea: str | None = None,
         brief: str | None = None,
         history: DialogueHistory | None = None,
+        coordinator: JourneyCoordinator | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -164,10 +166,28 @@ class ChartScreen(Screen[None]):
         self.file_path = project.get_path() / "flight-plan.jsonl"
         self._active_panel = "left"
 
+        # Coordinator will be set up in on_mount after flight_plan is loaded
+        self._coordinator: JourneyCoordinator | None = coordinator
+
     @property
     def waypoints_app(self) -> "WaypointsApp":
         """Get the app as WaypointsApp for type checking."""
         return cast("WaypointsApp", self.app)
+
+    @property
+    def coordinator(self) -> JourneyCoordinator:
+        """Get the coordinator, creating if needed."""
+        if self._coordinator is None:
+            self._coordinator = JourneyCoordinator(
+                project=self.project,
+                flight_plan=self.flight_plan,
+            )
+        return self._coordinator
+
+    def _sync_coordinator_flight_plan(self) -> None:
+        """Sync coordinator's flight plan with screen's."""
+        if self._coordinator is not None and self.flight_plan is not None:
+            self._coordinator._flight_plan = self.flight_plan
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()
@@ -204,6 +224,7 @@ class ChartScreen(Screen[None]):
 
         if self.flight_plan and self.flight_plan.waypoints:
             # Show existing plan - already in CHART_REVIEW state
+            self._sync_coordinator_flight_plan()
             self._show_panels()
             self._update_panels()
             logger.info(
@@ -300,6 +321,9 @@ class ChartScreen(Screen[None]):
 
     def _finalize_generation(self) -> None:
         """Finalize after generation completes."""
+        # Sync coordinator with newly generated flight plan
+        self._sync_coordinator_flight_plan()
+
         self._show_panels()
         self._update_panels()
 
@@ -378,11 +402,8 @@ class ChartScreen(Screen[None]):
         if not self.flight_plan:
             return
 
-        self.flight_plan.update_waypoint(waypoint)
-
-        # Save to disk
-        writer = FlightPlanWriter(self.project)
-        writer.save(self.flight_plan)
+        # Delegate to coordinator
+        self.coordinator.update_waypoint(waypoint)
 
         # Refresh the tree
         self._update_panels()
@@ -487,12 +508,8 @@ class ChartScreen(Screen[None]):
         if not self.flight_plan:
             return
 
-        # Insert after parent to maintain selection order
-        self.flight_plan.insert_waypoints_after(parent.id, sub_waypoints)
-
-        # Save to disk
-        writer = FlightPlanWriter(self.project)
-        writer.save(self.flight_plan)
+        # Delegate to coordinator
+        self.coordinator.add_sub_waypoints(parent.id, sub_waypoints)
 
         # Refresh the tree
         self._update_panels()
@@ -540,11 +557,8 @@ class ChartScreen(Screen[None]):
         if not self.flight_plan:
             return
 
-        self.flight_plan.remove_waypoint(waypoint_id)
-
-        # Save to disk
-        writer = FlightPlanWriter(self.project)
-        writer.save(self.flight_plan)
+        # Delegate to coordinator
+        self.coordinator.delete_waypoint(waypoint_id)
 
         # Refresh the tree
         self._update_panels()
