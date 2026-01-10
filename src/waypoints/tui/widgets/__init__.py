@@ -11,6 +11,7 @@ from .flight_plan import (
 from .header import StatusHeader, StatusIcon
 from .metrics import MetricsSummary
 from .panels import RightPanel, SpecPanel
+from .resizable_split import ResizableSplit
 from .status_indicator import ModelStatusIndicator
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "MessageWidget",
     "MetricsSummary",
     "ModelStatusIndicator",
+    "ResizableSplit",
     "RightPanel",
     "SpecPanel",
     "StatusHeader",
