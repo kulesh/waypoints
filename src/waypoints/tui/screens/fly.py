@@ -1526,9 +1526,7 @@ class FlyScreen(Screen):
         writer = FlightPlanWriter(self.project)
         writer.save(self.flight_plan)
 
-    def _log_verification_summary(
-        self, waypoint: Waypoint, log: ExecutionLog
-    ) -> None:
+    def _log_verification_summary(self, waypoint: Waypoint, log: ExecutionLog) -> None:
         """Log verification summary comparing live criteria with receipt."""
         log.log_heading("Verification Summary")
 
