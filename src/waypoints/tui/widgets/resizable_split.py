@@ -41,15 +41,15 @@ class ResizableSplit(Horizontal):
     ResizableSplit > .resizable-divider {
         width: 1;
         height: 100%;
-        background: $surface-lighten-1;
+        background: $surface;
     }
 
     ResizableSplit > .resizable-divider:hover {
-        background: $primary;
+        background: $surface-lighten-2;
     }
 
     ResizableSplit > .resizable-divider.dragging {
-        background: $primary-lighten-1;
+        background: $primary;
     }
     """
 
