@@ -652,9 +652,7 @@ Create the receipt now.
             if result.stdout.strip():
                 # There are changes in the waypoints app
                 changed_files = result.stdout.strip()
-                violations.append(
-                    f"Waypoints app directory modified:\n{changed_files}"
-                )
+                violations.append(f"Waypoints app directory modified:\n{changed_files}")
                 logger.warning(
                     "Agent modified files outside project! Changes:\n%s",
                     changed_files,
