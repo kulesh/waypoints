@@ -536,9 +536,11 @@ class WaypointDetailPanel(Vertical):
 
             log.write_log("")  # Blank line
 
-            # Show execution entries (summarized)
+            # Find max iteration count and show entries
+            max_iteration = 0
             for entry in exec_log.entries:
                 if entry.entry_type == "iteration_start":
+                    max_iteration = max(max_iteration, entry.iteration)
                     log.log_heading(f"Iteration {entry.iteration}")
                 elif entry.entry_type == "output":
                     # Show output content (may contain code blocks)
@@ -554,6 +556,13 @@ class WaypointDetailPanel(Vertical):
                     cost = entry.metadata.get("cost_usd")
                     if cost:
                         log.write_log(f"(Iteration cost: ${cost:.4f})")
+
+            # Update iteration label with final count
+            if max_iteration > 0:
+                s = "s" if max_iteration > 1 else ""
+                self.query_one("#iteration-label", Static).update(
+                    f"Completed in {max_iteration} iteration{s}"
+                )
 
             return True
 
