@@ -371,6 +371,7 @@ class WaypointDetailPanel(Vertical):
         self._project = project
         self._flight_plan = flight_plan
         self._waypoint: Waypoint | None = None
+        self._waypoint_cost: float | None = None
         self._showing_output_for: str | None = None  # Track which waypoint's output
         self._is_live_output: bool = False  # True if showing live streaming output
 
@@ -391,6 +392,7 @@ class WaypointDetailPanel(Vertical):
         waypoint: Waypoint | None,
         project: "Project | None" = None,
         active_waypoint_id: str | None = None,
+        cost: float | None = None,
     ) -> None:
         """Display waypoint details.
 
@@ -398,8 +400,10 @@ class WaypointDetailPanel(Vertical):
             waypoint: The waypoint to display
             project: The project (for loading completed criteria from log)
             active_waypoint_id: ID of the currently executing waypoint
+            cost: Optional cost in USD for this waypoint
         """
         self._waypoint = waypoint
+        self._waypoint_cost = cost
 
         title = self.query_one("#wp-title", Static)
         objective = self.query_one("#wp-objective", Static)
@@ -605,8 +609,11 @@ class WaypointDetailPanel(Vertical):
             if max_iteration > 0:
                 s = "s" if max_iteration > 1 else ""
                 label = f"Completed in {max_iteration} iteration{s}"
-                if exec_log.total_cost_usd > 0:
-                    label += f" · ${exec_log.total_cost_usd:.2f}"
+                # Use cost from metrics collector (passed via show_waypoint)
+                # Fall back to execution log cost if metrics not available
+                cost = self._waypoint_cost or exec_log.total_cost_usd
+                if cost and cost > 0:
+                    label += f" · ${cost:.2f}"
                 self.query_one("#iteration-label", Static).update(label)
 
             # Show verification summary for historical waypoints
@@ -1051,9 +1058,24 @@ class FlyScreen(Screen[None]):
                 and self.execution_state == ExecutionState.RUNNING
                 else None
             )
+            cost = self._get_waypoint_cost(waypoint.id)
             detail_panel.show_waypoint(
-                waypoint, project=self.project, active_waypoint_id=active_id
+                waypoint, project=self.project, active_waypoint_id=active_id, cost=cost
             )
+
+    def _get_waypoint_cost(self, waypoint_id: str) -> float | None:
+        """Get the cost for a waypoint from the metrics collector.
+
+        Args:
+            waypoint_id: The waypoint ID to get cost for
+
+        Returns:
+            Cost in USD, or None if not available
+        """
+        if self.waypoints_app.metrics_collector:
+            cost_by_waypoint = self.waypoints_app.metrics_collector.cost_by_waypoint()
+            return cost_by_waypoint.get(waypoint_id)
+        return None
 
     def _get_completion_status(self) -> tuple[bool, int, int, int]:
         """Analyze waypoint completion status.
@@ -1116,8 +1138,9 @@ class FlyScreen(Screen[None]):
                     detail_panel = self.query_one(
                         "#waypoint-detail", WaypointDetailPanel
                     )
+                    cost = self._get_waypoint_cost(wp.id)
                     detail_panel.show_waypoint(
-                        wp, project=self.project, active_waypoint_id=None
+                        wp, project=self.project, active_waypoint_id=None, cost=cost
                     )
                     return
 
@@ -1152,8 +1175,9 @@ class FlyScreen(Screen[None]):
             logger.info("SELECTED %s: all deps satisfied", wp.id)
             self.current_waypoint = wp
             detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
+            cost = self._get_waypoint_cost(wp.id)
             detail_panel.show_waypoint(
-                wp, project=self.project, active_waypoint_id=None
+                wp, project=self.project, active_waypoint_id=None, cost=cost
             )
             return
 
@@ -1303,8 +1327,9 @@ class FlyScreen(Screen[None]):
 
             # Update detail panel to show this waypoint
             detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
+            cost = self._get_waypoint_cost(selected.id)
             detail_panel.show_waypoint(
-                selected, project=self.project, active_waypoint_id=None
+                selected, project=self.project, active_waypoint_id=None, cost=cost
             )
 
             # Transition journey state and execute
