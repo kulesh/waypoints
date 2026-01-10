@@ -601,12 +601,13 @@ class WaypointDetailPanel(Vertical):
                     details = entry.metadata.get("details", "")
                     log.write_log(f"[red]⚠ Security violation: {details}[/]")
 
-            # Update iteration label with final count
+            # Update iteration label with final count and cost
             if max_iteration > 0:
                 s = "s" if max_iteration > 1 else ""
-                self.query_one("#iteration-label", Static).update(
-                    f"Completed in {max_iteration} iteration{s}"
-                )
+                label = f"Completed in {max_iteration} iteration{s}"
+                if exec_log.total_cost_usd > 0:
+                    label += f" · ${exec_log.total_cost_usd:.2f}"
+                self.query_one("#iteration-label", Static).update(label)
 
             # Show verification summary for historical waypoints
             self._log_historical_verification(waypoint, log)
