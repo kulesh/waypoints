@@ -38,6 +38,7 @@ from waypoints.git import GitConfig, GitService, ReceiptValidator
 from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan, FlightPlanWriter
 from waypoints.models.waypoint import Waypoint, WaypointStatus
+from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.screens.intervention import InterventionModal
 from waypoints.tui.widgets.flight_plan import FlightPlanTree
 from waypoints.tui.widgets.header import StatusHeader
@@ -1005,13 +1006,20 @@ class FlyScreen(Screen[None]):
         project: Project,
         flight_plan: FlightPlan,
         spec: str,
+        coordinator: JourneyCoordinator | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.project = project
         self.flight_plan = flight_plan
         self.spec = spec
-        self.current_waypoint: Waypoint | None = None
+
+        # Use provided coordinator or create one
+        self.coordinator = coordinator or JourneyCoordinator(
+            project=project,
+            flight_plan=flight_plan,
+        )
+
         self._executor: WaypointExecutor | None = None
         self._current_intervention: Intervention | None = None
         self._additional_iterations: int = 0
@@ -1026,6 +1034,16 @@ class FlyScreen(Screen[None]):
     def waypoints_app(self) -> "WaypointsApp":
         """Get the app as WaypointsApp for type checking."""
         return cast("WaypointsApp", self.app)
+
+    @property
+    def current_waypoint(self) -> Waypoint | None:
+        """Get the currently selected waypoint (delegated to coordinator)."""
+        return self.coordinator.current_waypoint
+
+    @current_waypoint.setter
+    def current_waypoint(self, waypoint: Waypoint | None) -> None:
+        """Set the currently selected waypoint (delegated to coordinator)."""
+        self.coordinator.current_waypoint = waypoint
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()
@@ -1051,8 +1069,8 @@ class FlyScreen(Screen[None]):
         # Set up metrics collection for this project
         self.waypoints_app.set_project_for_metrics(self.project)
 
-        # Clean up stale IN_PROGRESS from previous sessions
-        self._reset_stale_in_progress()
+        # Clean up stale IN_PROGRESS from previous sessions (via coordinator)
+        self.coordinator.reset_stale_in_progress()
 
         # Update waypoint list with cost data
         self._refresh_waypoint_list()
@@ -1112,37 +1130,16 @@ class FlyScreen(Screen[None]):
         Returns:
             Tuple of (all_complete, pending_count, failed_count, blocked_count)
         """
-        pending = 0
-        failed = 0
-        blocked = 0
-
-        for wp in self.flight_plan.waypoints:
-            # Skip epics - they auto-complete when children complete
-            if self.flight_plan.is_epic(wp.id):
-                continue
-
-            if wp.status == WaypointStatus.PENDING:
-                # Check if blocked by failed dependency
-                is_blocked = False
-                for dep_id in wp.dependencies:
-                    dep = self.flight_plan.get_waypoint(dep_id)
-                    if dep and dep.status == WaypointStatus.FAILED:
-                        is_blocked = True
-                        break
-                if is_blocked:
-                    blocked += 1
-                else:
-                    pending += 1
-            elif wp.status == WaypointStatus.FAILED:
-                failed += 1
-            elif wp.status == WaypointStatus.IN_PROGRESS:
-                pending += 1
-
-        all_complete = pending == 0 and failed == 0 and blocked == 0
-        return (all_complete, pending, failed, blocked)
+        status = self.coordinator.get_completion_status()
+        # Include in_progress in pending count for legacy compatibility
+        pending = status.pending + status.in_progress
+        all_complete = status.all_complete
+        return (all_complete, pending, status.failed, status.blocked)
 
     def _select_next_waypoint(self, include_in_progress: bool = False) -> None:
         """Find and select the next waypoint to execute.
+
+        Delegates selection logic to the coordinator, then updates UI.
 
         Args:
             include_in_progress: If True, also consider IN_PROGRESS and FAILED
@@ -1152,57 +1149,12 @@ class FlyScreen(Screen[None]):
             "=== Selection round (include_in_progress=%s) ===", include_in_progress
         )
 
-        # If resuming, first check for IN_PROGRESS or FAILED waypoints
-        if include_in_progress:
-            for wp in self.flight_plan.waypoints:
-                if wp.status in (WaypointStatus.IN_PROGRESS, WaypointStatus.FAILED):
-                    # Skip epics - only execute leaf waypoints
-                    if self.flight_plan.is_epic(wp.id):
-                        logger.debug("SKIP %s: is epic", wp.id)
-                        continue
-                    logger.info(
-                        "SELECTED %s: resuming %s waypoint", wp.id, wp.status.value
-                    )
-                    self.current_waypoint = wp
-                    detail_panel = self.query_one(
-                        "#waypoint-detail", WaypointDetailPanel
-                    )
-                    cost = self._get_waypoint_cost(wp.id)
-                    detail_panel.show_waypoint(
-                        wp, project=self.project, active_waypoint_id=None, cost=cost
-                    )
-                    return
+        # Delegate selection to coordinator
+        wp = self.coordinator.select_next_waypoint(include_failed=include_in_progress)
 
-        # Then check for PENDING waypoints with met dependencies
-        for wp in self.flight_plan.waypoints:
-            if wp.status != WaypointStatus.PENDING:
-                logger.debug("SKIP %s: status=%s", wp.id, wp.status.value)
-                continue
-
-            # Skip epics (multi-hop waypoints) - only execute leaf waypoints
-            # Epics are auto-completed when all children are complete
-            if self.flight_plan.is_epic(wp.id):
-                logger.debug("SKIP %s: is epic", wp.id)
-                continue
-
-            # Check if dependencies are met (COMPLETE or SKIPPED)
-            unmet_deps = []
-            for dep_id in wp.dependencies:
-                dep_wp = self.flight_plan.get_waypoint(dep_id)
-                if dep_wp is None:
-                    unmet_deps.append(f"{dep_id}(not found)")
-                elif dep_wp.status not in (
-                    WaypointStatus.COMPLETE,
-                    WaypointStatus.SKIPPED,
-                ):
-                    unmet_deps.append(f"{dep_id}({dep_wp.status.value})")
-
-            if unmet_deps:
-                logger.debug("SKIP %s: blocked by %s", wp.id, ", ".join(unmet_deps))
-                continue
-
-            logger.info("SELECTED %s: all deps satisfied", wp.id)
-            self.current_waypoint = wp
+        if wp:
+            # Waypoint selected - update UI
+            logger.info("SELECTED %s via coordinator", wp.id)
             detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
             cost = self._get_waypoint_cost(wp.id)
             detail_panel.show_waypoint(
@@ -1212,7 +1164,6 @@ class FlyScreen(Screen[None]):
 
         # No eligible waypoints found - check why
         all_complete, pending, failed, blocked = self._get_completion_status()
-        self.current_waypoint = None
 
         if all_complete:
             logger.info("All waypoints complete - DONE")
@@ -1967,54 +1918,10 @@ class FlyScreen(Screen[None]):
     def _check_parent_completion(self, completed_waypoint: Waypoint) -> None:
         """Check if parent epic should be auto-completed.
 
-        When a child waypoint completes, check if all siblings are also complete.
-        If so, mark the parent epic as complete. This cascades up the tree.
+        Delegates to coordinator which handles the recursive check.
 
         Args:
             completed_waypoint: The waypoint that just completed
         """
-        if not completed_waypoint.parent_id:
-            return  # No parent, nothing to check
-
-        parent = self.flight_plan.get_waypoint(completed_waypoint.parent_id)
-        if not parent:
-            return
-
-        # Get all children of the parent
-        children = self.flight_plan.get_children(parent.id)
-        if not children:
-            return
-
-        # Check if ALL children are complete
-        all_complete = all(
-            child.status == WaypointStatus.COMPLETE for child in children
-        )
-
-        if all_complete:
-            # Mark parent as complete
-            parent.status = WaypointStatus.COMPLETE
-            parent.completed_at = datetime.now()
-            logger.info(
-                "Auto-completed parent epic %s (all %d children complete)",
-                parent.id,
-                len(children),
-            )
-
-            # Recursively check grandparent
-            self._check_parent_completion(parent)
-
-    def _reset_stale_in_progress(self) -> None:
-        """Reset any stale IN_PROGRESS waypoints to PENDING.
-
-        Called on session start to clean up state from crashed/killed sessions.
-        Only one waypoint should be IN_PROGRESS at a time, and only during
-        active execution in the current session.
-        """
-        changed = False
-        for wp in self.flight_plan.waypoints:
-            if wp.status == WaypointStatus.IN_PROGRESS:
-                wp.status = WaypointStatus.PENDING
-                changed = True
-                logger.info("Reset stale IN_PROGRESS waypoint %s to PENDING", wp.id)
-        if changed:
-            self._save_flight_plan()
+        # Delegate to coordinator - it handles the recursive parent check
+        self.coordinator._check_parent_completion(completed_waypoint)
