@@ -261,6 +261,47 @@ class ExecutionLog(RichLog):
         self.clear()
 
 
+class AcceptanceCriteriaList(Static):
+    """Displays acceptance criteria with live checkboxes."""
+
+    DEFAULT_CSS = """
+    AcceptanceCriteriaList {
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._criteria: list[str] = []
+        self._completed: set[int] = set()
+
+    def set_criteria(self, criteria: list[str]) -> None:
+        """Set the list of criteria to display."""
+        self._criteria = criteria
+        self._completed = set()
+        self._render()
+
+    def update_completed(self, completed: set[int]) -> None:
+        """Update which criteria are marked complete."""
+        if completed != self._completed:
+            self._completed = completed
+            self._render()
+
+    def _render(self) -> None:
+        """Render the criteria list with checkboxes."""
+        if not self._criteria:
+            self.update("")
+            return
+
+        lines = []
+        for i, criterion in enumerate(self._criteria):
+            if i in self._completed:
+                lines.append(f"[green]\\[✓][/] {criterion}")
+            else:
+                lines.append(f"[dim]\\[ ][/] {criterion}")
+        self.update("\n".join(lines))
+
+
 class WaypointDetailPanel(Vertical):
     """Right panel showing current waypoint details and execution log."""
 
@@ -279,15 +320,23 @@ class WaypointDetailPanel(Vertical):
 
     WaypointDetailPanel .wp-title {
         text-style: bold;
-        margin-bottom: 1;
     }
 
     WaypointDetailPanel .wp-objective {
         color: $text-muted;
-        margin-bottom: 1;
     }
 
     WaypointDetailPanel .wp-status {
+        color: $text-muted;
+    }
+
+    WaypointDetailPanel .criteria-section {
+        height: auto;
+        padding: 1;
+        border-bottom: solid $surface-lighten-1;
+    }
+
+    WaypointDetailPanel .section-label {
         color: $text-muted;
     }
 
@@ -327,6 +376,9 @@ class WaypointDetailPanel(Vertical):
             yield Static("Select a waypoint", classes="wp-title", id="wp-title")
             yield Static("", classes="wp-objective", id="wp-objective")
             yield Static("Status: Pending", classes="wp-status", id="wp-status")
+        with Vertical(classes="criteria-section", id="criteria-section"):
+            yield Static("Acceptance Criteria", classes="section-label")
+            yield AcceptanceCriteriaList(id="criteria-list")
         with Vertical(classes="iteration-section"):
             yield Static("", classes="iteration-label", id="iteration-label")
         with Vertical(classes="log-section"):
@@ -351,6 +403,8 @@ class WaypointDetailPanel(Vertical):
         status = self.query_one("#wp-status", Static)
         log_header = self.query_one("#log-header", Static)
 
+        criteria_list = self.query_one("#criteria-list", AcceptanceCriteriaList)
+
         if waypoint:
             title.update(f"{waypoint.id}: {waypoint.title}")
             obj_text = waypoint.objective
@@ -359,6 +413,9 @@ class WaypointDetailPanel(Vertical):
             objective.update(obj_text)
             status_text = waypoint.status.value.replace("_", " ").title()
             status.update(f"Status: {status_text}")
+
+            # Update acceptance criteria
+            criteria_list.set_criteria(waypoint.acceptance_criteria)
 
             # Update log header with waypoint ID
             log_header.update(f"Output · {waypoint.id}")
@@ -369,6 +426,7 @@ class WaypointDetailPanel(Vertical):
             title.update("Select a waypoint")
             objective.update("")
             status.update("Status: -")
+            criteria_list.set_criteria([])
             log_header.update("Output")
             self.clear_iteration()
             self.log.clear_log()
@@ -565,6 +623,11 @@ class WaypointDetailPanel(Vertical):
     def clear_iteration(self) -> None:
         """Clear the iteration display."""
         self.query_one("#iteration-label", Static).update("")
+
+    def update_criteria(self, completed: set[int]) -> None:
+        """Update which acceptance criteria are marked complete."""
+        criteria_list = self.query_one("#criteria-list", AcceptanceCriteriaList)
+        criteria_list.update_completed(completed)
 
     @property
     def log(self) -> ExecutionLog:
@@ -810,6 +873,8 @@ class FlyScreen(Screen):
         self._execution_start: datetime | None = None
         self._elapsed_before_pause: float = 0.0
         self._ticker_timer: object | None = None
+        # Track live criteria completion for cross-check with receipt
+        self._live_criteria_completed: set[int] = set()
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()
@@ -1168,6 +1233,11 @@ class FlyScreen(Screen):
         # Update iteration display
         detail_panel.update_iteration(ctx.iteration, ctx.total_iterations)
 
+        # Update acceptance criteria checkboxes
+        if ctx.criteria_completed:
+            self._live_criteria_completed = ctx.criteria_completed
+            detail_panel.update_criteria(ctx.criteria_completed)
+
         # Log based on step type
         if ctx.step == "executing":
             log.log_heading(f"Iteration {ctx.iteration}/{ctx.total_iterations}")
@@ -1220,6 +1290,9 @@ class FlyScreen(Screen):
                 self.current_waypoint.completed_at = datetime.now()
                 log.log_success(f"Waypoint {self.current_waypoint.id} complete!")
 
+                # Show verification summary
+                self._log_verification_summary(self.current_waypoint, log)
+
                 # Check if parent epic should be auto-completed
                 self._check_parent_completion(self.current_waypoint)
 
@@ -1227,6 +1300,9 @@ class FlyScreen(Screen):
 
                 # Commit waypoint completion (validates receipt first)
                 self._commit_waypoint(self.current_waypoint)
+
+                # Reset live criteria tracking for next waypoint
+                self._live_criteria_completed = set()
 
             detail_panel.clear_iteration()
             self._refresh_waypoint_list()
@@ -1449,6 +1525,48 @@ class FlyScreen(Screen):
         """Save the flight plan to disk."""
         writer = FlightPlanWriter(self.project)
         writer.save(self.flight_plan)
+
+    def _log_verification_summary(
+        self, waypoint: Waypoint, log: ExecutionLog
+    ) -> None:
+        """Log verification summary comparing live criteria with receipt."""
+        log.log_heading("Verification Summary")
+
+        # Report live acceptance criteria status
+        total_criteria = len(waypoint.acceptance_criteria)
+        live_completed = len(self._live_criteria_completed)
+
+        if total_criteria > 0:
+            for i, criterion in enumerate(waypoint.acceptance_criteria):
+                if i in self._live_criteria_completed:
+                    log.log(f"[green]✓[/] {criterion}")
+                else:
+                    log.log(f"[yellow]?[/] {criterion} [dim](not marked)[/]")
+
+            if live_completed == total_criteria:
+                log.log(f"\n[green]All {total_criteria} criteria verified[/]")
+            else:
+                log.log(
+                    f"\n[yellow]{live_completed}/{total_criteria} criteria marked[/]"
+                )
+
+        # Check receipt status
+        validator = ReceiptValidator()
+        receipt_path = validator.find_latest_receipt(
+            self.project.get_path(), waypoint.id
+        )
+
+        if receipt_path:
+            result = validator.validate(receipt_path)
+            if result.valid:
+                log.log("[green]✓ Receipt validated[/]")
+            else:
+                log.log(f"[yellow]⚠ Receipt: {result.message}[/]")
+                if result.receipt:
+                    for item in result.receipt.failed_items():
+                        log.log(f"  [red]✗[/] {item.item}: {item.evidence}")
+        else:
+            log.log("[yellow]⚠ No receipt found[/]")
 
     def _commit_waypoint(self, waypoint: Waypoint) -> None:
         """Commit waypoint completion if receipt is valid.
