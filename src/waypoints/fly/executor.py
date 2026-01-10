@@ -17,6 +17,7 @@ Model-centric architecture ("Pilot and Dog"):
 
 import logging
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -43,6 +44,11 @@ logger = logging.getLogger(__name__)
 
 # Max iterations before giving up
 MAX_ITERATIONS = 10
+
+# Pattern to detect criterion completion markers in agent output
+CRITERION_PATTERN = re.compile(
+    r'<criterion-verified index="(\d+)">(.+?)</criterion-verified>'
+)
 
 
 class ExecutionResult(Enum):
@@ -74,6 +80,7 @@ class ExecutionContext:
     total_iterations: int
     step: str
     output: str
+    criteria_completed: set[int] = field(default_factory=set)
 
 
 ProgressCallback = Callable[[ExecutionContext], None]
@@ -86,7 +93,10 @@ def _build_prompt(
     checklist: Checklist,
 ) -> str:
     """Build the execution prompt for a waypoint."""
-    criteria_list = "\n".join(f"- [ ] {c}" for c in waypoint.acceptance_criteria)
+    # Format criteria with indices for tracking
+    criteria_list = "\n".join(
+        f"- [ ] [{i}] {c}" for i, c in enumerate(waypoint.acceptance_criteria)
+    )
 
     checklist_items = "\n".join(f"- {item}" for item in checklist.items)
     # Normalize waypoint ID for receipt filename
@@ -100,6 +110,9 @@ def _build_prompt(
 
 ## Acceptance Criteria (must all pass)
 {criteria_list}
+
+**Progress Tracking:** When you verify each criterion, output a marker:
+<criterion-verified index="N">criterion text</criterion-verified>
 
 ## Product Spec Summary
 {spec[:2000]}{"..." if len(spec) > 2000 else ""}
@@ -343,9 +356,17 @@ class WaypointExecutor:
                                 )
                                 return ExecutionResult.SUCCESS
 
-                        # Report streaming progress
+                        # Parse criterion completion markers from full output
+                        criterion_matches = CRITERION_PATTERN.findall(full_output)
+                        completed_indices = {int(m[0]) for m in criterion_matches}
+
+                        # Report streaming progress with criteria status
                         self._report_progress(
-                            iteration, self.max_iterations, "streaming", chunk.text
+                            iteration,
+                            self.max_iterations,
+                            "streaming",
+                            chunk.text,
+                            criteria_completed=completed_indices,
                         )
 
                     elif isinstance(chunk, StreamComplete):
@@ -457,6 +478,7 @@ When complete, output the completion marker specified in the instructions."""
         total: int,
         step: str,
         output: str,
+        criteria_completed: set[int] | None = None,
     ) -> None:
         """Report progress to callback if set."""
         if self.on_progress:
@@ -466,6 +488,7 @@ When complete, output the completion marker specified in the instructions."""
                 total_iterations=total,
                 step=step,
                 output=output,
+                criteria_completed=criteria_completed or set(),
             )
             self.on_progress(ctx)
 
