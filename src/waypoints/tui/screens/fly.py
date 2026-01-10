@@ -1393,7 +1393,7 @@ class FlyScreen(Screen):
 
     def _rollback_to_safe_tag(self, tag: str | None) -> None:
         """Rollback git to the specified tag or find the last safe one."""
-        git = GitService()
+        git = GitService(self.project.get_path())
 
         if not git.is_git_repo():
             self.notify("Not a git repository - cannot rollback", severity="error")
@@ -1459,13 +1459,14 @@ class FlyScreen(Screen):
         - If valid, commit the changes
         - If invalid, skip commit but don't block
         """
-        config = GitConfig.load()
+        project_path = self.project.get_path()
+        config = GitConfig.load(project_path)
 
         if not config.auto_commit:
             logger.debug("Auto-commit disabled, skipping")
             return
 
-        git = GitService()
+        git = GitService(project_path)
 
         # Auto-init if needed
         if not git.is_git_repo():

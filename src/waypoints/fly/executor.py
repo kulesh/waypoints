@@ -17,6 +17,7 @@ Model-centric architecture ("Pilot and Dog"):
 
 import logging
 import os
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -116,8 +117,15 @@ You are implementing a software waypoint. Your task is to:
 5. If tests fail, analyze the failure and fix the code
 6. Iterate until all acceptance criteria are met
 
-**IMPORTANT RULES:**
-- **STAY IN THE PROJECT**: Only read/write files within {project_path}. Do NOT access files outside this directory.
+**CRITICAL SAFETY RULES:**
+- **STAY IN THE PROJECT**: Only read/write files within {project_path}
+- **NEVER** use absolute paths starting with /Users, /home, /tmp, or similar
+- **NEVER** access parent directories with ../ to escape the project
+- **NEVER** modify files outside the project directory
+- All file operations MUST be relative to the project root
+- Violations will cause immediate termination and rollback
+
+**Implementation Guidelines:**
 - If the project is empty, that's expected - build from scratch using the spec
 - Work iteratively - read, write, test, fix
 - Keep changes minimal and focused on the waypoint objective
@@ -210,7 +218,25 @@ class WaypointExecutor:
         original_cwd = os.getcwd()
         os.chdir(project_path)
         try:
-            return await self._execute_impl(project_path)
+            result = await self._execute_impl(project_path)
+
+            # Post-execution validation: check for escapes
+            violations = self._validate_no_external_changes()
+            if violations:
+                logger.error(
+                    "SECURITY: Agent escaped project directory! Violations:\n%s",
+                    "\n".join(violations),
+                )
+                # Log violation but don't fail - the damage is done
+                # This is a defense-in-depth warning for investigation
+                self._report_progress(
+                    self.max_iterations,
+                    self.max_iterations,
+                    "warning",
+                    f"Security warning: {len(violations)} external file(s) modified",
+                )
+
+            return result
         finally:
             os.chdir(original_cwd)
 
@@ -407,8 +433,15 @@ class WaypointExecutor:
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the agent."""
-        return """You are implementing a software waypoint as part of a larger project.
+        project_path = self.project.get_path()
+        return f"""You are implementing a software waypoint as part of a larger project.
 You have access to file and bash tools to read, write, and execute code.
+
+**CRITICAL CONSTRAINTS:**
+- Your working directory is: {project_path}
+- ONLY access files within this directory
+- NEVER use absolute paths outside the project
+- NEVER use ../ to escape the project directory
 
 Work methodically:
 1. First understand the existing codebase
@@ -573,6 +606,40 @@ Create the receipt now.
 
         logger.warning("No receipt found after finalize prompt")
         return False
+
+    def _validate_no_external_changes(self) -> list[str]:
+        """Check if any files were modified outside the project directory.
+
+        Returns a list of violation descriptions. Empty list means no violations.
+        """
+        violations = []
+
+        # Get the waypoints app directory (where this code lives)
+        waypoints_app_dir = Path(__file__).parent.parent.parent.parent
+
+        try:
+            # Check git status of waypoints app directory
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=waypoints_app_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.stdout.strip():
+                # There are changes in the waypoints app
+                changed_files = result.stdout.strip()
+                violations.append(
+                    f"Waypoints app directory modified:\n{changed_files}"
+                )
+                logger.warning(
+                    "Agent modified files outside project! Changes:\n%s",
+                    changed_files,
+                )
+        except subprocess.SubprocessError as e:
+            logger.debug("Could not check waypoints app git status: %s", e)
+
+        return violations
 
 
 async def execute_waypoint(

@@ -40,10 +40,24 @@ class GitConfig:
     create_waypoint_tags: bool = False  # Create tags per waypoint completion
 
     @classmethod
-    def load(cls) -> "GitConfig":
-        """Load config from workspace or global settings."""
-        # Try workspace config first
-        workspace_path = Path.cwd() / ".waypoints" / "git-config.json"
+    def load(cls, project_path: Path | None = None) -> "GitConfig":
+        """Load config from project, workspace, or global settings.
+
+        Args:
+            project_path: Path to project directory. If provided, checks for
+                project-specific config first.
+        """
+        # Try project-specific config first
+        if project_path:
+            project_config = project_path / ".waypoints" / "git-config.json"
+            if project_config.exists():
+                return cls._from_file(project_config)
+
+        # Try workspace config
+        if project_path:
+            workspace_path = project_path / ".waypoints" / "git-config.json"
+        else:
+            workspace_path = Path.cwd() / ".waypoints" / "git-config.json"
         if workspace_path.exists():
             return cls._from_file(workspace_path)
 

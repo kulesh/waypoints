@@ -358,7 +358,8 @@ class WaypointsApp(App):
         Unlike waypoint completion (which requires receipt validation),
         phase transitions just commit the generated artifacts directly.
         """
-        config = GitConfig.load()
+        project_path = project.get_path()
+        config = GitConfig.load(project_path)
 
         if not config.auto_commit:
             logger.debug("Auto-commit disabled, skipping phase commit")
@@ -370,7 +371,7 @@ class WaypointsApp(App):
             logger.debug("No commit config for phase: %s", to_phase)
             return
 
-        git = GitService()
+        git = GitService(project_path)
 
         # Auto-init if needed
         if not git.is_git_repo():
