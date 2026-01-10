@@ -858,27 +858,27 @@ class FlyScreen(Screen):
 
     def _get_state_message(self, state: ExecutionState) -> str:
         """Get the status bar message for a given execution state."""
-        # Check for resumable waypoints (IN_PROGRESS or FAILED)
-        has_resumable = any(
-            wp.status in (WaypointStatus.IN_PROGRESS, WaypointStatus.FAILED)
-            and not self.flight_plan.is_epic(wp.id)
-            for wp in self.flight_plan.waypoints
-        )
-
         if state == ExecutionState.IDLE:
-            if has_resumable:
-                return "Press 'r' to resume in-progress waypoint"
-            return "Press 'r' to start execution"
+            if self.current_waypoint:
+                wp = self.current_waypoint
+                # Truncate title if too long
+                title = wp.title[:40] + "..." if len(wp.title) > 40 else wp.title
+                return f"Press 'r' to run {wp.id}: {title}"
+            return "No waypoints ready to run"
         elif state == ExecutionState.RUNNING:
             return "Executing waypoint..."
         elif state == ExecutionState.PAUSE_PENDING:
             return "Pausing after current waypoint..."
         elif state == ExecutionState.PAUSED:
-            return "Paused. Press 'r' to resume"
+            if self.current_waypoint:
+                return f"Paused. Press 'r' to run {self.current_waypoint.id}"
+            return "Paused. Press 'r' to continue"
         elif state == ExecutionState.DONE:
             return "All waypoints complete!"
         elif state == ExecutionState.INTERVENTION:
-            return "Intervention needed. Press 'r' to retry"
+            if self.current_waypoint:
+                return f"Intervention needed for {self.current_waypoint.id}"
+            return "Intervention needed"
         return ""
 
     def _update_ticker(self) -> None:
