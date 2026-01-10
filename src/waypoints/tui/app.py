@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from textual.app import App
 from textual.binding import Binding
@@ -12,7 +12,8 @@ from waypoints.config import settings
 from waypoints.git import GitConfig, GitService
 from waypoints.llm.metrics import MetricsCollector
 from waypoints.models import PHASE_TO_STATE, Project
-from waypoints.models.flight_plan import FlightPlanReader
+from waypoints.models.dialogue import DialogueHistory
+from waypoints.models.flight_plan import FlightPlan, FlightPlanReader
 from waypoints.tui.screens.chart import ChartScreen
 from waypoints.tui.screens.fly import FlyScreen
 from waypoints.tui.screens.idea_brief import IdeaBriefScreen
@@ -77,7 +78,7 @@ class WaypointsCommands(Provider):
         self.app.push_screen(SettingsModal())
 
 
-class WaypointsApp(App):
+class WaypointsApp(App[None]):
     """Main Waypoints TUI application."""
 
     TITLE = "Waypoints"
@@ -96,7 +97,7 @@ class WaypointsApp(App):
     }
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         # Initialize metrics collector with a default path
         # Will be updated when a project is selected
@@ -280,7 +281,7 @@ class WaypointsApp(App):
     def switch_phase(self, phase: str, data: dict[str, Any] | None = None) -> None:
         """Switch to a different phase, optionally with data."""
         data = data or {}
-        project = data.get("project")
+        project: Project | None = cast(Project | None, data.get("project"))
         from_phase = data.get("from_phase")
 
         # Log journey state for debugging
@@ -301,22 +302,23 @@ class WaypointsApp(App):
 
         if phase == "ideation":
             self.switch_screen(IdeationScreen())
-        elif phase == "ideation-qa":
+        elif phase == "ideation-qa" and project:
             self.switch_screen(
                 IdeationQAScreen(
                     project=project,
                     idea=data.get("idea", ""),
                 )
             )
-        elif phase == "idea-brief":
+        elif phase == "idea-brief" and project:
+            history = cast(DialogueHistory, data.get("history"))
             self.switch_screen(
                 IdeaBriefScreen(
                     project=project,
                     idea=data.get("idea", ""),
-                    history=data.get("history"),
+                    history=history,
                 )
             )
-        elif phase == "product-spec":
+        elif phase == "product-spec" and project:
             self.switch_screen(
                 ProductSpecScreen(
                     project=project,
@@ -325,7 +327,7 @@ class WaypointsApp(App):
                     history=data.get("history"),
                 )
             )
-        elif phase == "chart":
+        elif phase == "chart" and project:
             self.switch_screen(
                 ChartScreen(
                     project=project,
@@ -335,11 +337,12 @@ class WaypointsApp(App):
                     history=data.get("history"),
                 )
             )
-        elif phase == "fly":
+        elif phase == "fly" and project:
+            flight_plan = cast(FlightPlan, data.get("flight_plan"))
             self.switch_screen(
                 FlyScreen(
                     project=project,
-                    flight_plan=data.get("flight_plan"),
+                    flight_plan=flight_plan,
                     spec=data.get("spec", ""),
                 )
             )

@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+from typing import TYPE_CHECKING, Any, cast
 
 from textual import work
 from textual.app import ComposeResult
@@ -10,6 +11,9 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Static
+
+if TYPE_CHECKING:
+    from waypoints.tui.app import WaypointsApp
 
 from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
 from waypoints.models import JourneyState, Project
@@ -89,7 +93,7 @@ Product Specification:
 Generate the waypoints JSON now:"""
 
 
-class ChartScreen(Screen):
+class ChartScreen(Screen[None]):
     """
     Chart screen - Waypoint planning phase.
 
@@ -146,7 +150,7 @@ class ChartScreen(Screen):
         idea: str | None = None,
         brief: str | None = None,
         history: DialogueHistory | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.project = project
@@ -158,6 +162,11 @@ class ChartScreen(Screen):
         self.llm_client: ChatClient | None = None
         self.file_path = project.get_path() / "flight-plan.jsonl"
         self._active_panel = "left"
+
+    @property
+    def waypoints_app(self) -> "WaypointsApp":
+        """Get the app as WaypointsApp for type checking."""
+        return cast("WaypointsApp", self.app)
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()
@@ -175,11 +184,11 @@ class ChartScreen(Screen):
         self.app.sub_title = f"{self.project.name} · Chart"
 
         # Set up metrics collection for this project
-        self.app.set_project_for_metrics(self.project)
+        self.waypoints_app.set_project_for_metrics(self.project)
 
         # Create ChatClient with metrics collector
         self.llm_client = ChatClient(
-            metrics_collector=self.app.metrics_collector,
+            metrics_collector=self.waypoints_app.metrics_collector,
             phase="chart",
         )
 
@@ -240,7 +249,7 @@ class ChartScreen(Screen):
                     full_response += result.text
                 elif isinstance(result, StreamComplete):
                     # Update header cost display
-                    self.app.call_from_thread(self.app.update_header_cost)
+                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
 
             # Parse waypoints from response
             waypoints = self._parse_waypoints(full_response)
@@ -432,7 +441,7 @@ class ChartScreen(Screen):
                     full_response += result.text
                 elif isinstance(result, StreamComplete):
                     # Update header cost display
-                    self.app.call_from_thread(self.app.update_header_cost)
+                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
 
             # Parse the sub-waypoints
             sub_waypoints = self._parse_waypoints(full_response)
@@ -560,7 +569,7 @@ class ChartScreen(Screen):
         self.project.transition_journey(JourneyState.FLY_READY)
 
         # Transition to FLY phase
-        self.app.switch_phase(
+        self.waypoints_app.switch_phase(
             "fly",
             {
                 "project": self.project,

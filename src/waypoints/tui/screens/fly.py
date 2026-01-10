@@ -6,6 +6,7 @@ import subprocess
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 from rich.syntax import Syntax
 from rich.text import Text
@@ -14,8 +15,12 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
+from textual.timer import Timer
 from textual.widgets import Footer, RichLog, Static, Tree
 from textual.worker import Worker
+
+if TYPE_CHECKING:
+    from waypoints.tui.app import WaypointsApp
 
 from waypoints.fly.execution_log import ExecutionLogReader
 from waypoints.fly.executor import (
@@ -116,12 +121,14 @@ def _markdown_to_rich_text(text: str, base_style: str = "") -> Text:
         code_match = INLINE_CODE_PATTERN.search(remaining)
 
         # Find the earliest match
-        matches = [
+        matches_with_none: list[tuple[re.Match[str] | None, str]] = [
             (bold_match, "bold"),
             (italic_match, "italic"),
             (code_match, "code"),
         ]
-        matches = [(m, t) for m, t in matches if m is not None]
+        matches: list[tuple[re.Match[str], str]] = [
+            (m, t) for m, t in matches_with_none if m is not None
+        ]
 
         if not matches:
             # No more patterns - add remaining text
@@ -174,10 +181,10 @@ class ExecutionLog(RichLog):
     }
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(highlight=True, markup=True, wrap=True, **kwargs)
 
-    def log(self, message: str, level: str = "info") -> None:
+    def write_log(self, message: str, level: str = "info") -> None:
         """Add a log entry with Rich formatting."""
         # Apply level-based styling
         style_map = {
@@ -270,7 +277,7 @@ class AcceptanceCriteriaList(Static):
     }
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._criteria: list[str] = []
         self._completed: set[int] = set()
@@ -279,15 +286,15 @@ class AcceptanceCriteriaList(Static):
         """Set the list of criteria to display."""
         self._criteria = criteria
         self._completed = set()
-        self._render()
+        self._refresh_display()
 
     def update_completed(self, completed: set[int]) -> None:
         """Update which criteria are marked complete."""
         if completed != self._completed:
             self._completed = completed
-            self._render()
+            self._refresh_display()
 
-    def _render(self) -> None:
+    def _refresh_display(self) -> None:
         """Render the criteria list with checkboxes."""
         if not self._criteria:
             self.update("")
@@ -362,7 +369,7 @@ class WaypointDetailPanel(Vertical):
     """
 
     def __init__(
-        self, project: Project, flight_plan: FlightPlan, **kwargs: object
+        self, project: Project, flight_plan: FlightPlan, **kwargs: Any
     ) -> None:
         super().__init__(**kwargs)
         self._project = project
@@ -403,7 +410,11 @@ class WaypointDetailPanel(Vertical):
         status = self.query_one("#wp-status", Static)
         log_header = self.query_one("#log-header", Static)
 
-        criteria_list = self.query_one("#criteria-list", AcceptanceCriteriaList)
+        # Criteria list might not exist yet if called before compose
+        try:
+            criteria_list = self.query_one("#criteria-list", AcceptanceCriteriaList)
+        except Exception:
+            criteria_list = None
 
         if waypoint:
             title.update(f"{waypoint.id}: {waypoint.title}")
@@ -415,7 +426,8 @@ class WaypointDetailPanel(Vertical):
             status.update(f"Status: {status_text}")
 
             # Update acceptance criteria
-            criteria_list.set_criteria(waypoint.acceptance_criteria)
+            if criteria_list:
+                criteria_list.set_criteria(waypoint.acceptance_criteria)
 
             # Update log header with waypoint ID
             log_header.update(f"Output · {waypoint.id}")
@@ -426,10 +438,11 @@ class WaypointDetailPanel(Vertical):
             title.update("Select a waypoint")
             objective.update("")
             status.update("Status: -")
-            criteria_list.set_criteria([])
+            if criteria_list:
+                criteria_list.set_criteria([])
             log_header.update("Output")
             self.clear_iteration()
-            self.log.clear_log()
+            self.execution_log.clear_log()
             self._showing_output_for = None
             self._is_live_output = False
 
@@ -437,7 +450,7 @@ class WaypointDetailPanel(Vertical):
         self, waypoint: Waypoint, active_waypoint_id: str | None
     ) -> None:
         """Update the output panel based on waypoint status."""
-        log = self.log
+        log = self.execution_log
 
         # If this is the active waypoint, keep showing live output
         if waypoint.id == active_waypoint_id:
@@ -478,21 +491,21 @@ class WaypointDetailPanel(Vertical):
             log.log_success("Waypoint completed")
             if waypoint.completed_at:
                 completed = waypoint.completed_at.strftime("%Y-%m-%d %H:%M")
-                log.log(f"Completed: {completed}")
-            log.log("(No execution log found)")
+                log.write_log(f"Completed: {completed}")
+            log.write_log("(No execution log found)")
         elif waypoint.status == WaypointStatus.FAILED:
             log.log_error("Last execution failed")
-            log.log("Press 'r' to retry")
-            log.log("(No execution log found)")
+            log.write_log("Press 'r' to retry")
+            log.write_log("(No execution log found)")
         elif waypoint.status == WaypointStatus.IN_PROGRESS:
             # In progress but not active (stale from previous session)
-            log.log("Execution was in progress...")
-            log.log("(Session may have been interrupted)")
+            log.write_log("Execution was in progress...")
+            log.write_log("(Session may have been interrupted)")
         else:  # PENDING
-            log.log("Waiting to execute")
+            log.write_log("Waiting to execute")
             if waypoint.dependencies:
                 deps = ", ".join(waypoint.dependencies)
-                log.log(f"Dependencies: {deps}")
+                log.write_log(f"Dependencies: {deps}")
 
     def _load_execution_history(self, waypoint: Waypoint) -> bool:
         """Load and display execution history from disk.
@@ -510,17 +523,17 @@ class WaypointDetailPanel(Vertical):
             if not exec_log:
                 return False
 
-            log = self.log
+            log = self.execution_log
 
             # Show execution summary header
             log.log_heading(f"Execution Log · {exec_log.execution_id[:8]}")
             started = exec_log.started_at.strftime("%Y-%m-%d %H:%M")
-            log.log(f"Started: {started}")
+            log.write_log(f"Started: {started}")
 
             if exec_log.completed_at:
                 completed = exec_log.completed_at.strftime("%Y-%m-%d %H:%M")
                 duration = (exec_log.completed_at - exec_log.started_at).seconds
-                log.log(f"Completed: {completed} ({duration}s)")
+                log.write_log(f"Completed: {completed} ({duration}s)")
 
             if exec_log.result:
                 if exec_log.result == "success":
@@ -529,9 +542,9 @@ class WaypointDetailPanel(Vertical):
                     log.log_error(f"Result: {exec_log.result}")
 
             if exec_log.total_cost_usd > 0:
-                log.log(f"Cost: ${exec_log.total_cost_usd:.4f}")
+                log.write_log(f"Cost: ${exec_log.total_cost_usd:.4f}")
 
-            log.log("")  # Blank line
+            log.write_log("")  # Blank line
 
             # Show execution entries (summarized)
             for entry in exec_log.entries:
@@ -544,13 +557,13 @@ class WaypointDetailPanel(Vertical):
                         content = entry.content
                         if len(content) > 2000:
                             content = content[:2000] + "\n... (truncated)"
-                        log.log(content)
+                        log.write_log(content)
                 elif entry.entry_type == "error":
                     log.log_error(entry.content)
                 elif entry.entry_type == "iteration_end":
                     cost = entry.metadata.get("cost_usd")
                     if cost:
-                        log.log(f"(Iteration cost: ${cost:.4f})")
+                        log.write_log(f"(Iteration cost: ${cost:.4f})")
 
             return True
 
@@ -568,12 +581,12 @@ class WaypointDetailPanel(Vertical):
         Args:
             waypoint: The epic waypoint to display
         """
-        log = self.log
+        log = self.execution_log
         children = self._flight_plan.get_children(waypoint.id)
 
         log.log_heading("Multi-hop Waypoint")
-        log.log(f"This waypoint contains {len(children)} child tasks.")
-        log.log("")
+        log.write_log(f"This waypoint contains {len(children)} child tasks.")
+        log.write_log("")
 
         # Calculate progress
         complete = sum(1 for c in children if c.status == WaypointStatus.COMPLETE)
@@ -584,14 +597,18 @@ class WaypointDetailPanel(Vertical):
         if complete == len(children):
             log.log_success(f"Progress: {complete}/{len(children)} complete")
         elif failed > 0:
-            log.log(f"Progress: {complete}/{len(children)} complete, {failed} failed")
+            log.write_log(
+                f"Progress: {complete}/{len(children)} complete, {failed} failed"
+            )
         elif in_progress > 0:
-            log.log(f"Progress: {complete}/{len(children)} complete, 1 in progress")
+            log.write_log(
+                f"Progress: {complete}/{len(children)} complete, 1 in progress"
+            )
         else:
-            log.log(f"Progress: {complete}/{len(children)} complete")
+            log.write_log(f"Progress: {complete}/{len(children)} complete")
 
-        log.log("")
-        log.log("Children:")
+        log.write_log("")
+        log.write_log("Children:")
 
         # Status icons
         status_icons = {
@@ -630,7 +647,7 @@ class WaypointDetailPanel(Vertical):
         criteria_list.update_completed(completed)
 
     @property
-    def log(self) -> ExecutionLog:
+    def execution_log(self) -> ExecutionLog:
         """Get the execution log widget."""
         return self.query_one("#execution-log", ExecutionLog)
 
@@ -685,7 +702,7 @@ class WaypointListPanel(Vertical):
     }
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._flight_plan: FlightPlan | None = None
         self._execution_state: ExecutionState = ExecutionState.IDLE
@@ -821,7 +838,7 @@ class WaypointListPanel(Vertical):
         return None
 
 
-class FlyScreen(Screen):
+class FlyScreen(Screen[None]):
     """FLY phase - waypoint implementation screen."""
 
     BINDINGS = [
@@ -859,7 +876,7 @@ class FlyScreen(Screen):
         project: Project,
         flight_plan: FlightPlan,
         spec: str,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.project = project
@@ -872,9 +889,14 @@ class FlyScreen(Screen):
         # Timer tracking
         self._execution_start: datetime | None = None
         self._elapsed_before_pause: float = 0.0
-        self._ticker_timer: object | None = None
+        self._ticker_timer: Timer | None = None
         # Track live criteria completion for cross-check with receipt
         self._live_criteria_completed: set[int] = set()
+
+    @property
+    def waypoints_app(self) -> "WaypointsApp":
+        """Get the app as WaypointsApp for type checking."""
+        return cast("WaypointsApp", self.app)
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()
@@ -895,7 +917,7 @@ class FlyScreen(Screen):
         self.app.sub_title = f"{self.project.name} · Fly"
 
         # Set up metrics collection for this project
-        self.app.set_project_for_metrics(self.project)
+        self.waypoints_app.set_project_for_metrics(self.project)
 
         # Clean up stale IN_PROGRESS from previous sessions
         self._reset_stale_in_progress()
@@ -922,7 +944,7 @@ class FlyScreen(Screen):
         list_panel = self.query_one(WaypointListPanel)
         list_panel.update_git_status(status)
 
-    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
+    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted[Waypoint]) -> None:
         """Update detail panel when tree selection changes."""
         if event.node.data:
             waypoint = event.node.data
@@ -1038,7 +1060,9 @@ class FlyScreen(Screen):
         minutes, seconds = divmod(int(total_elapsed), 60)
 
         cost = (
-            self.app.metrics_collector.total_cost if self.app.metrics_collector else 0.0
+            self.waypoints_app.metrics_collector.total_cost
+            if self.waypoints_app.metrics_collector
+            else 0.0
         )
 
         status_bar = self.query_one("#status-bar", Static)
@@ -1060,7 +1084,9 @@ class FlyScreen(Screen):
 
         # Show cost even when not running (if there's any)
         cost = (
-            self.app.metrics_collector.total_cost if self.app.metrics_collector else 0.0
+            self.waypoints_app.metrics_collector.total_cost
+            if self.waypoints_app.metrics_collector
+            else 0.0
         )
         if cost > 0:
             status_bar.update(f"${cost:.2f}    {message}")
@@ -1159,7 +1185,7 @@ class FlyScreen(Screen):
         # Load spec and brief from disk to ensure we have content
         spec = self.app._load_latest_doc(self.project, "product-spec")  # type: ignore[attr-defined]
         brief = self.app._load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
-        self.app.switch_phase(
+        self.waypoints_app.switch_phase(
             "chart",
             {
                 "project": self.project,
@@ -1174,7 +1200,7 @@ class FlyScreen(Screen):
             return
 
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
-        log = detail_panel.log
+        log = detail_panel.execution_log
 
         # Update status to IN_PROGRESS
         self.current_waypoint.status = WaypointStatus.IN_PROGRESS
@@ -1204,7 +1230,7 @@ class FlyScreen(Screen):
             spec=self.spec,
             on_progress=self._on_execution_progress,
             max_iterations=max_iters,
-            metrics_collector=self.app.metrics_collector,
+            metrics_collector=self.waypoints_app.metrics_collector,
         )
 
         # Run execution in background worker
@@ -1228,7 +1254,7 @@ class FlyScreen(Screen):
     def _update_progress_ui(self, ctx: ExecutionContext) -> None:
         """Update UI with progress (called on main thread)."""
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
-        log = detail_panel.log
+        log = detail_panel.execution_log
 
         # Update iteration display
         detail_panel.update_iteration(ctx.iteration, ctx.total_iterations)
@@ -1245,7 +1271,7 @@ class FlyScreen(Screen):
             # Show streaming output (code blocks will be syntax-highlighted)
             output = ctx.output.strip()
             if output:
-                log.log(output)
+                log.write_log(output)
         elif ctx.step == "complete":
             log.log_success(ctx.output)
         elif ctx.step == "error":
@@ -1278,10 +1304,10 @@ class FlyScreen(Screen):
     def _handle_execution_result(self, result: ExecutionResult | None) -> None:
         """Handle the result of waypoint execution."""
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
-        log = detail_panel.log
+        log = detail_panel.execution_log
 
         # Update header cost display after execution
-        self.app.update_header_cost()
+        self.waypoints_app.update_header_cost()
 
         if result == ExecutionResult.SUCCESS:
             # Mark complete
@@ -1341,7 +1367,7 @@ class FlyScreen(Screen):
             self.notify("Max iterations reached", severity="error")
 
         elif result == ExecutionResult.CANCELLED:
-            log.log("Execution cancelled")
+            log.write_log("Execution cancelled")
             # Transition journey state: FLY_EXECUTING -> FLY_PAUSED
             self.project.transition_journey(JourneyState.FLY_PAUSED)
             self.execution_state = ExecutionState.PAUSED
@@ -1358,12 +1384,12 @@ class FlyScreen(Screen):
     def _handle_intervention(self, intervention: Intervention) -> None:
         """Handle an intervention request by showing the modal."""
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
-        log = detail_panel.log
+        log = detail_panel.execution_log
 
         # Log the intervention
         type_label = intervention.type.value.replace("_", " ").title()
         log.log_error(f"Intervention needed: {type_label}")
-        log.log(intervention.error_summary[:500])
+        log.write_log(intervention.error_summary[:500])
 
         # Store the intervention for retry handling
         self._current_intervention = intervention
@@ -1377,7 +1403,7 @@ class FlyScreen(Screen):
         self.query_one(StatusHeader).set_error()
 
         # Show the intervention modal
-        self.push_screen(
+        self.app.push_screen(
             InterventionModal(intervention),
             callback=self._on_intervention_result,
         )
@@ -1390,11 +1416,11 @@ class FlyScreen(Screen):
             return
 
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
-        log = detail_panel.log
+        log = detail_panel.execution_log
 
         if result.action == InterventionAction.RETRY:
             # Retry with additional iterations
-            log.log(
+            log.write_log(
                 f"Retrying with {result.additional_iterations} additional iterations"
             )
             self._additional_iterations = result.additional_iterations
@@ -1413,7 +1439,7 @@ class FlyScreen(Screen):
 
         elif result.action == InterventionAction.SKIP:
             # Skip this waypoint and move to next
-            log.log("Skipping waypoint")
+            log.write_log("Skipping waypoint")
             if self.current_waypoint:
                 self.current_waypoint.status = WaypointStatus.SKIPPED
                 self._save_flight_plan()
@@ -1434,7 +1460,7 @@ class FlyScreen(Screen):
 
         elif result.action == InterventionAction.EDIT:
             # Open waypoint editor - for now, just notify
-            log.log("Edit waypoint requested")
+            log.write_log("Edit waypoint requested")
             self.notify(
                 "Edit waypoint in flight plan, then press 'r' to retry",
                 severity="information",
@@ -1447,7 +1473,7 @@ class FlyScreen(Screen):
 
         elif result.action == InterventionAction.ROLLBACK:
             # Rollback to last safe tag
-            log.log("Rolling back to last safe tag")
+            log.write_log("Rolling back to last safe tag")
             self._rollback_to_safe_tag(result.rollback_tag)
             # Transition: FLY_INTERVENTION -> FLY_READY
             self.project.transition_journey(JourneyState.FLY_PAUSED)
@@ -1457,7 +1483,7 @@ class FlyScreen(Screen):
 
         elif result.action == InterventionAction.ABORT:
             # Abort execution
-            log.log("Execution aborted")
+            log.write_log("Execution aborted")
             # Transition: FLY_INTERVENTION -> FLY_PAUSED
             self.project.transition_journey(JourneyState.FLY_PAUSED)
             self.execution_state = ExecutionState.PAUSED
@@ -1515,8 +1541,8 @@ class FlyScreen(Screen):
         """
         list_panel = self.query_one("#waypoint-list", WaypointListPanel)
         cost_by_waypoint = None
-        if self.app.metrics_collector:
-            cost_by_waypoint = self.app.metrics_collector.cost_by_waypoint()
+        if self.waypoints_app.metrics_collector:
+            cost_by_waypoint = self.waypoints_app.metrics_collector.cost_by_waypoint()
         list_panel.update_flight_plan(
             self.flight_plan, execution_state, cost_by_waypoint
         )
@@ -1537,14 +1563,14 @@ class FlyScreen(Screen):
         if total_criteria > 0:
             for i, criterion in enumerate(waypoint.acceptance_criteria):
                 if i in self._live_criteria_completed:
-                    log.log(f"[green]✓[/] {criterion}")
+                    log.write_log(f"[green]✓[/] {criterion}")
                 else:
-                    log.log(f"[yellow]?[/] {criterion} [dim](not marked)[/]")
+                    log.write_log(f"[yellow]?[/] {criterion} [dim](not marked)[/]")
 
             if live_completed == total_criteria:
-                log.log(f"\n[green]All {total_criteria} criteria verified[/]")
+                log.write_log(f"\n[green]All {total_criteria} criteria verified[/]")
             else:
-                log.log(
+                log.write_log(
                     f"\n[yellow]{live_completed}/{total_criteria} criteria marked[/]"
                 )
 
@@ -1557,14 +1583,14 @@ class FlyScreen(Screen):
         if receipt_path:
             result = validator.validate(receipt_path)
             if result.valid:
-                log.log("[green]✓ Receipt validated[/]")
+                log.write_log("[green]✓ Receipt validated[/]")
             else:
-                log.log(f"[yellow]⚠ Receipt: {result.message}[/]")
+                log.write_log(f"[yellow]⚠ Receipt: {result.message}[/]")
                 if result.receipt:
                     for item in result.receipt.failed_items():
-                        log.log(f"  [red]✗[/] {item.item}: {item.evidence}")
+                        log.write_log(f"  [red]✗[/] {item.item}: {item.evidence}")
         else:
-            log.log("[yellow]⚠ No receipt found[/]")
+            log.write_log("[yellow]⚠ No receipt found[/]")
 
     def _commit_waypoint(self, waypoint: Waypoint) -> None:
         """Commit waypoint completion if receipt is valid.

@@ -1,8 +1,11 @@
 """Dialogue widgets for chat interface."""
 
+from typing import Any
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
+from textual.events import Key
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Markdown, Rule, Static, TextArea
@@ -70,7 +73,7 @@ class MessageWidget(Markdown):
         self,
         content: str,
         role: str,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> None:
         # Add role prefix for user messages
         if role == "user":
@@ -119,7 +122,7 @@ class DialogueView(VerticalScroll):
 
     auto_scroll: reactive[bool] = reactive(True)
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._last_message: MessageWidget | None = None
         self._spacer: Spacer | None = None
@@ -187,27 +190,24 @@ class DialogueView(VerticalScroll):
 class ChatInput(TextArea):
     """Text area that submits on Enter, newline on Shift+Enter."""
 
-    def _on_key(self, event: object) -> None:
+    async def _on_key(self, event: Key) -> None:
         """Handle key events before TextArea processes them."""
-        from textual.events import Key
+        if event.key == "enter":
+            # Plain Enter = submit
+            event.prevent_default()
+            event.stop()
+            if text := self.text.strip():
+                self.post_message(UserSubmitted(text))
+                self.clear()
+            return
+        elif event.key == "shift+enter":
+            # Shift+Enter = insert newline
+            event.prevent_default()
+            event.stop()
+            self.insert("\n")
+            return
 
-        if isinstance(event, Key):
-            if event.key == "enter":
-                # Plain Enter = submit
-                event.prevent_default()
-                event.stop()
-                if text := self.text.strip():
-                    self.post_message(UserSubmitted(text))
-                    self.clear()
-                return
-            elif event.key == "shift+enter":
-                # Shift+Enter = insert newline
-                event.prevent_default()
-                event.stop()
-                self.insert("\n")
-                return
-
-        super()._on_key(event)
+        await super()._on_key(event)
 
 
 class InputBar(Vertical):
@@ -253,7 +253,7 @@ class InputBar(Vertical):
     def __init__(
         self,
         hint: str | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.hint = hint
@@ -294,7 +294,7 @@ class DialoguePanel(Vertical):
     def __init__(
         self,
         input_hint: str | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.input_hint = input_hint
