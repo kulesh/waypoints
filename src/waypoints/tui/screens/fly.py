@@ -422,17 +422,18 @@ class WaypointDetailPanel(Vertical):
                 obj_text = obj_text[:97] + "..."
             objective.update(obj_text)
 
-            # Format status with icon
-            status_icons = {
-                "complete": "✓",
-                "failed": "✗",
-                "in_progress": "●",
-                "pending": "○",
-                "skipped": "⊘",
+            # Format status with colored icon
+            status_formats = {
+                "complete": ("[green]✓[/]", "Complete"),
+                "failed": ("[red]✗[/]", "Failed"),
+                "in_progress": ("[yellow]●[/]", "Running"),
+                "pending": ("[dim]○[/]", "Pending"),
+                "skipped": ("[dim]⊘[/]", "Skipped"),
             }
-            icon = status_icons.get(waypoint.status.value, "○")
-            status_text = waypoint.status.value.replace("_", " ").title()
-            status.update(f"{icon} {status_text}")
+            icon, label = status_formats.get(
+                waypoint.status.value, ("[dim]○[/]", "Unknown")
+            )
+            status.update(Text.from_markup(f"{icon} {label}"))
 
             # Load completed criteria from execution log for completed waypoints
             completed: set[int] | None = None
