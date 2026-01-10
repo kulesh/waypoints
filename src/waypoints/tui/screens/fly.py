@@ -555,8 +555,18 @@ class WaypointListPanel(Vertical):
         margin-top: 1;
     }
 
-    WaypointListPanel .legend {
+    WaypointListPanel .panel-footer {
         dock: bottom;
+        height: auto;
+    }
+
+    WaypointListPanel .action-hint {
+        height: 1;
+        padding: 0 1;
+        color: $text-muted;
+    }
+
+    WaypointListPanel .legend {
         height: auto;
         padding: 1;
         border-top: solid $surface-lighten-1;
@@ -595,7 +605,13 @@ class WaypointListPanel(Vertical):
                 "□□□□□□□□□□ 0/0", classes="progress-bar", id="overall-progress"
             )
         yield FlightPlanTree(id="waypoint-tree")
-        yield Static("◉ Done  ◎ Active  ✗ Failed  ○ Pending", classes="legend")
+        with Vertical(classes="panel-footer"):
+            yield Static("", classes="action-hint", id="action-hint")
+            yield Static("◉ Done  ◎ Active  ✗ Failed  ○ Pending", classes="legend")
+
+    def update_action_hint(self, message: str) -> None:
+        """Update the action hint text."""
+        self.query_one("#action-hint", Static).update(message)
 
     def update_flight_plan(
         self,
@@ -905,6 +921,10 @@ class FlyScreen(Screen):
         """Update the status bar with state message and optional cost."""
         status_bar = self.query_one("#status-bar", Static)
         message = self._get_state_message(state)
+
+        # Update action hint in left panel
+        list_panel = self.query_one(WaypointListPanel)
+        list_panel.update_action_hint(message)
 
         if state == ExecutionState.RUNNING and self._execution_start:
             # Timer callback will handle updates
