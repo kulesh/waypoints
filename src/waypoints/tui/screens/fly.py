@@ -349,24 +349,8 @@ class WaypointDetailPanel(Vertical):
         color: $text-muted;
     }
 
-    WaypointDetailPanel .iteration-section {
-        height: auto;
-        padding: 1;
-        border-bottom: solid $surface-lighten-1;
-    }
-
-    WaypointDetailPanel .iteration-label {
-        color: $text-muted;
-    }
-
     WaypointDetailPanel .log-section {
         height: 1fr;
-    }
-
-    WaypointDetailPanel .log-header {
-        padding: 1;
-        color: $text-muted;
-        border-bottom: solid $surface-lighten-1;
     }
     """
 
@@ -385,13 +369,11 @@ class WaypointDetailPanel(Vertical):
             yield Static("Select a waypoint", classes="wp-title", id="wp-title")
             yield Static("", classes="wp-objective", id="wp-objective")
             yield Static("Status: Pending", classes="wp-status", id="wp-status")
+            yield Static("", classes="wp-status", id="iteration-label")
         with Vertical(classes="criteria-section", id="criteria-section"):
             yield Static("Acceptance Criteria", classes="section-label")
             yield AcceptanceCriteriaList(id="criteria-list")
-        with Vertical(classes="iteration-section"):
-            yield Static("", classes="iteration-label", id="iteration-label")
         with Vertical(classes="log-section"):
-            yield Static("Output", classes="log-header", id="log-header")
             yield ExecutionLog(id="execution-log")
 
     def show_waypoint(
@@ -412,7 +394,6 @@ class WaypointDetailPanel(Vertical):
         title = self.query_one("#wp-title", Static)
         objective = self.query_one("#wp-objective", Static)
         status = self.query_one("#wp-status", Static)
-        log_header = self.query_one("#log-header", Static)
 
         # Criteria list might not exist yet if called before compose
         try:
@@ -442,9 +423,6 @@ class WaypointDetailPanel(Vertical):
             if criteria_list:
                 criteria_list.set_criteria(waypoint.acceptance_criteria, completed)
 
-            # Update log header with waypoint ID
-            log_header.update(f"Output · {waypoint.id}")
-
             # Update output based on whether this is the active waypoint
             self._update_output_for_waypoint(waypoint, active_waypoint_id)
         else:
@@ -453,7 +431,6 @@ class WaypointDetailPanel(Vertical):
             status.update("Status: -")
             if criteria_list:
                 criteria_list.set_criteria([])
-            log_header.update("Output")
             self.clear_iteration()
             self.execution_log.clear_log()
             self._showing_output_for = None
