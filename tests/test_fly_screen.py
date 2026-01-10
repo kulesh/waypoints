@@ -12,7 +12,7 @@ class TestStatusBarMessage:
 
     @pytest.fixture
     def flight_plan(self) -> FlightPlan:
-        """Create a sample flight plan."""
+        """Create a sample flight plan with mixed statuses."""
         fp = FlightPlan()
         fp.add_waypoint(
             Waypoint(
@@ -28,6 +28,28 @@ class TestStatusBarMessage:
                 title="Phase Screen Scaffolding",
                 objective="Create scaffolding",
                 status=WaypointStatus.PENDING,
+            )
+        )
+        return fp
+
+    @pytest.fixture
+    def all_complete_flight_plan(self) -> FlightPlan:
+        """Create a flight plan where all waypoints are complete."""
+        fp = FlightPlan()
+        fp.add_waypoint(
+            Waypoint(
+                id="WP-001",
+                title="First Task",
+                objective="First",
+                status=WaypointStatus.COMPLETE,
+            )
+        )
+        fp.add_waypoint(
+            Waypoint(
+                id="WP-002",
+                title="Second Task",
+                objective="Second",
+                status=WaypointStatus.COMPLETE,
             )
         )
         return fp
@@ -55,14 +77,70 @@ class TestStatusBarMessage:
         message = screen._get_state_message(ExecutionState.IDLE)
         assert message == "No waypoints ready to run"
 
-    def test_done_state(self, flight_plan: FlightPlan):
-        """Test that DONE state shows completion message."""
+    def test_done_state_all_complete(self, all_complete_flight_plan: FlightPlan):
+        """Test DONE state when all waypoints are complete shows success message."""
+        screen = FlyScreen.__new__(FlyScreen)
+        screen.flight_plan = all_complete_flight_plan
+        screen.current_waypoint = None
+
+        message = screen._get_state_message(ExecutionState.DONE)
+        assert message == "All waypoints complete!"
+
+    def test_done_state_with_pending_shows_waiting(self, flight_plan: FlightPlan):
+        """Test DONE state with pending waypoints shows waiting count."""
         screen = FlyScreen.__new__(FlyScreen)
         screen.flight_plan = flight_plan
         screen.current_waypoint = None
 
         message = screen._get_state_message(ExecutionState.DONE)
-        assert message == "All waypoints complete!"
+        assert "waypoint(s) waiting" in message
+
+    def test_done_state_with_failed_shows_failure(self):
+        """Test DONE state with failed waypoints shows failure count."""
+        fp = FlightPlan()
+        fp.add_waypoint(
+            Waypoint(
+                id="WP-001",
+                title="Failed Task",
+                objective="Failed",
+                status=WaypointStatus.FAILED,
+            )
+        )
+
+        screen = FlyScreen.__new__(FlyScreen)
+        screen.flight_plan = fp
+        screen.current_waypoint = None
+
+        message = screen._get_state_message(ExecutionState.DONE)
+        assert "waypoint(s) failed" in message
+
+    def test_done_state_with_blocked_shows_blocked(self):
+        """Test DONE state with blocked waypoints shows blocked count."""
+        fp = FlightPlan()
+        fp.add_waypoint(
+            Waypoint(
+                id="WP-001",
+                title="Failed Task",
+                objective="Failed",
+                status=WaypointStatus.FAILED,
+            )
+        )
+        fp.add_waypoint(
+            Waypoint(
+                id="WP-002",
+                title="Blocked Task",
+                objective="Blocked by failed",
+                status=WaypointStatus.PENDING,
+                dependencies=["WP-001"],
+            )
+        )
+
+        screen = FlyScreen.__new__(FlyScreen)
+        screen.flight_plan = fp
+        screen.current_waypoint = None
+
+        message = screen._get_state_message(ExecutionState.DONE)
+        assert "blocked by failures" in message
 
     def test_running_state(self, flight_plan: FlightPlan):
         """Test that RUNNING state shows executing message."""
