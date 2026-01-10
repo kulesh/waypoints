@@ -78,9 +78,9 @@ def get_git_status_summary(project_path: Path) -> str:
             return ""  # Not a git repo
         branch = branch_result.stdout.strip() or "HEAD"
 
-        # Get status
+        # Get status (use -uall to show individual files in untracked directories)
         status_result = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "-uall"],
             cwd=project_path,
             capture_output=True,
             text=True,
