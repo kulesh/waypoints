@@ -425,8 +425,7 @@ class WaypointExecutor:
                         "Wait a few minutes and retry."
                     ),
                     APIErrorType.API_UNAVAILABLE: (
-                        "Claude service temporarily unavailable. "
-                        "Try again shortly."
+                        "Claude service temporarily unavailable. " "Try again shortly."
                     ),
                     APIErrorType.BUDGET_EXCEEDED: (
                         "Daily Claude budget exceeded. "
