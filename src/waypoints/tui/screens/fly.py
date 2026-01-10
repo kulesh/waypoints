@@ -421,8 +421,18 @@ class WaypointDetailPanel(Vertical):
             if len(obj_text) > 100:
                 obj_text = obj_text[:97] + "..."
             objective.update(obj_text)
+
+            # Format status with icon
+            status_icons = {
+                "complete": "✓",
+                "failed": "✗",
+                "in_progress": "●",
+                "pending": "○",
+                "skipped": "⊘",
+            }
+            icon = status_icons.get(waypoint.status.value, "○")
             status_text = waypoint.status.value.replace("_", " ").title()
-            status.update(f"Status: {status_text}")
+            status.update(f"{icon} {status_text}")
 
             # Load completed criteria from execution log for completed waypoints
             completed: set[int] | None = None
@@ -442,7 +452,7 @@ class WaypointDetailPanel(Vertical):
         else:
             title.update("Select a waypoint")
             objective.update("")
-            status.update("Status: -")
+            status.update("–")
             if criteria_list:
                 criteria_list.set_criteria([])
             self.clear_iteration()
@@ -608,13 +618,13 @@ class WaypointDetailPanel(Vertical):
             # Update iteration label with final count and cost
             if max_iteration > 0:
                 s = "s" if max_iteration > 1 else ""
-                label = f"Completed in {max_iteration} iteration{s}"
+                parts = [f"{max_iteration} iteration{s}"]
                 # Use cost from metrics collector (passed via show_waypoint)
                 # Fall back to execution log cost if metrics not available
                 cost = self._waypoint_cost or exec_log.total_cost_usd
                 if cost and cost > 0:
-                    label += f" · ${cost:.2f}"
-                self.query_one("#iteration-label", Static).update(label)
+                    parts.append(f"${cost:.2f}")
+                self.query_one("#iteration-label", Static).update(" · ".join(parts))
 
             # Show verification summary for historical waypoints
             self._log_historical_verification(waypoint, log)
