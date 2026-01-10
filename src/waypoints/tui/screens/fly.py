@@ -772,6 +772,9 @@ class FlyScreen(Screen):
         # Select first pending waypoint
         self._select_next_waypoint()
 
+        # Update status bar with initial state (watcher doesn't fire on mount)
+        self._update_status_bar(self.execution_state)
+
         wp_count = len(self.flight_plan.waypoints)
         logger.info("FlyScreen mounted with %d waypoints", wp_count)
 
