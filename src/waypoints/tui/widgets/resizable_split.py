@@ -181,6 +181,10 @@ class ResizableSplit(Horizontal):
 class _Divider(Widget):
     """Draggable divider widget."""
 
+    def render(self) -> str:
+        """Render empty - styling handled by CSS."""
+        return ""
+
     def on_mouse_down(self, event: MouseDown) -> None:
         """Start drag when clicked."""
         event.stop()
