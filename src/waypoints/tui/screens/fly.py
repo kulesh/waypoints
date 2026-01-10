@@ -1194,6 +1194,9 @@ class FlyScreen(Screen[None]):
             return "Pausing after current waypoint..."
         elif state == ExecutionState.PAUSED:
             if self.current_waypoint:
+                # If current waypoint failed, 'r' will skip to next
+                if self.current_waypoint.status == WaypointStatus.FAILED:
+                    return f"{self.current_waypoint.id} failed. Press 'r' to continue"
                 return f"Paused. Press 'r' to run {self.current_waypoint.id}"
             # No current waypoint - show why we're paused
             all_complete, pending, failed, blocked = self._get_completion_status()

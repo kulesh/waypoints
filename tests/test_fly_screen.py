@@ -200,6 +200,26 @@ class TestStatusBarMessage:
         # Title should be truncated to 40 chars + "..."
         assert "This is a very long title that should be" in message
 
+    def test_paused_with_failed_waypoint_shows_continue_message(self):
+        """Test that PAUSED state with failed waypoint shows accurate message."""
+        fp = FlightPlan()
+        fp.add_waypoint(
+            Waypoint(
+                id="WP-003a",
+                title="Failed Task",
+                objective="This task failed",
+                status=WaypointStatus.FAILED,
+            )
+        )
+
+        screen = make_test_screen(fp)
+        screen.current_waypoint = fp.waypoints[0]
+
+        message = screen._get_state_message(ExecutionState.PAUSED)
+        # Should NOT say "Press 'r' to run WP-003a" since it failed
+        assert "WP-003a failed" in message
+        assert "continue" in message
+
 
 class TestSelectNextWaypoint:
     """Tests for the waypoint selection logic."""
