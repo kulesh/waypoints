@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Static
 
@@ -35,6 +35,7 @@ from waypoints.tui.widgets.flight_plan import (
     WaypointSelected,
 )
 from waypoints.tui.widgets.header import StatusHeader
+from waypoints.tui.widgets.resizable_split import ResizableSplit
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ class ChartScreen(Screen[None]):
 
     ChartScreen .generating {
         width: 100%;
-        height: 100%;
+        height: 1fr;
         align: center middle;
     }
 
@@ -170,12 +171,15 @@ class ChartScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()
-        with Horizontal(classes="main-container"):
-            with Vertical(classes="generating", id="generating-view"):
-                yield ThinkingIndicator()
-                yield Static("Generating flight plan...")
-            yield FlightPlanPanel(id="flight-plan-panel")
-            yield WaypointPreviewPanel(id="preview-panel")
+        with Vertical(classes="generating", id="generating-view"):
+            yield ThinkingIndicator()
+            yield Static("Generating flight plan...")
+        yield ResizableSplit(
+            left=FlightPlanPanel(id="flight-plan-panel"),
+            right=WaypointPreviewPanel(id="preview-panel"),
+            left_pct=40,
+            classes="main-container",
+        )
         yield Static(str(self.file_path), classes="file-path", id="file-path")
         yield Footer()
 
@@ -192,9 +196,8 @@ class ChartScreen(Screen[None]):
             phase="chart",
         )
 
-        # Hide panels initially
-        self.query_one("#flight-plan-panel").display = False
-        self.query_one("#preview-panel").display = False
+        # Hide main container initially (show generating view)
+        self.query_one(".main-container").display = False
 
         # Try to load existing flight plan
         self.flight_plan = FlightPlanReader.load(self.project)
@@ -216,8 +219,7 @@ class ChartScreen(Screen[None]):
     def _show_panels(self) -> None:
         """Show the panels and hide the generating view."""
         self.query_one("#generating-view").display = False
-        self.query_one("#flight-plan-panel").display = True
-        self.query_one("#preview-panel").display = True
+        self.query_one(".main-container").display = True
 
     def _set_thinking(self, thinking: bool) -> None:
         """Set the header status indicator to thinking state."""

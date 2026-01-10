@@ -12,7 +12,7 @@ from rich.syntax import Syntax
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
 from textual.timer import Timer
@@ -41,6 +41,7 @@ from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.tui.screens.intervention import InterventionModal
 from waypoints.tui.widgets.flight_plan import FlightPlanTree
 from waypoints.tui.widgets.header import StatusHeader
+from waypoints.tui.widgets.resizable_split import ResizableSplit
 
 logger = logging.getLogger(__name__)
 
@@ -1028,13 +1029,16 @@ class FlyScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()
-        with Horizontal(classes="main-container"):
-            yield WaypointListPanel(id="waypoint-list")
-            yield WaypointDetailPanel(
+        yield ResizableSplit(
+            left=WaypointListPanel(id="waypoint-list"),
+            right=WaypointDetailPanel(
                 project=self.project,
                 flight_plan=self.flight_plan,
                 id="waypoint-detail",
-            )
+            ),
+            left_pct=33,
+            classes="main-container",
+        )
         yield Static(
             "Press Space to start execution", classes="status-bar", id="status-bar"
         )
