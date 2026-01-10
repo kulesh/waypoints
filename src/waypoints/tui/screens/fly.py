@@ -1057,8 +1057,8 @@ class FlyScreen(Screen[None]):
         # Update waypoint list with cost data
         self._refresh_waypoint_list()
 
-        # Select first pending waypoint
-        self._select_next_waypoint()
+        # Select resumable waypoint (failed/in-progress) or first pending
+        self._select_next_waypoint(include_in_progress=True)
 
         # Update status bar with initial state (watcher doesn't fire on mount)
         self._update_status_bar(self.execution_state)
