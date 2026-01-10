@@ -1,5 +1,7 @@
 """Flight plan widgets for CHART phase."""
 
+from typing import Any
+
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -177,7 +179,7 @@ class FlightPlanTree(Tree[Waypoint]):
         Binding("k", "cursor_up", "Up", show=False),
     ]
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__("PLAN", **kwargs)
         self._flight_plan: FlightPlan | None = None
         self._cost_by_waypoint: dict[str, float] = {}
@@ -355,7 +357,7 @@ class FlightPlanPanel(Vertical):
     }
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._flight_plan: FlightPlan | None = None
 
@@ -435,7 +437,7 @@ class WaypointPreviewPanel(VerticalScroll):
     }
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._waypoint: Waypoint | None = None
 
@@ -573,7 +575,7 @@ class WaypointDetailModal(ModalScreen[bool]):
     """
 
     def __init__(
-        self, waypoint: Waypoint, is_epic: bool = False, **kwargs: object
+        self, waypoint: Waypoint, is_epic: bool = False, **kwargs: Any
     ) -> None:
         super().__init__(**kwargs)
         self.waypoint = waypoint
@@ -753,7 +755,7 @@ class ConfirmDeleteModal(ModalScreen[bool]):
         waypoint_title: str,
         has_children: bool = False,
         dependents: list[str] | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.waypoint_id = waypoint_id
@@ -915,7 +917,7 @@ class WaypointEditModal(ModalScreen[Waypoint | None]):
     }
     """
 
-    def __init__(self, waypoint: Waypoint, **kwargs: object) -> None:
+    def __init__(self, waypoint: Waypoint, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.waypoint = waypoint
         self._original_waypoint = waypoint
@@ -1090,7 +1092,7 @@ class BreakDownPreviewModal(ModalScreen[bool]):
         self,
         parent_waypoint: Waypoint,
         sub_waypoints: list[Waypoint],
-        **kwargs: object,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.parent_waypoint = parent_waypoint

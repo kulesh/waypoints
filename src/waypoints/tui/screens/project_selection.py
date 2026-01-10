@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -105,7 +106,7 @@ class ConfirmDeleteProjectModal(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, project: Project, **kwargs: object) -> None:
+    def __init__(self, project: Project, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.project = project
 
@@ -165,7 +166,7 @@ class ProjectListPanel(Vertical):
     }
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._projects: list[Project] = []
 
@@ -299,7 +300,7 @@ class ProjectPreviewPanel(VerticalScroll):
             content.mount(Static("Press Enter to open", classes="hint"))
 
 
-class ProjectSelectionScreen(Screen):
+class ProjectSelectionScreen(Screen[None]):
     """
     Project selection screen - shown on app startup.
 
@@ -328,7 +329,7 @@ class ProjectSelectionScreen(Screen):
     }
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._projects: list[Project] = []
 

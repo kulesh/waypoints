@@ -1,5 +1,7 @@
 """Custom header widget with model status indicator."""
 
+from typing import Any
+
 from textual.app import ComposeResult, RenderResult
 from textual.reactive import reactive
 from textual.widgets import Header, Static
@@ -44,7 +46,7 @@ class StatusIcon(Static):
     _blink_visible: reactive[bool] = reactive(True)
     _blink_timer: object = None
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.add_class("ready")
 

@@ -1,6 +1,7 @@
 """Ideation Q&A screen for refining ideas through dialogue."""
 
 import logging
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from textual import work
@@ -8,6 +9,9 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import Footer, Header, Rule, Static
+
+if TYPE_CHECKING:
+    from waypoints.tui.app import WaypointsApp
 
 from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
 from waypoints.models import JourneyState, Project, SessionWriter
@@ -99,7 +103,7 @@ class IdeationQAScreen(BaseDialogueScreen):
     }
     """
 
-    def __init__(self, project: Project, idea: str, **kwargs: object) -> None:
+    def __init__(self, project: Project, idea: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.project = project
         self.idea = idea
@@ -107,6 +111,11 @@ class IdeationQAScreen(BaseDialogueScreen):
         self.session_writer = SessionWriter(
             project, "ideation", self.history.session_id
         )
+
+    @property
+    def waypoints_app(self) -> "WaypointsApp":
+        """Get the app as WaypointsApp for type checking."""
+        return cast("WaypointsApp", self.app)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -133,11 +142,11 @@ class IdeationQAScreen(BaseDialogueScreen):
         self.app.sub_title = f"{self.project.name} · {self.phase_name}"
 
         # Set up metrics collection for this project
-        self.app.set_project_for_metrics(self.project)
+        self.waypoints_app.set_project_for_metrics(self.project)
 
         # Create ChatClient with metrics collector
         self.llm_client = ChatClient(
-            metrics_collector=self.app.metrics_collector,
+            metrics_collector=self.waypoints_app.metrics_collector,
             phase="ideation-qa",
         )
 
@@ -188,7 +197,7 @@ class IdeationQAScreen(BaseDialogueScreen):
                     )
                 elif isinstance(result, StreamComplete):
                     # Update header cost display
-                    self.app.call_from_thread(self.app.update_header_cost)
+                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
         except Exception as e:
             logger.exception("Error calling LLM: %s", e)
             response_content = f"Error: {e}"
@@ -224,7 +233,7 @@ class IdeationQAScreen(BaseDialogueScreen):
                     )
                 elif isinstance(result, StreamComplete):
                     # Update header cost display
-                    self.app.call_from_thread(self.app.update_header_cost)
+                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
         except Exception as e:
             logger.exception("Error calling LLM: %s", e)
             response_content = f"Error: {e}"

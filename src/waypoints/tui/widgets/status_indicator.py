@@ -1,5 +1,7 @@
 """Model status indicator widget."""
 
+from typing import Any
+
 from textual.reactive import reactive
 from textual.widgets import Static
 
@@ -36,7 +38,7 @@ class ModelStatusIndicator(Static):
     _blink_visible: reactive[bool] = reactive(True)
     _blink_timer: object = None
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__("●", **kwargs)
         self.add_class("ready")
 

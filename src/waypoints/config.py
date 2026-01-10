@@ -91,7 +91,7 @@ class Settings:
         """Get the current theme, detecting from terminal if not set."""
         saved = self._data.get("theme")
         if saved:
-            return saved
+            return str(saved)
         # No saved preference - detect from terminal
         return detect_terminal_theme()
 

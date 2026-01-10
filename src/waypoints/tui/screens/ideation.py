@@ -9,7 +9,7 @@ from textual.widgets import Footer, Header, Input, Static, TextArea
 from waypoints.models import JourneyState, Project
 
 
-class IdeationScreen(Screen):
+class IdeationScreen(Screen[None]):
     """
     Ideation screen - Initial idea entry.
 

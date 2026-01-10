@@ -1,6 +1,6 @@
 """Base dialogue screen for phase screens."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from waypoints.tui.widgets.dialogue import MessageWidget
 
 
-class BaseDialogueScreen(Screen):
+class BaseDialogueScreen(Screen[None]):
     """
     Base screen for dialogue-based phases.
 
@@ -55,9 +55,7 @@ class BaseDialogueScreen(Screen):
     phase_name: str = "base"
     input_hint: str | None = None
 
-    def __init__(
-        self, history: DialogueHistory | None = None, **kwargs: object
-    ) -> None:
+    def __init__(self, history: DialogueHistory | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.history = history or DialogueHistory(phase=self.phase_name)
         self._current_streaming_widget: "MessageWidget | None" = None

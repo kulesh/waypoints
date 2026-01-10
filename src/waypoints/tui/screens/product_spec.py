@@ -3,6 +3,7 @@
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 from textual import work
 from textual.app import ComposeResult
@@ -10,6 +11,9 @@ from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Markdown, Static, TextArea
+
+if TYPE_CHECKING:
+    from waypoints.tui.app import WaypointsApp
 
 from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
 from waypoints.models import JourneyState, Project
@@ -81,7 +85,7 @@ Here is the Idea Brief to expand:
 Generate the complete Product Specification now:"""
 
 
-class ProductSpecScreen(Screen):
+class ProductSpecScreen(Screen[None]):
     """
     Product Specification screen - Generate detailed spec from idea brief.
 
@@ -163,7 +167,7 @@ class ProductSpecScreen(Screen):
         idea: str | None = None,
         brief: str | None = None,
         history: DialogueHistory | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.project = project
@@ -174,6 +178,11 @@ class ProductSpecScreen(Screen):
         self.is_editing: bool = False
         self.llm_client: ChatClient | None = None
         self.file_path = self._generate_file_path()
+
+    @property
+    def waypoints_app(self) -> "WaypointsApp":
+        """Get the app as WaypointsApp for type checking."""
+        return cast("WaypointsApp", self.app)
 
     def _generate_file_path(self) -> Path:
         """Generate a unique file path for this spec."""
@@ -199,11 +208,11 @@ class ProductSpecScreen(Screen):
         self.app.sub_title = f"{self.project.name} · Product Spec"
 
         # Set up metrics collection for this project
-        self.app.set_project_for_metrics(self.project)
+        self.waypoints_app.set_project_for_metrics(self.project)
 
         # Create ChatClient with metrics collector
         self.llm_client = ChatClient(
-            metrics_collector=self.app.metrics_collector,
+            metrics_collector=self.waypoints_app.metrics_collector,
             phase="product-spec",
         )
 
@@ -240,7 +249,7 @@ class ProductSpecScreen(Screen):
                     self.app.call_from_thread(self._update_spec_display, spec_content)
                 elif isinstance(result, StreamComplete):
                     # Update header cost display
-                    self.app.call_from_thread(self.app.update_header_cost)
+                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
         except Exception as e:
             logger.exception("Error generating spec: %s", e)
             spec_content = f"# Error\n\nFailed to generate specification: {e}"
@@ -344,7 +353,7 @@ class ProductSpecScreen(Screen):
         )
 
 
-class ProductSpecResumeScreen(Screen):
+class ProductSpecResumeScreen(Screen[None]):
     """
     Resume screen for Product Spec - displays existing spec without regenerating.
 
@@ -406,13 +415,18 @@ class ProductSpecResumeScreen(Screen):
         project: Project,
         spec: str,
         brief: str | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.project = project
         self.spec_content = spec
         self.brief = brief or ""
         self.is_editing: bool = False
+
+    @property
+    def waypoints_app(self) -> "WaypointsApp":
+        """Get the app as WaypointsApp for type checking."""
+        return cast("WaypointsApp", self.app)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -426,7 +440,7 @@ class ProductSpecResumeScreen(Screen):
         self.app.sub_title = f"{self.project.name} · Product Spec"
 
         # Set up metrics collection for this project
-        self.app.set_project_for_metrics(self.project)
+        self.waypoints_app.set_project_for_metrics(self.project)
 
         # Pre-populate editor with existing content
         editor = self.query_one("#spec-editor", TextArea)

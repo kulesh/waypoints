@@ -98,7 +98,7 @@ class GitConfig:
         path.write_text(json.dumps(self._to_dict(), indent=2))
         logger.info("Saved git config to %s", path)
 
-    def _to_dict(self) -> dict:
+    def _to_dict(self) -> dict[str, bool]:
         """Convert to dictionary."""
         return {
             "auto_commit": self.auto_commit,
