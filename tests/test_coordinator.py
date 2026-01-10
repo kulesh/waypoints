@@ -1,11 +1,12 @@
 """Tests for JourneyCoordinator business logic."""
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
-from waypoints.orchestration import JourneyCoordinator, CompletionStatus
+from waypoints.orchestration import JourneyCoordinator
 
 
 class MockProject:
