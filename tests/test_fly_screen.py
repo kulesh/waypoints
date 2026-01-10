@@ -4,7 +4,31 @@ import pytest
 
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
+from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.screens.fly import ExecutionState, FlyScreen
+
+
+def make_test_screen(flight_plan: FlightPlan) -> FlyScreen:
+    """Create a minimal FlyScreen for testing without full TUI initialization.
+
+    This sets up the required coordinator but bypasses full Screen initialization.
+    """
+    screen = FlyScreen.__new__(FlyScreen)
+    screen.flight_plan = flight_plan
+
+    # Create a mock project for the coordinator
+    class MockProject:
+        def get_path(self):
+            from pathlib import Path
+
+            return Path("/tmp/test-project")
+
+    # Set up coordinator - needed for current_waypoint property
+    screen.coordinator = JourneyCoordinator(
+        project=MockProject(),  # type: ignore
+        flight_plan=flight_plan,
+    )
+    return screen
 
 
 class TestStatusBarMessage:
@@ -58,10 +82,7 @@ class TestStatusBarMessage:
         self, flight_plan: FlightPlan
     ):
         """Test IDLE state with current_waypoint shows waypoint ID and title."""
-        # Create a minimal FlyScreen without full TUI initialization
-        # Don't set reactive properties - just set regular attributes
-        screen = FlyScreen.__new__(FlyScreen)
-        screen.flight_plan = flight_plan
+        screen = make_test_screen(flight_plan)
         screen.current_waypoint = flight_plan.waypoints[1]  # WP-003b
 
         # Test the message - pass state as argument, don't set as property
@@ -70,8 +91,7 @@ class TestStatusBarMessage:
 
     def test_idle_without_current_waypoint(self, flight_plan: FlightPlan):
         """Test that IDLE state without current_waypoint shows appropriate message."""
-        screen = FlyScreen.__new__(FlyScreen)
-        screen.flight_plan = flight_plan
+        screen = make_test_screen(flight_plan)
         screen.current_waypoint = None
 
         message = screen._get_state_message(ExecutionState.IDLE)
@@ -79,8 +99,7 @@ class TestStatusBarMessage:
 
     def test_done_state_all_complete(self, all_complete_flight_plan: FlightPlan):
         """Test DONE state when all waypoints are complete shows success message."""
-        screen = FlyScreen.__new__(FlyScreen)
-        screen.flight_plan = all_complete_flight_plan
+        screen = make_test_screen(all_complete_flight_plan)
         screen.current_waypoint = None
 
         message = screen._get_state_message(ExecutionState.DONE)
@@ -88,8 +107,7 @@ class TestStatusBarMessage:
 
     def test_done_state_with_pending_shows_waiting(self, flight_plan: FlightPlan):
         """Test DONE state with pending waypoints shows waiting count."""
-        screen = FlyScreen.__new__(FlyScreen)
-        screen.flight_plan = flight_plan
+        screen = make_test_screen(flight_plan)
         screen.current_waypoint = None
 
         message = screen._get_state_message(ExecutionState.DONE)
@@ -107,8 +125,7 @@ class TestStatusBarMessage:
             )
         )
 
-        screen = FlyScreen.__new__(FlyScreen)
-        screen.flight_plan = fp
+        screen = make_test_screen(fp)
         screen.current_waypoint = None
 
         message = screen._get_state_message(ExecutionState.DONE)
@@ -135,8 +152,7 @@ class TestStatusBarMessage:
             )
         )
 
-        screen = FlyScreen.__new__(FlyScreen)
-        screen.flight_plan = fp
+        screen = make_test_screen(fp)
         screen.current_waypoint = None
 
         message = screen._get_state_message(ExecutionState.DONE)
@@ -144,8 +160,7 @@ class TestStatusBarMessage:
 
     def test_running_state(self, flight_plan: FlightPlan):
         """Test that RUNNING state shows executing message."""
-        screen = FlyScreen.__new__(FlyScreen)
-        screen.flight_plan = flight_plan
+        screen = make_test_screen(flight_plan)
         screen.current_waypoint = flight_plan.waypoints[1]
 
         message = screen._get_state_message(ExecutionState.RUNNING)
@@ -153,8 +168,7 @@ class TestStatusBarMessage:
 
     def test_paused_with_waypoint(self, flight_plan: FlightPlan):
         """Test that PAUSED state with waypoint shows waypoint ID."""
-        screen = FlyScreen.__new__(FlyScreen)
-        screen.flight_plan = flight_plan
+        screen = make_test_screen(flight_plan)
         screen.current_waypoint = flight_plan.waypoints[1]
 
         message = screen._get_state_message(ExecutionState.PAUSED)
@@ -162,8 +176,7 @@ class TestStatusBarMessage:
 
     def test_intervention_with_waypoint(self, flight_plan: FlightPlan):
         """Test that INTERVENTION state with waypoint shows waypoint ID."""
-        screen = FlyScreen.__new__(FlyScreen)
-        screen.flight_plan = flight_plan
+        screen = make_test_screen(flight_plan)
         screen.current_waypoint = flight_plan.waypoints[1]
 
         message = screen._get_state_message(ExecutionState.INTERVENTION)
@@ -178,8 +191,7 @@ class TestStatusBarMessage:
             status=WaypointStatus.PENDING,
         )
 
-        screen = FlyScreen.__new__(FlyScreen)
-        screen.flight_plan = flight_plan
+        screen = make_test_screen(flight_plan)
         screen.current_waypoint = long_wp
 
         message = screen._get_state_message(ExecutionState.IDLE)

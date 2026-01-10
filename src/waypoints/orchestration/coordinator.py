@@ -56,6 +56,7 @@ class JourneyCoordinator:
     def __init__(
         self,
         project: "Project",
+        flight_plan: FlightPlan | None = None,
         llm: "ChatClient | None" = None,
         git: "GitService | None" = None,
         metrics: "MetricsCollector | None" = None,
@@ -64,6 +65,7 @@ class JourneyCoordinator:
 
         Args:
             project: The project being worked on
+            flight_plan: Optional pre-loaded flight plan (avoids reload from disk)
             llm: LLM client for AI operations (optional for testing)
             git: Git service for version control (optional for testing)
             metrics: Metrics collector for cost tracking (optional)
@@ -72,7 +74,7 @@ class JourneyCoordinator:
         self.llm = llm
         self.git = git
         self.metrics = metrics
-        self._flight_plan: FlightPlan | None = None
+        self._flight_plan: FlightPlan | None = flight_plan
         self._current_waypoint: Waypoint | None = None
 
     # ─── Properties ──────────────────────────────────────────────────────
@@ -88,6 +90,49 @@ class JourneyCoordinator:
     def current_waypoint(self) -> Waypoint | None:
         """Get the currently selected waypoint."""
         return self._current_waypoint
+
+    @current_waypoint.setter
+    def current_waypoint(self, waypoint: Waypoint | None) -> None:
+        """Set the currently selected waypoint."""
+        self._current_waypoint = waypoint
+
+    def is_epic(self, waypoint_id: str) -> bool:
+        """Check if a waypoint is an epic (has children)."""
+        if self.flight_plan is None:
+            return False
+        return self.flight_plan.is_epic(waypoint_id)
+
+    def reset_stale_in_progress(self) -> bool:
+        """Reset any stale IN_PROGRESS waypoints to PENDING.
+
+        Called on session start to clean up state from crashed/killed sessions.
+
+        Returns:
+            True if any waypoints were reset, False otherwise.
+        """
+        if self.flight_plan is None:
+            return False
+
+        changed = False
+        for wp in self.flight_plan.waypoints:
+            if wp.status == WaypointStatus.IN_PROGRESS:
+                wp.status = WaypointStatus.PENDING
+                changed = True
+                logger.info("Reset stale IN_PROGRESS waypoint %s to PENDING", wp.id)
+
+        if changed:
+            self._save_flight_plan()
+        return changed
+
+    def mark_waypoint_status(self, waypoint: Waypoint, status: WaypointStatus) -> None:
+        """Mark a waypoint with a new status and save.
+
+        Args:
+            waypoint: The waypoint to update
+            status: The new status
+        """
+        waypoint.status = status
+        self._save_flight_plan()
 
     # ─── FLY Phase: Waypoint Selection ───────────────────────────────────
 
@@ -125,7 +170,7 @@ class JourneyCoordinator:
                 continue
 
             # Skip epics - they auto-complete when children complete
-            if self.flight_plan.has_children(wp.id):
+            if self.flight_plan.is_epic(wp.id):
                 continue
 
             # Check dependencies
@@ -344,8 +389,9 @@ class JourneyCoordinator:
 
         elif action == InterventionAction.ROLLBACK:
             # Rollback to tag and pause
-            if self.git and rollback_tag:
-                self.git.rollback_to_tag(rollback_tag)
+            # TODO: Implement rollback when GitService supports it
+            # if self.git and rollback_tag:
+            #     self.git.rollback_to_tag(rollback_tag)
             waypoint.status = WaypointStatus.PENDING
             self._save_flight_plan()
             return NextAction(action="pause", message=f"Rolled back to {rollback_tag}")
@@ -389,12 +435,12 @@ class JourneyCoordinator:
                 in_progress += 1
             elif wp.status == WaypointStatus.PENDING:
                 # Check if blocked by failed dependency
-                is_blocked = any(
-                    self.flight_plan.get_waypoint(dep_id) is not None
-                    and self.flight_plan.get_waypoint(dep_id).status
-                    == WaypointStatus.FAILED
-                    for dep_id in wp.dependencies
-                )
+                is_blocked = False
+                for dep_id in wp.dependencies:
+                    dep = self.flight_plan.get_waypoint(dep_id)
+                    if dep is not None and dep.status == WaypointStatus.FAILED:
+                        is_blocked = True
+                        break
                 if is_blocked:
                     blocked += 1
                 else:
@@ -440,8 +486,14 @@ class JourneyCoordinator:
 
         # Create commit
         try:
-            self.git.stage_all()
-            self.git.commit(f"feat({waypoint.id}): {waypoint.title}")
+            # Stage all changed files
+            self.git.stage_files(".")
+            commit_result = self.git.commit(f"feat({waypoint.id}): {waypoint.title}")
+            if not commit_result.success:
+                logger.warning(
+                    "Commit failed for %s: %s", waypoint.id, commit_result.message
+                )
+                return False
             self.git.tag(f"waypoint/{waypoint.id}")
             logger.info("Committed waypoint: %s", waypoint.id)
             return True
@@ -537,8 +589,7 @@ class JourneyCoordinator:
         try:
             from waypoints.models.flight_plan import FlightPlanReader
 
-            reader = FlightPlanReader(self.project.get_path())
-            return reader.load()
+            return FlightPlanReader.load(self.project)
         except Exception as e:
             logger.warning("Could not load flight plan: %s", e)
             return None
@@ -550,7 +601,7 @@ class JourneyCoordinator:
         try:
             from waypoints.models.flight_plan import FlightPlanWriter
 
-            writer = FlightPlanWriter(self.project.get_path())
+            writer = FlightPlanWriter(self.project)
             writer.save(self.flight_plan)
         except Exception as e:
             logger.error("Failed to save flight plan: %s", e)
