@@ -33,7 +33,12 @@ from waypoints.fly.intervention import (
     InterventionType,
 )
 from waypoints.git.config import Checklist
-from waypoints.llm.client import StreamChunk, StreamComplete, agent_query
+from waypoints.llm.client import (
+    StreamChunk,
+    StreamComplete,
+    StreamToolUse,
+    agent_query,
+)
 from waypoints.models.project import Project
 from waypoints.models.waypoint import Waypoint
 
@@ -240,6 +245,13 @@ class WaypointExecutor:
                     "SECURITY: Agent escaped project directory! Violations:\n%s",
                     "\n".join(violations),
                 )
+                # Log violation to execution log
+                if self._log_writer:
+                    files = ", ".join(violations[:5])
+                    details = f"{len(violations)} external file(s): {files}"
+                    self._log_writer.log_security_violation(
+                        self.max_iterations, details
+                    )
                 # Log violation but don't fail - the damage is done
                 # This is a defense-in-depth warning for investigation
                 self._report_progress(
@@ -309,6 +321,7 @@ class WaypointExecutor:
                         # Check for completion marker
                         if completion_marker in full_output:
                             logger.info("Completion marker found!")
+                            self._log_writer.log_completion_detected(iteration)
                             self.steps.append(
                                 ExecutionStep(
                                     iteration=iteration,
@@ -373,6 +386,15 @@ class WaypointExecutor:
                             criteria_completed=completed_indices,
                         )
 
+                    elif isinstance(chunk, StreamToolUse):
+                        # Log tool call (input only, output handled by SDK)
+                        self._log_writer.log_tool_call(
+                            iteration,
+                            chunk.tool_name,
+                            chunk.tool_input,
+                            None,  # Output not available from streaming
+                        )
+
                     elif isinstance(chunk, StreamComplete):
                         iteration_cost = chunk.cost_usd
                         logger.info(
@@ -405,6 +427,9 @@ class WaypointExecutor:
                     max_iterations=self.max_iterations,
                     error_summary=str(e),
                     context={"full_output": full_output[-2000:]},
+                )
+                self._log_writer.log_intervention_needed(
+                    iteration, intervention.type.value, str(e)
                 )
                 raise InterventionNeededError(intervention) from e
 
@@ -439,6 +464,9 @@ class WaypointExecutor:
                     error_summary=reason,
                     context={"full_output": full_output[-2000:]},
                 )
+                self._log_writer.log_intervention_needed(
+                    iteration, intervention.type.value, reason
+                )
                 raise InterventionNeededError(intervention)
 
         # Max iterations reached
@@ -459,6 +487,9 @@ class WaypointExecutor:
             max_iterations=self.max_iterations,
             error_summary=error_msg,
             context={"full_output": full_output[-2000:]},
+        )
+        self._log_writer.log_intervention_needed(
+            iteration, intervention.type.value, error_msg
         )
         raise InterventionNeededError(intervention)
 
@@ -603,6 +634,13 @@ Create the receipt now.
             "Verifying checklist...",
         )
 
+        # Log finalize phase start
+        assert self._log_writer is not None  # Guaranteed by _execute_impl
+        self._log_writer.log_iteration_start(
+            self.max_iterations + 1, "Finalize phase: verifying checklist receipt"
+        )
+
+        finalize_output = ""
         try:
             async for chunk in agent_query(
                 prompt=finalize_prompt,
@@ -614,15 +652,30 @@ Create the receipt now.
                 waypoint_id=self.waypoint.id,
             ):
                 if isinstance(chunk, StreamChunk):
+                    finalize_output += chunk.text
                     self._report_progress(
                         self.max_iterations,
                         self.max_iterations,
                         "finalizing",
                         chunk.text,
                     )
+                elif isinstance(chunk, StreamToolUse):
+                    # Log finalize phase tool calls
+                    self._log_writer.log_tool_call(
+                        self.max_iterations + 1,
+                        chunk.tool_name,
+                        chunk.tool_input,
+                        None,
+                    )
         except Exception as e:
             logger.error("Error during finalize: %s", e)
+            self._log_writer.log_error(self.max_iterations + 1, f"Finalize error: {e}")
             return False
+
+        # Log finalize output
+        if finalize_output:
+            self._log_writer.log_output(self.max_iterations + 1, finalize_output)
+        self._log_writer.log_iteration_end(self.max_iterations + 1)
 
         # Check for receipt again
         receipt_path = validator.find_latest_receipt(
@@ -630,6 +683,9 @@ Create the receipt now.
         )
         if receipt_path:
             result = validator.validate(receipt_path)
+            self._log_writer.log_receipt_validated(
+                str(receipt_path), result.valid, result.message
+            )
             if result.valid:
                 logger.info("Receipt created and validated: %s", receipt_path)
                 return True
@@ -638,6 +694,7 @@ Create the receipt now.
                 return False
 
         logger.warning("No receipt found after finalize prompt")
+        self._log_writer.log_receipt_validated("", False, "No receipt found")
         return False
 
     def _validate_no_external_changes(self) -> list[str]:

@@ -556,6 +556,40 @@ class WaypointDetailPanel(Vertical):
                     cost = entry.metadata.get("cost_usd")
                     if cost:
                         log.write_log(f"(Iteration cost: ${cost:.4f})")
+                elif entry.entry_type == "tool_call":
+                    tool_name = entry.metadata.get("tool_name", "unknown")
+                    log.write_log(f"[dim]→ {tool_name}[/]")
+                elif entry.entry_type == "intervention_needed":
+                    int_type = entry.metadata.get("intervention_type", "unknown")
+                    reason = entry.metadata.get("reason", "")
+                    log.write_log(
+                        f"[yellow]⚠ Intervention needed ({int_type}): {reason}[/]"
+                    )
+                elif entry.entry_type == "intervention_resolved":
+                    action = entry.metadata.get("action", "unknown")
+                    log.write_log(f"[green]✓ Intervention resolved: {action}[/]")
+                elif entry.entry_type == "completion_detected":
+                    log.write_log("[green]✓ Completion marker detected[/]")
+                elif entry.entry_type == "receipt_validated":
+                    valid = entry.metadata.get("valid", False)
+                    if valid:
+                        log.write_log("[green]✓ Receipt validated[/]")
+                    else:
+                        msg = entry.metadata.get("message", "")
+                        log.write_log(f"[yellow]⚠ Receipt invalid: {msg}[/]")
+                elif entry.entry_type == "git_commit":
+                    success = entry.metadata.get("success", False)
+                    if success:
+                        hash_ = entry.metadata.get("commit_hash", "")
+                        log.write_log(f"[green]✓ Git commit: {hash_}[/]")
+                    else:
+                        msg = entry.metadata.get("message", "")
+                        log.write_log(f"[red]✗ Git commit failed: {msg}[/]")
+                elif entry.entry_type == "pause":
+                    log.write_log("[yellow]⏸ Execution paused[/]")
+                elif entry.entry_type == "security_violation":
+                    details = entry.metadata.get("details", "")
+                    log.write_log(f"[red]⚠ Security violation: {details}[/]")
 
             # Update iteration label with final count
             if max_iteration > 0:
@@ -1326,6 +1360,9 @@ class FlyScreen(Screen[None]):
             self.execution_state = ExecutionState.PAUSE_PENDING
             if self._executor:
                 self._executor.cancel()
+                # Log pause request
+                if self._executor._log_writer:
+                    self._executor._log_writer.log_pause()
             self.notify("Will pause after current waypoint")
 
     def action_skip(self) -> None:
@@ -1580,10 +1617,24 @@ class FlyScreen(Screen[None]):
         if result is None:
             # User cancelled - treat as abort
             self.notify("Intervention cancelled")
+            # Log cancellation
+            if self._executor and self._executor._log_writer:
+                self._executor._log_writer.log_intervention_resolved("cancelled")
             return
 
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
         log = detail_panel.execution_log
+
+        # Log the intervention resolution to execution log
+        if self._executor and self._executor._log_writer:
+            params: dict[str, Any] = {}
+            if result.action == InterventionAction.RETRY:
+                params["additional_iterations"] = result.additional_iterations
+            elif result.action == InterventionAction.ROLLBACK:
+                params["rollback_tag"] = result.rollback_tag
+            self._executor._log_writer.log_intervention_resolved(
+                result.action.value, **params
+            )
 
         if result.action == InterventionAction.RETRY:
             # Retry with additional iterations
@@ -1830,6 +1881,12 @@ class FlyScreen(Screen[None]):
             if "Nothing to commit" not in result.message:
                 logger.info("Committed: %s", commit_msg)
                 self.notify(f"Committed: {waypoint.id}")
+                # Log successful git commit
+                if self._executor and self._executor._log_writer:
+                    commit_hash = git.get_head_commit() or ""
+                    self._executor._log_writer.log_git_commit(
+                        True, commit_hash, commit_msg
+                    )
 
                 # Create tag for waypoint if configured
                 if config.create_waypoint_tags:
@@ -1838,6 +1895,9 @@ class FlyScreen(Screen[None]):
         else:
             logger.error("Commit failed: %s", result.message)
             self.notify(f"Commit failed: {result.message}", severity="error")
+            # Log failed git commit
+            if self._executor and self._executor._log_writer:
+                self._executor._log_writer.log_git_commit(False, "", result.message)
 
     def _check_parent_completion(self, completed_waypoint: Waypoint) -> None:
         """Check if parent epic should be auto-completed.

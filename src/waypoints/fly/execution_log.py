@@ -249,6 +249,108 @@ class ExecutionLogWriter:
         }
         self._append(entry)
 
+    def log_intervention_needed(
+        self, iteration: int, intervention_type: str, reason: str
+    ) -> None:
+        """Log when intervention is needed."""
+        entry = {
+            "type": "intervention_needed",
+            "iteration": iteration,
+            "intervention_type": intervention_type,
+            "reason": reason,
+            "timestamp": datetime.now().isoformat(),
+        }
+        self._append(entry)
+
+    def log_intervention_resolved(self, action: str, **params: Any) -> None:
+        """Log user's intervention decision."""
+        entry: dict[str, Any] = {
+            "type": "intervention_resolved",
+            "action": action,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if params:
+            entry["params"] = params
+        self._append(entry)
+
+    def log_state_transition(
+        self, from_state: str, to_state: str, reason: str = ""
+    ) -> None:
+        """Log execution state changes."""
+        entry: dict[str, Any] = {
+            "type": "state_transition",
+            "from_state": from_state,
+            "to_state": to_state,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if reason:
+            entry["reason"] = reason
+        self._append(entry)
+
+    def log_receipt_validated(
+        self, path: str, valid: bool, message: str = ""
+    ) -> None:
+        """Log receipt validation result."""
+        entry: dict[str, Any] = {
+            "type": "receipt_validated",
+            "path": path,
+            "valid": valid,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if message:
+            entry["message"] = message
+        self._append(entry)
+
+    def log_git_commit(
+        self, success: bool, commit_hash: str = "", message: str = ""
+    ) -> None:
+        """Log git commit attempt."""
+        entry: dict[str, Any] = {
+            "type": "git_commit",
+            "success": success,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if commit_hash:
+            entry["commit_hash"] = commit_hash
+        if message:
+            entry["message"] = message
+        self._append(entry)
+
+    def log_pause(self) -> None:
+        """Log execution paused."""
+        entry = {
+            "type": "pause",
+            "timestamp": datetime.now().isoformat(),
+        }
+        self._append(entry)
+
+    def log_resume(self) -> None:
+        """Log execution resumed."""
+        entry = {
+            "type": "resume",
+            "timestamp": datetime.now().isoformat(),
+        }
+        self._append(entry)
+
+    def log_security_violation(self, iteration: int, details: str) -> None:
+        """Log security violation detected."""
+        entry = {
+            "type": "security_violation",
+            "iteration": iteration,
+            "details": details,
+            "timestamp": datetime.now().isoformat(),
+        }
+        self._append(entry)
+
+    def log_completion_detected(self, iteration: int) -> None:
+        """Log when completion marker found."""
+        entry = {
+            "type": "completion_detected",
+            "iteration": iteration,
+            "timestamp": datetime.now().isoformat(),
+        }
+        self._append(entry)
+
     def _append(self, entry: dict[str, Any]) -> None:
         """Append an entry to the JSONL file."""
         with open(self.file_path, "a") as f:
