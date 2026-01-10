@@ -1206,8 +1206,47 @@ class FlyScreen(Screen[None]):
 
     def action_start(self) -> None:
         """Start or resume waypoint execution."""
+        # Check if user has selected a specific failed waypoint to retry
+        list_panel = self.query_one("#waypoint-list", WaypointListPanel)
+        selected = list_panel.selected_waypoint
+
+        if selected and selected.status == WaypointStatus.FAILED:
+            # User wants to retry this specific failed waypoint
+            selected.status = WaypointStatus.PENDING
+            self._save_flight_plan()
+            self._refresh_waypoint_list()
+            self.current_waypoint = selected
+            self.notify(f"Retrying {selected.id}")
+
+            # Update detail panel to show this waypoint
+            detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
+            detail_panel.show_waypoint(
+                selected, project=self.project, active_waypoint_id=None
+            )
+
+            # Transition journey state and execute
+            journey = self.project.journey
+            if journey and journey.state in (
+                JourneyState.FLY_PAUSED,
+                JourneyState.FLY_INTERVENTION,
+            ):
+                self.project.transition_journey(JourneyState.FLY_EXECUTING)
+            elif journey and journey.state == JourneyState.CHART_REVIEW:
+                self.project.transition_journey(JourneyState.FLY_READY)
+                self.project.transition_journey(JourneyState.FLY_EXECUTING)
+            else:
+                self.project.transition_journey(JourneyState.FLY_EXECUTING)
+            self.execution_state = ExecutionState.RUNNING
+            self._execute_current_waypoint()
+            return
+
         if self.execution_state == ExecutionState.DONE:
-            self.notify("All waypoints complete!")
+            # Check if there are actually failed waypoints to retry
+            _, _, failed, blocked = self._get_completion_status()
+            if failed > 0 or blocked > 0:
+                self.notify("Select a failed waypoint and press 'r' to retry")
+            else:
+                self.notify("All waypoints complete!")
             return
 
         # Handle resume from paused state
@@ -1215,7 +1254,12 @@ class FlyScreen(Screen[None]):
             # Find waypoint to resume (in_progress first, then pending)
             self._select_next_waypoint(include_in_progress=True)
             if not self.current_waypoint:
-                self.notify("No waypoints to resume")
+                # Check if there are failed waypoints user could retry
+                _, _, failed, blocked = self._get_completion_status()
+                if failed > 0:
+                    self.notify("Select a failed waypoint and press 'r' to retry")
+                else:
+                    self.notify("No waypoints to resume")
                 return
             # Transition journey state: FLY_PAUSED -> FLY_EXECUTING
             self.project.transition_journey(JourneyState.FLY_EXECUTING)
@@ -1422,9 +1466,11 @@ class FlyScreen(Screen[None]):
                 if self.current_waypoint:
                     self._execute_current_waypoint()
                 else:
-                    # Transition journey state: FLY_EXECUTING -> LANDED
-                    self.project.transition_journey(JourneyState.LANDED)
-                    self.execution_state = ExecutionState.DONE
+                    # _select_next_waypoint sets execution_state appropriately
+                    # Only transition to LANDED if truly all complete (state is DONE)
+                    # Note: mypy doesn't track that _select_next_waypoint modifies state
+                    if self.execution_state == ExecutionState.DONE:  # type: ignore[comparison-overlap]
+                        self.project.transition_journey(JourneyState.LANDED)
             elif self.execution_state == ExecutionState.PAUSE_PENDING:
                 # Pause was requested, now actually pause
                 # Transition journey state: FLY_EXECUTING -> FLY_PAUSED
@@ -1537,9 +1583,11 @@ class FlyScreen(Screen[None]):
             if self.current_waypoint:
                 self._execute_current_waypoint()
             else:
-                self.project.transition_journey(JourneyState.LANDED)
-                self.execution_state = ExecutionState.DONE
-                self.notify("All waypoints complete!")
+                # _select_next_waypoint sets execution_state appropriately
+                # Only transition to LANDED and notify if truly all complete
+                if self.execution_state == ExecutionState.DONE:
+                    self.project.transition_journey(JourneyState.LANDED)
+                    self.notify("All waypoints complete!")
 
         elif result.action == InterventionAction.EDIT:
             # Open waypoint editor - for now, just notify

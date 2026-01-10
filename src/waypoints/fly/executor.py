@@ -426,6 +426,8 @@ class WaypointExecutor:
             # Check if agent is stuck or needs human help
             if self._needs_intervention(iteration_output):
                 logger.info("Human intervention needed")
+                reason = self._extract_intervention_reason(iteration_output)
+                self._log_writer.log_error(iteration, f"Intervention needed: {reason}")
                 self._log_writer.log_completion(
                     ExecutionResult.INTERVENTION_NEEDED.value
                 )
@@ -434,7 +436,7 @@ class WaypointExecutor:
                     waypoint=self.waypoint,
                     iteration=iteration,
                     max_iterations=self.max_iterations,
-                    error_summary=self._extract_intervention_reason(iteration_output),
+                    error_summary=reason,
                     context={"full_output": full_output[-2000:]},
                 )
                 raise InterventionNeededError(intervention)
@@ -443,6 +445,11 @@ class WaypointExecutor:
         logger.warning(
             "Max iterations (%d) reached without completion", self.max_iterations
         )
+        error_msg = (
+            f"Waypoint did not complete after {self.max_iterations} iterations. "
+            "The agent may be stuck or the task may be too complex."
+        )
+        self._log_writer.log_error(iteration, error_msg)
         self._log_writer.log_completion(ExecutionResult.MAX_ITERATIONS.value)
 
         intervention = Intervention(
@@ -450,10 +457,7 @@ class WaypointExecutor:
             waypoint=self.waypoint,
             iteration=iteration,
             max_iterations=self.max_iterations,
-            error_summary=(
-                f"Waypoint did not complete after {self.max_iterations} iterations. "
-                "The agent may be stuck or the task may be too complex."
-            ),
+            error_summary=error_msg,
             context={"full_output": full_output[-2000:]},
         )
         raise InterventionNeededError(intervention)
