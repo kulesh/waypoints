@@ -26,6 +26,7 @@ from waypoints.fly.execution_log import ExecutionLogReader
 from waypoints.fly.executor import (
     ExecutionContext,
     ExecutionResult,
+    FileOperation,
     WaypointExecutor,
 )
 from waypoints.fly.intervention import (
@@ -40,6 +41,7 @@ from waypoints.models.flight_plan import FlightPlan, FlightPlanWriter
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.screens.intervention import InterventionModal
+from waypoints.tui.widgets.file_preview import FilePreviewModal
 from waypoints.tui.widgets.flight_plan import FlightPlanTree
 from waypoints.tui.widgets.header import StatusHeader
 from waypoints.tui.widgets.resizable_split import ResizableSplit
@@ -1391,6 +1393,20 @@ class FlyScreen(Screen[None]):
             self.notify(f"Skipped {wp_id}")
             self._select_next_waypoint()
 
+    def action_preview_file(self, path: str) -> None:
+        """Show file preview modal for a file path.
+
+        Args:
+            path: File path to preview (relative to project or absolute)
+        """
+        # Resolve relative paths against project root
+        file_path = Path(path)
+        if not file_path.is_absolute():
+            file_path = self.project.get_path() / path
+
+        # Push the preview modal
+        self.app.push_screen(FilePreviewModal(file_path))
+
     def action_back(self) -> None:
         """Go back to CHART screen."""
         # Transition journey state back to CHART_REVIEW if in FLY_READY or intervention
@@ -1488,6 +1504,22 @@ class FlyScreen(Screen[None]):
         # Log based on step type
         if ctx.step == "executing":
             log.log_heading(f"Iteration {ctx.iteration}/{ctx.total_iterations}")
+        elif ctx.step == "tool_use":
+            # Display file operation with icon
+            if ctx.file_operations:
+                op: FileOperation = ctx.file_operations[-1]  # Get the latest op
+                icon = {
+                    "Edit": "✎",
+                    "Write": "✚",
+                    "Read": "📖",
+                    "Bash": "$",
+                    "Glob": "🔍",
+                    "Grep": "🔍",
+                }.get(op.tool_name, "•")
+                style = "dim" if op.tool_name == "Read" else "cyan"
+                # Format the file operation line
+                if op.file_path:
+                    log.write(Text.from_markup(f"  [{style}]{icon}[/] {op.file_path}"))
         elif ctx.step == "streaming":
             # Show streaming output (code blocks will be syntax-highlighted)
             output = ctx.output.strip()

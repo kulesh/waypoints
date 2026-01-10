@@ -79,6 +79,15 @@ class ExecutionStep:
 
 
 @dataclass
+class FileOperation:
+    """A file operation performed by the agent."""
+
+    tool_name: str  # "Edit", "Write", "Read", "Bash", "Glob", "Grep"
+    file_path: str | None
+    line_number: int | None = None
+
+
+@dataclass
 class ExecutionContext:
     """Context passed to callbacks during execution."""
 
@@ -88,9 +97,47 @@ class ExecutionContext:
     step: str
     output: str
     criteria_completed: set[int] = field(default_factory=set)
+    file_operations: list[FileOperation] = field(default_factory=list)
 
 
 ProgressCallback = Callable[[ExecutionContext], None]
+
+
+def _extract_file_operation(
+    tool_name: str, tool_input: dict[str, object]
+) -> FileOperation | None:
+    """Extract file operation from tool input.
+
+    Args:
+        tool_name: Name of the tool (Edit, Write, Read, Bash, etc.)
+        tool_input: The tool input dict containing parameters
+
+    Returns:
+        FileOperation if a file path was found, None otherwise
+    """
+    if tool_name in ("Edit", "Write", "Read"):
+        # These tools have file_path parameter
+        path = tool_input.get("file_path")
+        if isinstance(path, str):
+            return FileOperation(tool_name=tool_name, file_path=path)
+    elif tool_name == "Glob":
+        # Glob has pattern, but we might want to show the pattern
+        pattern = tool_input.get("pattern")
+        if isinstance(pattern, str):
+            return FileOperation(tool_name=tool_name, file_path=pattern)
+    elif tool_name == "Grep":
+        # Grep might have a path parameter
+        path = tool_input.get("path")
+        if isinstance(path, str):
+            return FileOperation(tool_name=tool_name, file_path=path)
+    elif tool_name == "Bash":
+        # For bash, we could show the command (truncated)
+        command = tool_input.get("command")
+        if isinstance(command, str):
+            # Truncate long commands
+            display = command[:60] + "..." if len(command) > 60 else command
+            return FileOperation(tool_name=tool_name, file_path=display)
+    return None
 
 
 def _build_prompt(
@@ -306,6 +353,7 @@ class WaypointExecutor:
             # Run agent query with file and bash tools
             iteration_output = ""
             iteration_cost: float | None = None
+            iteration_file_ops: list[FileOperation] = []
             try:
                 async for chunk in agent_query(
                     prompt=iter_prompt,
@@ -396,6 +444,20 @@ class WaypointExecutor:
                             chunk.tool_input,
                             None,  # Output not available from streaming
                         )
+                        # Extract and track file operation
+                        file_op = _extract_file_operation(
+                            chunk.tool_name, chunk.tool_input
+                        )
+                        if file_op:
+                            iteration_file_ops.append(file_op)
+                            # Report progress with updated file operations
+                            self._report_progress(
+                                iteration,
+                                self.max_iterations,
+                                "tool_use",
+                                f"{file_op.tool_name}: {file_op.file_path}",
+                                file_operations=iteration_file_ops,
+                            )
 
                     elif isinstance(chunk, StreamComplete):
                         iteration_cost = chunk.cost_usd
@@ -553,6 +615,7 @@ When complete, output the completion marker specified in the instructions."""
         step: str,
         output: str,
         criteria_completed: set[int] | None = None,
+        file_operations: list[FileOperation] | None = None,
     ) -> None:
         """Report progress to callback if set."""
         if self.on_progress:
@@ -563,6 +626,7 @@ When complete, output the completion marker specified in the instructions."""
                 step=step,
                 output=output,
                 criteria_completed=criteria_completed or set(),
+                file_operations=file_operations or [],
             )
             self.on_progress(ctx)
 
