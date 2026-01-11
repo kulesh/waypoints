@@ -112,7 +112,7 @@ class FilePreviewModal(ModalScreen[bool]):
 
     FilePreviewModal .modal-header {
         height: auto;
-        padding: 1 2;
+        padding: 0 1;
         border-bottom: solid $surface-lighten-1;
     }
 
@@ -128,7 +128,7 @@ class FilePreviewModal(ModalScreen[bool]):
     FilePreviewModal .content-container {
         height: 1fr;
         overflow-y: auto;
-        padding: 1 2;
+        padding: 0 1;
         background: $surface;
         scrollbar-gutter: stable;
         scrollbar-size: 1 1;
@@ -138,7 +138,7 @@ class FilePreviewModal(ModalScreen[bool]):
 
     FilePreviewModal .modal-footer {
         height: auto;
-        padding: 1 2;
+        padding: 0 1;
         border-top: solid $surface-lighten-1;
         color: $text-muted;
     }
