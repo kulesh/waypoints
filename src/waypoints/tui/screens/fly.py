@@ -194,8 +194,6 @@ class ExecutionLog(RichLog):
         scrollbar-corner-color: $surface;
         link-color: cyan;
         link-style: underline;
-        link-hover-color: cyan;
-        link-hover-style: bold underline;
     }
     """
 
