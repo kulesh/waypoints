@@ -1522,16 +1522,18 @@ class FlyScreen(Screen[None]):
                     # Escape quotes in path for action parameter
                     escaped_path = op.file_path.replace("'", "\\'")
                     if op.tool_name in ("Edit", "Write", "Read"):
-                        # File operations are clickable
+                        # File operations are clickable - use string markup for @click
                         markup = (
                             f"  [{style}]{icon}[/] "
                             f"[@click=screen.preview_file('{escaped_path}')]"
                             f"[{style} underline]{op.file_path}[/][/]"
                         )
+                        # Write string directly so Textual parses @click
+                        log.write(markup)
                     else:
                         # Bash/Glob/Grep just show the command/pattern
-                        markup = f"  [{style}]{icon}[/] {op.file_path}"
-                    log.write(Text.from_markup(markup))
+                        text = f"  [{style}]{icon}[/] {op.file_path}"
+                        log.write(Text.from_markup(text))
         elif ctx.step == "streaming":
             # Show streaming output (code blocks will be syntax-highlighted)
             output = ctx.output.strip()
