@@ -731,9 +731,7 @@ Create the receipt now.
 
         # Log finalize phase start
         assert self._log_writer is not None  # Guaranteed by _execute_impl
-        self._log_writer.log_iteration_start(
-            self.max_iterations + 1, "Finalize phase: verifying checklist receipt"
-        )
+        self._log_writer.log_finalize_start()
 
         finalize_output = ""
         try:
@@ -756,21 +754,20 @@ Create the receipt now.
                     )
                 elif isinstance(chunk, StreamToolUse):
                     # Log finalize phase tool calls
-                    self._log_writer.log_tool_call(
-                        self.max_iterations + 1,
+                    self._log_writer.log_finalize_tool_call(
                         chunk.tool_name,
                         chunk.tool_input,
                         None,
                     )
         except Exception as e:
             logger.error("Error during finalize: %s", e)
-            self._log_writer.log_error(self.max_iterations + 1, f"Finalize error: {e}")
+            self._log_writer.log_error(0, f"Finalize error: {e}")
             return False
 
         # Log finalize output
         if finalize_output:
-            self._log_writer.log_output(self.max_iterations + 1, finalize_output)
-        self._log_writer.log_iteration_end(self.max_iterations + 1)
+            self._log_writer.log_finalize_output(finalize_output)
+        self._log_writer.log_finalize_end()
 
         # Check for receipt again
         receipt_path = validator.find_latest_receipt(self.project, self.waypoint.id)

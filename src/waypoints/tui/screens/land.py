@@ -137,11 +137,13 @@ class DebriefPanel(VerticalScroll):
         if self.flight_plan:
             total = len(self.flight_plan.waypoints)
             completed = sum(
-                1 for wp in self.flight_plan.waypoints
+                1
+                for wp in self.flight_plan.waypoints
                 if wp.status == WaypointStatus.COMPLETE
             )
             failed = sum(
-                1 for wp in self.flight_plan.waypoints
+                1
+                for wp in self.flight_plan.waypoints
                 if wp.status == WaypointStatus.FAILED
             )
             lines.append(f"├─ {completed}/{total} waypoints complete")
@@ -168,10 +170,24 @@ class DebriefPanel(VerticalScroll):
                     total_seconds += int(
                         (log.completed_at - log.started_at).total_seconds()
                     )
-                # Get max iteration from entries
+                # Get max iteration from actual iteration entries only
+                # (exclude finalize entries which were logged as max+1 in legacy logs)
                 if log.entries:
-                    max_iter = max(e.iteration for e in log.entries)
-                    total_iterations += max_iter
+                    iteration_entries = [
+                        e for e in log.entries if e.entry_type == "iteration_start"
+                    ]
+                    if iteration_entries:
+                        # Filter out finalize phase (legacy logs used max+1)
+                        # Real iterations start at 1 and are contiguous
+                        iterations = sorted(e.iteration for e in iteration_entries)
+                        # Find the highest contiguous iteration (1, 2, 3... not 11)
+                        max_iter = 0
+                        for i, it in enumerate(iterations, start=1):
+                            if it == i:
+                                max_iter = it
+                            else:
+                                break
+                        total_iterations += max_iter
         except Exception:
             pass
 
@@ -261,7 +277,8 @@ class ShipPanel(VerticalScroll):
 
         if self.flight_plan:
             completed = [
-                wp for wp in self.flight_plan.waypoints
+                wp
+                for wp in self.flight_plan.waypoints
                 if wp.status == WaypointStatus.COMPLETE and not wp.parent_id
             ]
             for wp in completed:
@@ -319,7 +336,7 @@ class IteratePanel(VerticalScroll):
             "└─ Return to project list"
         )
         hint = self.query_one("#iterate-hint", Static)
-        hint.update("Press 'n' for new iteration, 'c' to close project, 'esc' to go back")
+        hint.update("Press 'n' for new iteration, 'c' to close, 'esc' to go back")
 
 
 class LandScreen(Screen[None]):
@@ -385,12 +402,8 @@ class LandScreen(Screen[None]):
         with Horizontal(classes="main-container"):
             yield ActivityListPanel(id="activity-panel")
             with Vertical(classes="content-area", id="content-area"):
-                yield DebriefPanel(
-                    self.project, self.flight_plan, id="debrief-panel"
-                )
-                yield ShipPanel(
-                    self.project, self.flight_plan, id="ship-panel"
-                )
+                yield DebriefPanel(self.project, self.flight_plan, id="debrief-panel")
+                yield ShipPanel(self.project, self.flight_plan, id="ship-panel")
                 yield IteratePanel(self.project, id="iterate-panel")
         yield Footer()
 

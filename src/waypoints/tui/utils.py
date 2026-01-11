@@ -106,6 +106,7 @@ def get_status_markup(status: WaypointStatus) -> str:
     icon, color, _ = WAYPOINT_STATUS_DISPLAY.get(status, ("?", "dim", "Unknown"))
     return f"[{color}]{icon}[/]"
 
+
 # TUI editors that need app suspension
 TUI_EDITORS = {"vim", "nvim", "vi", "emacs", "nano", "micro", "helix", "ne", "joe"}
 
@@ -210,8 +211,7 @@ def edit_file_in_editor(
     resolved_editor = validate_editor(editor)
     if resolved_editor is None:
         logger.error(
-            "Editor validation failed for '%s'. "
-            "Set $EDITOR to a known editor: %s",
+            "Editor validation failed for '%s'. " "Set $EDITOR to a known editor: %s",
             editor,
             ", ".join(sorted(SAFE_EDITORS)[:10]) + "...",
         )

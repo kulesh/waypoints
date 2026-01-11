@@ -351,6 +351,52 @@ class ExecutionLogWriter:
         }
         self._append(entry)
 
+    def log_finalize_start(self) -> None:
+        """Log the start of the finalize phase (receipt verification)."""
+        entry = {
+            "type": "finalize_start",
+            "timestamp": datetime.now().isoformat(),
+        }
+        self._append(entry)
+
+    def log_finalize_end(self, cost_usd: float | None = None) -> None:
+        """Log the end of the finalize phase."""
+        if cost_usd:
+            self.total_cost_usd += cost_usd
+
+        entry = {
+            "type": "finalize_end",
+            "cost_usd": cost_usd,
+            "cumulative_cost_usd": self.total_cost_usd,
+            "timestamp": datetime.now().isoformat(),
+        }
+        self._append(entry)
+
+    def log_finalize_output(self, output: str) -> None:
+        """Log finalize phase output."""
+        entry = {
+            "type": "finalize_output",
+            "content": output,
+            "timestamp": datetime.now().isoformat(),
+        }
+        self._append(entry)
+
+    def log_finalize_tool_call(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        tool_output: str | None = None,
+    ) -> None:
+        """Log a tool call during finalize phase."""
+        entry = {
+            "type": "finalize_tool_call",
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "tool_output": tool_output,
+            "timestamp": datetime.now().isoformat(),
+        }
+        self._append(entry)
+
     def _append(self, entry: dict[str, Any]) -> None:
         """Append an entry to the JSONL file."""
         with open(self.file_path, "a") as f:

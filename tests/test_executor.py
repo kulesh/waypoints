@@ -16,7 +16,7 @@ from waypoints.fly.executor import (
     _extract_file_operation,
 )
 from waypoints.git.config import Checklist
-from waypoints.models.waypoint import Waypoint, WaypointStatus
+from waypoints.models.waypoint import Waypoint
 
 
 class TestCriterionPattern:
@@ -52,7 +52,7 @@ More output
     def test_no_match_on_invalid_format(self) -> None:
         """No match when format is wrong."""
         invalid_texts = [
-            '<criterion-verified>Missing index</criterion-verified>',
+            "<criterion-verified>Missing index</criterion-verified>",
             '<criterion-verified index="0">Unclosed',
             'criterion-verified index="0">No opening tag</criterion-verified>',
             '<criterion-verified index="abc">Non-numeric index</criterion-verified>',
@@ -63,8 +63,8 @@ More output
 
     def test_multiline_content_not_matched(self) -> None:
         """Criterion text should be single line (no newlines)."""
-        text = '''<criterion-verified index="0">First line
-Second line</criterion-verified>'''
+        text = """<criterion-verified index="0">First line
+Second line</criterion-verified>"""
         matches = CRITERION_PATTERN.findall(text)
         # The pattern uses .+? which doesn't match newlines by default
         assert len(matches) == 0
@@ -163,12 +163,16 @@ class TestBuildPrompt:
         """Create test checklist."""
         return Checklist(items=["Code passes linting", "All tests pass"])
 
-    def test_includes_waypoint_id(self, waypoint: Waypoint, checklist: Checklist) -> None:
+    def test_includes_waypoint_id(
+        self, waypoint: Waypoint, checklist: Checklist
+    ) -> None:
         """Prompt includes waypoint ID."""
         prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "WP-1" in prompt
 
-    def test_includes_waypoint_title(self, waypoint: Waypoint, checklist: Checklist) -> None:
+    def test_includes_waypoint_title(
+        self, waypoint: Waypoint, checklist: Checklist
+    ) -> None:
         """Prompt includes waypoint title."""
         prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "Implement feature X" in prompt
@@ -178,7 +182,9 @@ class TestBuildPrompt:
         prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "Build feature X with full test coverage" in prompt
 
-    def test_includes_indexed_criteria(self, waypoint: Waypoint, checklist: Checklist) -> None:
+    def test_includes_indexed_criteria(
+        self, waypoint: Waypoint, checklist: Checklist
+    ) -> None:
         """Prompt includes indexed acceptance criteria."""
         prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "[0] Code works" in prompt
@@ -191,7 +197,9 @@ class TestBuildPrompt:
         prompt = _build_prompt(waypoint, spec, Path("/project"), checklist)
         assert "This is the product specification" in prompt
 
-    def test_truncates_long_spec(self, waypoint: Waypoint, checklist: Checklist) -> None:
+    def test_truncates_long_spec(
+        self, waypoint: Waypoint, checklist: Checklist
+    ) -> None:
         """Long spec is truncated with ellipsis."""
         long_spec = "x" * 3000
         prompt = _build_prompt(waypoint, long_spec, Path("/project"), checklist)
@@ -199,12 +207,16 @@ class TestBuildPrompt:
         # Should truncate to 2000 chars + ...
         assert long_spec[:2000] in prompt
 
-    def test_includes_project_path(self, waypoint: Waypoint, checklist: Checklist) -> None:
+    def test_includes_project_path(
+        self, waypoint: Waypoint, checklist: Checklist
+    ) -> None:
         """Prompt includes project path."""
         prompt = _build_prompt(waypoint, "spec", Path("/my/project"), checklist)
         assert "/my/project" in prompt
 
-    def test_includes_safety_rules(self, waypoint: Waypoint, checklist: Checklist) -> None:
+    def test_includes_safety_rules(
+        self, waypoint: Waypoint, checklist: Checklist
+    ) -> None:
         """Prompt includes safety rules."""
         prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "STAY IN THE PROJECT" in prompt
@@ -216,12 +228,16 @@ class TestBuildPrompt:
         assert "Code passes linting" in prompt
         assert "All tests pass" in prompt
 
-    def test_includes_completion_marker(self, waypoint: Waypoint, checklist: Checklist) -> None:
+    def test_includes_completion_marker(
+        self, waypoint: Waypoint, checklist: Checklist
+    ) -> None:
         """Prompt includes completion marker."""
         prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "<waypoint-complete>WP-1</waypoint-complete>" in prompt
 
-    def test_includes_criterion_marker_format(self, waypoint: Waypoint, checklist: Checklist) -> None:
+    def test_includes_criterion_marker_format(
+        self, waypoint: Waypoint, checklist: Checklist
+    ) -> None:
         """Prompt explains criterion marker format."""
         prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "criterion-verified" in prompt
@@ -291,7 +307,10 @@ class TestWaypointExecutor:
     ) -> None:
         """_needs_intervention detects 'blocked by'."""
         executor = WaypointExecutor(mock_project, waypoint, "spec")
-        assert executor._needs_intervention("This is blocked by missing dependency") is True
+        assert (
+            executor._needs_intervention("This is blocked by missing dependency")
+            is True
+        )
 
     def test_needs_intervention_detects_unable_to_complete(
         self, mock_project: MagicMock, waypoint: Waypoint
@@ -305,7 +324,9 @@ class TestWaypointExecutor:
     ) -> None:
         """_needs_intervention detects 'requires manual'."""
         executor = WaypointExecutor(mock_project, waypoint, "spec")
-        assert executor._needs_intervention("This requires manual configuration") is True
+        assert (
+            executor._needs_intervention("This requires manual configuration") is True
+        )
 
     def test_needs_intervention_case_insensitive(
         self, mock_project: MagicMock, waypoint: Waypoint
@@ -329,7 +350,9 @@ class TestWaypointExecutor:
     ) -> None:
         """_extract_intervention_reason extracts context around marker."""
         executor = WaypointExecutor(mock_project, waypoint, "spec")
-        output = "Some context. I cannot proceed because the API key is missing. More text."
+        output = (
+            "Some context. I cannot proceed because the API key is missing. More text."
+        )
         reason = executor._extract_intervention_reason(output)
         assert "cannot proceed" in reason.lower()
         assert "API key" in reason or "api key" in reason.lower()
@@ -405,9 +428,7 @@ class TestExecutionContext:
 
     def test_create_context(self) -> None:
         """Create execution context."""
-        waypoint = Waypoint(
-            id="WP-1", title="Test", objective="Test objective"
-        )
+        waypoint = Waypoint(id="WP-1", title="Test", objective="Test objective")
         ctx = ExecutionContext(
             waypoint=waypoint,
             iteration=3,

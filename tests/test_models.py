@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader, FlightPlanWriter
 from waypoints.models.project import Project, slugify
+from waypoints.models.waypoint import Waypoint, WaypointStatus
 
 
 class TestWaypointStatus:
@@ -209,8 +209,12 @@ class TestFlightPlan:
         """Get direct children of a waypoint."""
         plan = FlightPlan()
         wp1 = Waypoint(id="WP-1", title="Parent", objective="Parent")
-        wp1a = Waypoint(id="WP-1a", title="Child 1", objective="Child", parent_id="WP-1")
-        wp1b = Waypoint(id="WP-1b", title="Child 2", objective="Child", parent_id="WP-1")
+        wp1a = Waypoint(
+            id="WP-1a", title="Child 1", objective="Child", parent_id="WP-1"
+        )
+        wp1b = Waypoint(
+            id="WP-1b", title="Child 2", objective="Child", parent_id="WP-1"
+        )
         wp2 = Waypoint(id="WP-2", title="Other", objective="Other")
         plan.add_waypoint(wp1)
         plan.add_waypoint(wp1a)
@@ -240,8 +244,12 @@ class TestFlightPlan:
         """Get waypoints that depend on this one."""
         plan = FlightPlan()
         wp1 = Waypoint(id="WP-1", title="First", objective="First")
-        wp2 = Waypoint(id="WP-2", title="Second", objective="Second", dependencies=["WP-1"])
-        wp3 = Waypoint(id="WP-3", title="Third", objective="Third", dependencies=["WP-1", "WP-2"])
+        wp2 = Waypoint(
+            id="WP-2", title="Second", objective="Second", dependencies=["WP-1"]
+        )
+        wp3 = Waypoint(
+            id="WP-3", title="Third", objective="Third", dependencies=["WP-1", "WP-2"]
+        )
         plan.add_waypoint(wp1)
         plan.add_waypoint(wp2)
         plan.add_waypoint(wp3)
@@ -280,7 +288,9 @@ class TestFlightPlan:
         """Remove waypoint from plan."""
         plan = FlightPlan()
         wp1 = Waypoint(id="WP-1", title="First", objective="First")
-        wp2 = Waypoint(id="WP-2", title="Second", objective="Second", dependencies=["WP-1"])
+        wp2 = Waypoint(
+            id="WP-2", title="Second", objective="Second", dependencies=["WP-1"]
+        )
         plan.add_waypoint(wp1)
         plan.add_waypoint(wp2)
 
@@ -322,7 +332,9 @@ class TestFlightPlan:
         plan = FlightPlan()
         wp1 = Waypoint(id="WP-1", title="Root", objective="Root")
         wp1a = Waypoint(id="WP-1a", title="Child", objective="Child", parent_id="WP-1")
-        wp1a1 = Waypoint(id="WP-1a1", title="Grandchild", objective="Grand", parent_id="WP-1a")
+        wp1a1 = Waypoint(
+            id="WP-1a1", title="Grandchild", objective="Grand", parent_id="WP-1a"
+        )
         wp2 = Waypoint(id="WP-2", title="Root 2", objective="Root 2")
         plan.add_waypoint(wp1)
         plan.add_waypoint(wp1a)
@@ -340,8 +352,12 @@ class TestFlightPlan:
         """Valid dependencies pass validation."""
         plan = FlightPlan()
         wp1 = Waypoint(id="WP-1", title="First", objective="First")
-        wp2 = Waypoint(id="WP-2", title="Second", objective="Second", dependencies=["WP-1"])
-        wp3 = Waypoint(id="WP-3", title="Third", objective="Third", dependencies=["WP-2"])
+        wp2 = Waypoint(
+            id="WP-2", title="Second", objective="Second", dependencies=["WP-1"]
+        )
+        wp3 = Waypoint(
+            id="WP-3", title="Third", objective="Third", dependencies=["WP-2"]
+        )
         plan.add_waypoint(wp1)
         plan.add_waypoint(wp2)
         plan.add_waypoint(wp3)
@@ -352,9 +368,15 @@ class TestFlightPlan:
     def test_validate_dependencies_with_cycle(self) -> None:
         """Circular dependencies detected."""
         plan = FlightPlan()
-        wp1 = Waypoint(id="WP-1", title="First", objective="First", dependencies=["WP-3"])
-        wp2 = Waypoint(id="WP-2", title="Second", objective="Second", dependencies=["WP-1"])
-        wp3 = Waypoint(id="WP-3", title="Third", objective="Third", dependencies=["WP-2"])
+        wp1 = Waypoint(
+            id="WP-1", title="First", objective="First", dependencies=["WP-3"]
+        )
+        wp2 = Waypoint(
+            id="WP-2", title="Second", objective="Second", dependencies=["WP-1"]
+        )
+        wp3 = Waypoint(
+            id="WP-3", title="Third", objective="Third", dependencies=["WP-2"]
+        )
         plan.add_waypoint(wp1)
         plan.add_waypoint(wp2)
         plan.add_waypoint(wp3)

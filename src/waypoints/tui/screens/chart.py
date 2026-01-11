@@ -535,7 +535,11 @@ class ChartScreen(Screen[None]):
                     self.app.call_from_thread(self.waypoints_app.update_header_cost)
 
             # Parse the sub-waypoints (pass existing IDs for validation)
-            existing_ids = {wp.id for wp in self.flight_plan.waypoints} if self.flight_plan else set()
+            existing_ids = (
+                {wp.id for wp in self.flight_plan.waypoints}
+                if self.flight_plan
+                else set()
+            )
             sub_waypoints = self._parse_waypoints(full_response, existing_ids)
 
             # Ensure all have correct parent_id
