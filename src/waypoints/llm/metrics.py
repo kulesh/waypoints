@@ -10,9 +10,9 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from statistics import mean
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from typing import TYPE_CHECKING
+from waypoints.models.schema import migrate_if_needed, write_schema_fields
 
 if TYPE_CHECKING:
     from waypoints.models.project import Project
@@ -110,17 +110,30 @@ class MetricsCollector:
         self._load()
 
     def _load(self) -> None:
-        """Load existing metrics from file."""
+        """Load existing metrics from file.
+
+        Automatically migrates legacy files to current schema version.
+        """
         if not self.path.exists():
             return
 
+        # Migrate legacy files if needed
+        migrate_if_needed(self.path, "metrics")
+
         try:
             with open(self.path) as f:
-                for line in f:
+                for line_num, line in enumerate(f):
                     line = line.strip()
-                    if line:
-                        data = json.loads(line)
-                        self._calls.append(LLMCall.from_dict(data))
+                    if not line:
+                        continue
+
+                    data = json.loads(line)
+
+                    # Skip header line (has _schema field)
+                    if line_num == 0 and "_schema" in data:
+                        continue
+
+                    self._calls.append(LLMCall.from_dict(data))
             logger.debug("Loaded %d metrics from %s", len(self._calls), self.path)
         except Exception as e:
             logger.warning("Failed to load metrics from %s: %s", self.path, e)
@@ -144,6 +157,15 @@ class MetricsCollector:
         """Append a call to the metrics file."""
         # Ensure directory exists
         self.path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write header if file doesn't exist
+        if not self.path.exists():
+            header = {
+                **write_schema_fields("metrics"),
+                "created_at": datetime.now(UTC).isoformat(),
+            }
+            with open(self.path, "w") as f:
+                f.write(json.dumps(header) + "\n")
 
         with open(self.path, "a") as f:
             f.write(json.dumps(call.to_dict()) + "\n")

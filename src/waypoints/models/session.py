@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from waypoints.models.dialogue import DialogueHistory, Message
+from waypoints.models.schema import migrate_if_needed, write_schema_fields
 
 if TYPE_CHECKING:
     from waypoints.models.project import Project
@@ -41,6 +42,7 @@ class SessionWriter:
     def _write_header(self) -> None:
         """Write the session header as the first line."""
         header = {
+            **write_schema_fields("session"),
             "session_id": self.session_id,
             "phase": self.phase,
             "created_at": datetime.now().isoformat(),
@@ -63,12 +65,17 @@ class SessionReader:
     def load(cls, file_path: Path) -> DialogueHistory:
         """Load a session from a JSONL file.
 
+        Automatically migrates legacy files to current schema version.
+
         Args:
             file_path: Path to the JSONL file
 
         Returns:
             Reconstructed DialogueHistory with all messages
         """
+        # Migrate legacy files if needed
+        migrate_if_needed(file_path, "session")
+
         history = DialogueHistory()
 
         with open(file_path) as f:
@@ -80,7 +87,7 @@ class SessionReader:
                 data = json.loads(line)
 
                 if line_num == 0 and "session_id" in data:
-                    # First line is the header
+                    # First line is the header (may include _schema, _version)
                     history.session_id = data["session_id"]
                     history.phase = data.get("phase", "")
                 else:
