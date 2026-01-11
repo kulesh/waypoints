@@ -411,12 +411,13 @@ class ProjectPreviewPanel(VerticalScroll):
                     Static(f"Last run: {time_ago} · {result_display}", classes=css_class)
                 )
 
-            # Initial idea snippet
-            if project.initial_idea:
-                idea = project.initial_idea[:300]
-                if len(project.initial_idea) > 300:
-                    idea += "..."
-                content.mount(Static(idea, classes="project-idea"))
+            # Project description - prefer summary over initial idea
+            description = project.summary if project.summary else project.initial_idea
+            if description:
+                display_text = description[:300]
+                if len(description) > 300:
+                    display_text += "..."
+                content.mount(Static(display_text, classes="project-idea"))
 
             # Hint
             content.mount(Static("Press Enter to open", classes="hint"))
