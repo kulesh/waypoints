@@ -1527,6 +1527,17 @@ class FlyScreen(Screen[None]):
             },
         )
 
+    def _switch_to_land_screen(self) -> None:
+        """Switch to the Land screen after all waypoints complete."""
+        self.waypoints_app.switch_phase(
+            "land",
+            {
+                "project": self.project,
+                "flight_plan": self.flight_plan,
+                "spec": self.spec,
+            },
+        )
+
     def _execute_current_waypoint(self) -> None:
         """Execute the current waypoint using agentic AI."""
         if not self.current_waypoint:
@@ -1713,10 +1724,11 @@ class FlyScreen(Screen[None]):
                     self._execute_current_waypoint()
                 else:
                     # _select_next_waypoint sets execution_state appropriately
-                    # Only transition to LANDED if truly all complete (state is DONE)
+                    # Only transition to LAND_REVIEW if truly all complete (state is DONE)
                     # Note: mypy doesn't track that _select_next_waypoint modifies state
                     if self.execution_state == ExecutionState.DONE:  # type: ignore[comparison-overlap]
-                        self.project.transition_journey(JourneyState.LANDED)
+                        self.project.transition_journey(JourneyState.LAND_REVIEW)
+                        self._switch_to_land_screen()
             elif self.execution_state == ExecutionState.PAUSE_PENDING:
                 # Pause was requested, now actually pause
                 # Transition journey state: FLY_EXECUTING -> FLY_PAUSED
@@ -1844,10 +1856,11 @@ class FlyScreen(Screen[None]):
                 self._execute_current_waypoint()
             else:
                 # _select_next_waypoint sets execution_state appropriately
-                # Only transition to LANDED and notify if truly all complete
+                # Only transition to LAND_REVIEW and notify if truly all complete
                 if self.execution_state == ExecutionState.DONE:
-                    self.project.transition_journey(JourneyState.LANDED)
+                    self.project.transition_journey(JourneyState.LAND_REVIEW)
                     self.notify("All waypoints complete!")
+                    self._switch_to_land_screen()
 
         elif result.action == InterventionAction.EDIT:
             # Open waypoint editor - for now, just notify
