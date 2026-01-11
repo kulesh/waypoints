@@ -346,7 +346,9 @@ class JourneyCoordinator:
         )
 
         if all_done:
-            logger.info("Parent epic %s ready for execution (all children done)", parent.id)
+            logger.info(
+                "Parent epic %s ready for execution (all children done)", parent.id
+            )
             # Don't auto-complete - parent will be selected and executed
             # to verify its own acceptance criteria
 

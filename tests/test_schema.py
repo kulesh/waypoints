@@ -1,7 +1,6 @@
 """Tests for schema versioning and migration."""
 
 import json
-from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -132,7 +131,10 @@ class TestMigration:
         """Legacy flight plan gets schema fields added."""
         file_path = tmp_path / "flight-plan.jsonl"
         # Create legacy flight plan (no schema fields)
-        header = {"created_at": "2026-01-01T00:00:00", "updated_at": "2026-01-01T00:00:00"}
+        header = {
+            "created_at": "2026-01-01T00:00:00",
+            "updated_at": "2026-01-01T00:00:00",
+        }
         waypoint = {"id": "WP-001", "title": "Test", "status": "pending"}
         file_path.write_text(json.dumps(header) + "\n" + json.dumps(waypoint) + "\n")
 
@@ -182,7 +184,11 @@ class TestMigration:
             "waypoint_id": "WP-001",
             "started_at": "2026-01-01T00:00:00",
         }
-        entry = {"type": "output", "content": "Test output", "timestamp": "2026-01-01T00:00:01"}
+        entry = {
+            "type": "output",
+            "content": "Test output",
+            "timestamp": "2026-01-01T00:00:01",
+        }
         file_path.write_text(json.dumps(header) + "\n" + json.dumps(entry) + "\n")
 
         result = migrate_if_needed(file_path, "execution_log")
@@ -260,7 +266,10 @@ class TestMigration:
     def test_migration_preserves_data(self, tmp_path: Path) -> None:
         """All data entries preserved after migration."""
         file_path = tmp_path / "flight-plan.jsonl"
-        header = {"created_at": "2026-01-01T00:00:00", "updated_at": "2026-01-01T00:00:00"}
+        header = {
+            "created_at": "2026-01-01T00:00:00",
+            "updated_at": "2026-01-01T00:00:00",
+        }
         waypoints = [
             {"id": "WP-001", "title": "First", "status": "pending"},
             {"id": "WP-002", "title": "Second", "status": "completed"},

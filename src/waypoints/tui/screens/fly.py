@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
 from waypoints.fly.execution_log import (
     ExecutionLog as ExecLogType,
+)
+from waypoints.fly.execution_log import (
     ExecutionLogReader,
 )
 from waypoints.fly.executor import (
@@ -693,7 +695,9 @@ class WaypointDetailPanel(Vertical):
 
         # Add duration
         if exec_log.completed_at and exec_log.started_at:
-            duration = int((exec_log.completed_at - exec_log.started_at).total_seconds())
+            duration = int(
+                (exec_log.completed_at - exec_log.started_at).total_seconds()
+            )
             parts.append(format_duration(duration))
 
         # Add cost from metrics collector (or fall back to execution log)

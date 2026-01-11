@@ -354,7 +354,9 @@ class ProjectPreviewPanel(VerticalScroll):
                 filled = int((completed / total) * bar_width) if total > 0 else 0
                 bar = "■" * filled + "□" * (bar_width - filled)
                 content.mount(
-                    Static(f"{bar} {completed}/{total} waypoints", classes="project-stats")
+                    Static(
+                        f"{bar} {completed}/{total} waypoints", classes="project-stats"
+                    )
                 )
 
             # Cost and time
@@ -379,7 +381,9 @@ class ProjectPreviewPanel(VerticalScroll):
                 elif result in ("failed", "max_iterations"):
                     css_class = "project-stats-failed"
                 content.mount(
-                    Static(f"Last run: {time_ago} · {result_display}", classes=css_class)
+                    Static(
+                        f"Last run: {time_ago} · {result_display}", classes=css_class
+                    )
                 )
 
             # Project description - prefer summary over initial idea

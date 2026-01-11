@@ -5,8 +5,6 @@ import json
 import pytest
 
 from waypoints.llm.validation import (
-    WAYPOINT_SCHEMA,
-    ValidationResult,
     WaypointValidationError,
     extract_json_array,
     validate_schema,

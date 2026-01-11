@@ -166,7 +166,9 @@ def register_migrator(
     def decorator(fn: Migrator) -> Migrator:
         key = (schema_type, from_version, to_version)
         MIGRATORS[key] = fn
-        logger.debug("Registered migrator: %s %s -> %s", schema_type, from_version, to_version)
+        logger.debug(
+            "Registered migrator: %s %s -> %s", schema_type, from_version, to_version
+        )
         return fn
 
     return decorator
