@@ -11,7 +11,11 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Footer, OptionList, Static
 from textual.widgets.option_list import Option
 
+from waypoints.fly.execution_log import ExecutionLogReader
+from waypoints.llm.metrics import MetricsCollector
 from waypoints.models import Project
+from waypoints.models.flight_plan import FlightPlanReader
+from waypoints.models.waypoint import WaypointStatus
 from waypoints.tui.screens.ideation import IdeationScreen
 from waypoints.tui.widgets.header import StatusHeader
 
@@ -250,6 +254,19 @@ class ProjectPreviewPanel(VerticalScroll):
         text-style: italic;
         margin-top: 2;
     }
+
+    ProjectPreviewPanel .project-stats {
+        color: $text-muted;
+        margin-bottom: 0;
+    }
+
+    ProjectPreviewPanel .project-stats-success {
+        color: $success;
+    }
+
+    ProjectPreviewPanel .project-stats-failed {
+        color: $error;
+    }
     """
 
     def compose(self) -> ComposeResult:
@@ -258,6 +275,58 @@ class ProjectPreviewPanel(VerticalScroll):
             "Select a project to preview", classes="placeholder", id="placeholder"
         )
         yield Vertical(id="preview-content")
+
+    def _get_waypoint_stats(self, project: Project) -> tuple[int, int] | None:
+        """Get (completed, total) waypoint counts. Returns None if no flight plan."""
+        try:
+            flight_plan = FlightPlanReader.load(project)
+            if not flight_plan or not flight_plan.waypoints:
+                return None
+            total = len(flight_plan.waypoints)
+            completed = sum(
+                1
+                for wp in flight_plan.waypoints
+                if wp.status == WaypointStatus.COMPLETE
+            )
+            return (completed, total)
+        except Exception:
+            return None
+
+    def _get_cost_and_time(self, project: Project) -> tuple[float, int]:
+        """Get (total_cost, total_seconds) for project."""
+        cost = 0.0
+        try:
+            collector = MetricsCollector(project)
+            cost = collector.total_cost
+        except Exception:
+            pass
+
+        total_seconds = 0
+        try:
+            log_files = ExecutionLogReader.list_logs(project)
+            for log_path in log_files:
+                log = ExecutionLogReader.load(log_path)
+                if log.completed_at and log.started_at:
+                    total_seconds += int(
+                        (log.completed_at - log.started_at).total_seconds()
+                    )
+        except Exception:
+            pass
+
+        return (cost, total_seconds)
+
+    def _get_last_execution(self, project: Project) -> tuple[datetime, str] | None:
+        """Get (timestamp, result) of most recent execution. Returns None if none."""
+        try:
+            log_files = ExecutionLogReader.list_logs(project)
+            if not log_files:
+                return None
+            latest_log = ExecutionLogReader.load(log_files[0])
+            if latest_log.completed_at:
+                return (latest_log.completed_at, latest_log.result or "unknown")
+        except Exception:
+            pass
+        return None
 
     def show_project(self, project: Project | None) -> None:
         """Display project preview."""
@@ -288,6 +357,49 @@ class ProjectPreviewPanel(VerticalScroll):
             updated = _format_relative_time(project.updated_at)
             content.mount(Static(f"Created: {created}", classes="project-meta"))
             content.mount(Static(f"Updated: {updated}", classes="project-meta"))
+
+            # Waypoint progress (only if flight plan exists)
+            stats = self._get_waypoint_stats(project)
+            if stats:
+                completed, total = stats
+                bar_width = 8
+                filled = int((completed / total) * bar_width) if total > 0 else 0
+                bar = "■" * filled + "□" * (bar_width - filled)
+                content.mount(
+                    Static(f"{bar} {completed}/{total} waypoints", classes="project-stats")
+                )
+
+            # Cost and time
+            cost, time_secs = self._get_cost_and_time(project)
+            if cost > 0 or time_secs > 0:
+                parts: list[str] = []
+                if cost > 0:
+                    parts.append(f"${cost:.2f}")
+                if time_secs > 0:
+                    mins, secs = divmod(time_secs, 60)
+                    if mins >= 60:
+                        hours, mins = divmod(mins, 60)
+                        parts.append(f"{hours}h {mins}m total")
+                    elif mins > 0:
+                        parts.append(f"{mins}m {secs}s total")
+                    else:
+                        parts.append(f"{secs}s total")
+                content.mount(Static(" · ".join(parts), classes="project-stats"))
+
+            # Last execution
+            last_exec = self._get_last_execution(project)
+            if last_exec:
+                exec_time, result = last_exec
+                time_ago = _format_relative_time(exec_time)
+                result_display = result.replace("_", " ").title()
+                css_class = "project-stats"
+                if result == "success":
+                    css_class = "project-stats-success"
+                elif result in ("failed", "max_iterations"):
+                    css_class = "project-stats-failed"
+                content.mount(
+                    Static(f"Last run: {time_ago} · {result_display}", classes=css_class)
+                )
 
             # Initial idea snippet
             if project.initial_idea:
