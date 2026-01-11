@@ -414,8 +414,8 @@ class ProjectPreviewPanel(VerticalScroll):
             # Project description - prefer summary over initial idea
             description = project.summary if project.summary else project.initial_idea
             if description:
-                display_text = description[:300]
-                if len(description) > 300:
+                display_text = description[:800]
+                if len(description) > 800:
                     display_text += "..."
                 content.mount(Static(display_text, classes="project-idea"))
 
