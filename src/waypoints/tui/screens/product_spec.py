@@ -84,6 +84,21 @@ Here is the Idea Brief to expand:
 
 Generate the complete Product Specification now:"""
 
+SPEC_SUMMARY_PROMPT = """\
+Based on this product specification, write a polished 200-250 word summary that captures:
+- What the product is and does
+- The problem it solves and for whom
+- Key features and differentiators
+- Technical approach (briefly)
+
+Write in third person, present tense. No markdown formatting, no headers, just plain prose.
+This summary will be shown in a project list view.
+
+Product Specification:
+{spec_content}
+
+Write the summary now (200-250 words):"""
+
 
 class ProductSpecScreen(Screen[None]):
     """
@@ -276,10 +291,40 @@ class ProductSpecScreen(Screen[None]):
         editor.text = self.spec_content
         self._save_to_disk()
 
+        # Generate project summary in background
+        self._generate_summary()
+
         # Transition journey state: SHAPE_SPEC_GENERATING -> SHAPE_SPEC_REVIEW
         self.project.transition_journey(JourneyState.SHAPE_SPEC_REVIEW)
 
         logger.info("Spec generation complete: %d chars", len(self.spec_content))
+
+    @work(thread=True)
+    def _generate_summary(self) -> None:
+        """Generate and save project summary from spec."""
+        if not self.spec_content or not self.llm_client:
+            return
+
+        prompt = SPEC_SUMMARY_PROMPT.format(spec_content=self.spec_content)
+
+        try:
+            summary = ""
+            for result in self.llm_client.stream_message(
+                messages=[{"role": "user", "content": prompt}],
+                system="You are a concise technical writer. Write plain prose summaries.",
+            ):
+                if isinstance(result, StreamChunk):
+                    summary += result.text
+                elif isinstance(result, StreamComplete):
+                    pass
+
+            # Clean up the summary (remove any accidental markdown)
+            summary = summary.strip()
+            self.project.summary = summary
+            self.project.save()
+            logger.info("Generated project summary: %d chars", len(summary))
+        except Exception as e:
+            logger.exception("Error generating summary: %s", e)
 
     def _save_to_disk(self) -> None:
         """Save the spec content to disk."""

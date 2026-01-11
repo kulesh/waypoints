@@ -43,6 +43,7 @@ class Project:
     created_at: datetime
     updated_at: datetime
     initial_idea: str = ""
+    summary: str = ""  # LLM-generated project summary
     journey: Journey | None = field(default=None, repr=False)
 
     @classmethod
@@ -105,6 +106,7 @@ class Project:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "initial_idea": self.initial_idea,
+            "summary": self.summary,
         }
         if self.journey is not None:
             data["journey"] = self.journey.to_dict()
@@ -125,6 +127,7 @@ class Project:
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
             initial_idea=data.get("initial_idea", ""),
+            summary=data.get("summary", ""),
             journey=journey,
         )
 
