@@ -9,9 +9,10 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from statistics import mean
 from typing import Any
+
+from waypoints.config.paths import get_paths
 
 logger = logging.getLogger(__name__)
 
@@ -95,13 +96,13 @@ class MetricsCollector:
     aggregations like total cost, cost by phase, and cost by waypoint.
     """
 
-    def __init__(self, project_path: Path) -> None:
+    def __init__(self, slug: str) -> None:
         """Initialize the collector.
 
         Args:
-            project_path: Path to the project directory (e.g., .waypoints/projects/slug)
+            slug: Project slug.
         """
-        self.path = project_path / "metrics.jsonl"
+        self.path = get_paths().metrics(slug)
         self._calls: list[LLMCall] = []
         self._load()
 

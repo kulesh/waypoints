@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from waypoints.config.paths import get_paths
+
 if TYPE_CHECKING:
     from waypoints.models.journey import Journey, JourneyState
 
@@ -67,22 +69,20 @@ class Project:
 
     @classmethod
     def _get_projects_dir(cls) -> Path:
-        """Get the projects directory from config."""
-        from waypoints.config import settings
-
-        return settings.project_directory
+        """Get the projects directory from centralized paths."""
+        return get_paths().projects_dir
 
     def get_path(self) -> Path:
         """Get the project's root directory path."""
-        return self._get_projects_dir() / self.slug
+        return get_paths().project_dir(self.slug)
 
     def get_sessions_path(self) -> Path:
         """Get the sessions directory path."""
-        return self.get_path() / "sessions"
+        return get_paths().sessions_dir(self.slug)
 
     def get_docs_path(self) -> Path:
         """Get the docs directory path."""
-        return self.get_path() / "docs"
+        return get_paths().docs_dir(self.slug)
 
     def _ensure_directories(self) -> None:
         """Create project directory structure."""

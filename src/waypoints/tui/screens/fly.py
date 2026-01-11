@@ -713,9 +713,7 @@ class WaypointDetailPanel(Vertical):
 
         # Check receipt status
         validator = ReceiptValidator()
-        receipt_path = validator.find_latest_receipt(
-            self._project.get_path(), waypoint.id
-        )
+        receipt_path = validator.find_latest_receipt(self._project.slug, waypoint.id)
 
         if receipt_path:
             result = validator.validate(receipt_path)
@@ -1890,9 +1888,7 @@ class FlyScreen(Screen[None]):
 
         # Check receipt status
         validator = ReceiptValidator()
-        receipt_path = validator.find_latest_receipt(
-            self.project.get_path(), waypoint.id
-        )
+        receipt_path = validator.find_latest_receipt(self.project.slug, waypoint.id)
 
         if receipt_path:
             result = validator.validate(receipt_path)
@@ -1916,7 +1912,7 @@ class FlyScreen(Screen[None]):
         - If invalid, skip commit but don't block
         """
         project_path = self.project.get_path()
-        config = GitConfig.load(project_path)
+        config = GitConfig.load(self.project.slug)
 
         if not config.auto_commit:
             logger.debug("Auto-commit disabled, skipping")
@@ -1940,9 +1936,7 @@ class FlyScreen(Screen[None]):
         # Validate receipt (the "dog" checking the "pilot's" work)
         if config.run_checklist:
             validator = ReceiptValidator()
-            receipt_path = validator.find_latest_receipt(
-                self.project.get_path(), waypoint.id
-            )
+            receipt_path = validator.find_latest_receipt(self.project.slug, waypoint.id)
 
             if receipt_path:
                 validation_result = validator.validate(receipt_path)

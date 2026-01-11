@@ -1,7 +1,6 @@
 """Main Waypoints TUI application."""
 
 import logging
-from pathlib import Path
 from typing import Any, cast
 
 from textual.app import App
@@ -99,10 +98,10 @@ class WaypointsApp(App[None]):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        # Initialize metrics collector with a default path
+        # Initialize metrics collector
         # Will be updated when a project is selected
         self._metrics_collector: MetricsCollector | None = None
-        self._current_project_path: Path | None = None
+        self._current_project_slug: str | None = None
 
     @property
     def metrics_collector(self) -> MetricsCollector | None:
@@ -114,10 +113,9 @@ class WaypointsApp(App[None]):
 
         Creates or updates the MetricsCollector for the project.
         """
-        project_path = project.get_path()
-        if project_path != self._current_project_path:
-            self._current_project_path = project_path
-            self._metrics_collector = MetricsCollector(project_path)
+        if project.slug != self._current_project_slug:
+            self._current_project_slug = project.slug
+            self._metrics_collector = MetricsCollector(project.slug)
             logger.info("Metrics collector initialized for project: %s", project.slug)
 
     def update_header_cost(self) -> None:
@@ -362,7 +360,7 @@ class WaypointsApp(App[None]):
         phase transitions just commit the generated artifacts directly.
         """
         project_path = project.get_path()
-        config = GitConfig.load(project_path)
+        config = GitConfig.load(project.slug)
 
         if not config.auto_commit:
             logger.debug("Auto-commit disabled, skipping phase commit")

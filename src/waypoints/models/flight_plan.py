@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Iterator
 
+from waypoints.config.paths import get_paths
 from waypoints.models.waypoint import Waypoint
 
 if TYPE_CHECKING:
@@ -159,7 +160,7 @@ class FlightPlanWriter:
     def __init__(self, project: "Project") -> None:
         """Initialize writer for a project."""
         self.project = project
-        self.file_path = project.get_path() / "flight-plan.jsonl"
+        self.file_path = get_paths().flight_plan(project.slug)
 
     def save(self, flight_plan: FlightPlan) -> None:
         """Save entire flight plan (overwrites file)."""
@@ -194,7 +195,7 @@ class FlightPlanReader:
         Returns:
             FlightPlan if file exists, None otherwise.
         """
-        file_path = project.get_path() / "flight-plan.jsonl"
+        file_path = get_paths().flight_plan(project.slug)
         if not file_path.exists():
             return None
 
@@ -224,5 +225,4 @@ class FlightPlanReader:
     @classmethod
     def exists(cls, project: "Project") -> bool:
         """Check if a flight plan exists for the project."""
-        file_path = project.get_path() / "flight-plan.jsonl"
-        return file_path.exists()
+        return get_paths().flight_plan(project.slug).exists()

@@ -6,6 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+from waypoints.config.paths import reset_paths
 from waypoints.git import (
     Checklist,
     ChecklistItem,
@@ -14,6 +17,12 @@ from waypoints.git import (
     GitService,
     ReceiptValidator,
 )
+
+
+@pytest.fixture(autouse=True)
+def reset_paths_singleton() -> None:
+    """Reset the paths singleton before each test."""
+    reset_paths()
 
 
 class TestChecklistItem:
@@ -329,6 +338,11 @@ class TestGitConfig:
 
     def test_load_from_file(self, tmp_path: Path) -> None:
         """Test loading config from a file."""
+        from waypoints.config.paths import get_paths
+
+        # Initialize paths singleton with tmp_path as workspace
+        get_paths(tmp_path)
+
         config_path = tmp_path / ".waypoints" / "git-config.json"
         config_path.parent.mkdir(parents=True)
         config_path.write_text(
@@ -340,8 +354,7 @@ class TestGitConfig:
             )
         )
 
-        with patch("waypoints.git.config.Path.cwd", return_value=tmp_path):
-            config = GitConfig.load()
+        config = GitConfig.load()
 
         assert config.auto_commit is False
         assert config.create_waypoint_tags is True
