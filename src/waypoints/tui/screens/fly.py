@@ -589,6 +589,28 @@ class WaypointDetailPanel(Vertical):
                         log.write_log(f"(Iteration cost: ${cost:.4f})")
                 elif entry.entry_type == "tool_call":
                     tool_name = entry.metadata.get("tool_name", "unknown")
+                    tool_input = entry.metadata.get("tool_input", {})
+
+                    # Extract file path for file operations (same as live display)
+                    if tool_name in ("Edit", "Write", "Read") and isinstance(
+                        tool_input, dict
+                    ):
+                        file_path = tool_input.get("file_path")
+                        if file_path:
+                            icon = {"Edit": "✎", "Write": "✚", "Read": "📖"}.get(
+                                tool_name, "•"
+                            )
+                            style = "dim" if tool_name == "Read" else "cyan"
+                            escaped_path = file_path.replace("'", "\\'")
+                            markup = (
+                                f"  [{style}]{icon}[/] "
+                                f"[@click=screen.preview_file('{escaped_path}')]"
+                                f"[{style} underline]{file_path}[/][/]"
+                            )
+                            log.write(markup)
+                            continue
+
+                    # Fallback for other tools
                     log.write_log(f"[dim]→ {tool_name}[/]")
                 elif entry.entry_type == "intervention_needed":
                     int_type = entry.metadata.get("intervention_type", "unknown")
