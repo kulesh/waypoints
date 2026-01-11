@@ -471,7 +471,7 @@ class JourneyCoordinator:
         from waypoints.git.receipt import ReceiptValidator
 
         validator = ReceiptValidator()
-        receipt_path = validator.find_latest_receipt(self.project.slug, waypoint.id)
+        receipt_path = validator.find_latest_receipt(self.project, waypoint.id)
 
         if receipt_path is None:
             logger.warning("No receipt found for %s, skipping commit", waypoint.id)

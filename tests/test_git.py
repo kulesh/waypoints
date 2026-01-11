@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -17,6 +18,16 @@ from waypoints.git import (
     GitService,
     ReceiptValidator,
 )
+
+
+@dataclass
+class MockProject:
+    """Mock project for testing."""
+
+    path: Path
+
+    def get_path(self) -> Path:
+        return self.path
 
 
 @pytest.fixture(autouse=True)
@@ -220,7 +231,8 @@ class TestReceiptValidator:
         )
 
         validator = ReceiptValidator()
-        latest = validator.find_latest_receipt(tmp_path, "WP-001")
+        mock_project = MockProject(tmp_path)
+        latest = validator.find_latest_receipt(mock_project, "WP-001")
         assert latest is not None
         assert "120000" in latest.name
 
@@ -371,16 +383,18 @@ class TestChecklist:
 
     def test_load_creates_default(self, tmp_path: Path) -> None:
         """Test that load creates default checklist if none exists."""
-        checklist = Checklist.load(tmp_path)
+        mock_project = MockProject(tmp_path)
+        checklist = Checklist.load(mock_project)
         assert len(checklist.items) == 4
         assert (tmp_path / "checklist.yaml").exists()
 
     def test_save_and_load(self, tmp_path: Path) -> None:
         """Test saving and loading a custom checklist."""
+        mock_project = MockProject(tmp_path)
         checklist = Checklist(items=["Custom check 1", "Custom check 2"])
-        checklist.save(tmp_path)
+        checklist.save(mock_project)
 
-        loaded = Checklist.load(tmp_path)
+        loaded = Checklist.load(mock_project)
         assert loaded.items == ["Custom check 1", "Custom check 2"]
 
     def test_to_prompt(self) -> None:

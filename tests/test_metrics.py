@@ -1,6 +1,7 @@
 """Tests for LLM metrics tracking."""
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,6 +13,16 @@ from waypoints.llm.metrics import (
     LLMCall,
     MetricsCollector,
 )
+
+
+@dataclass
+class MockProject:
+    """Mock project for testing MetricsCollector."""
+
+    path: Path
+
+    def get_path(self) -> Path:
+        return self.path
 
 
 class TestLLMCall:
@@ -109,7 +120,7 @@ class TestMetricsCollector:
 
     def test_empty_collector(self, tmp_path: Path) -> None:
         """Test collector with no calls."""
-        collector = MetricsCollector(tmp_path)
+        collector = MetricsCollector(MockProject(tmp_path))
 
         assert collector.total_cost == 0.0
         assert collector.total_calls == 0
@@ -118,7 +129,7 @@ class TestMetricsCollector:
 
     def test_record_calls(self, tmp_path: Path) -> None:
         """Test recording multiple calls."""
-        collector = MetricsCollector(tmp_path)
+        collector = MetricsCollector(MockProject(tmp_path))
 
         call1 = LLMCall.create(phase="ideation-qa", cost_usd=0.05, latency_ms=1000)
         call2 = LLMCall.create(phase="idea-brief", cost_usd=0.10, latency_ms=1500)
@@ -133,7 +144,7 @@ class TestMetricsCollector:
 
     def test_cost_by_phase(self, tmp_path: Path) -> None:
         """Test aggregating cost by phase."""
-        collector = MetricsCollector(tmp_path)
+        collector = MetricsCollector(MockProject(tmp_path))
 
         collector.record(
             LLMCall.create(phase="ideation-qa", cost_usd=0.05, latency_ms=1000)
@@ -154,7 +165,7 @@ class TestMetricsCollector:
 
     def test_cost_by_waypoint(self, tmp_path: Path) -> None:
         """Test aggregating cost by waypoint."""
-        collector = MetricsCollector(tmp_path)
+        collector = MetricsCollector(MockProject(tmp_path))
 
         collector.record(
             LLMCall.create(
@@ -183,7 +194,7 @@ class TestMetricsCollector:
     def test_persistence(self, tmp_path: Path) -> None:
         """Test that metrics persist across collector instances."""
         # First collector records some calls
-        collector1 = MetricsCollector(tmp_path)
+        collector1 = MetricsCollector(MockProject(tmp_path))
         collector1.record(
             LLMCall.create(phase="ideation-qa", cost_usd=0.05, latency_ms=1000)
         )
@@ -192,14 +203,14 @@ class TestMetricsCollector:
         )
 
         # Second collector loads from same path
-        collector2 = MetricsCollector(tmp_path)
+        collector2 = MetricsCollector(MockProject(tmp_path))
 
         assert collector2.total_calls == 2
         assert collector2.total_cost == pytest.approx(0.15)
 
     def test_metrics_file_format(self, tmp_path: Path) -> None:
         """Test that metrics are stored as JSONL."""
-        collector = MetricsCollector(tmp_path)
+        collector = MetricsCollector(MockProject(tmp_path))
         collector.record(
             LLMCall.create(phase="ideation-qa", cost_usd=0.05, latency_ms=1000)
         )
@@ -218,7 +229,7 @@ class TestMetricsCollector:
 
     def test_summary(self, tmp_path: Path) -> None:
         """Test generating summary statistics."""
-        collector = MetricsCollector(tmp_path)
+        collector = MetricsCollector(MockProject(tmp_path))
 
         collector.record(
             LLMCall.create(phase="ideation-qa", cost_usd=0.05, latency_ms=1000)
@@ -253,7 +264,7 @@ class TestBudget:
     def test_no_budget(self, tmp_path: Path) -> None:
         """Test budget with no limit."""
         budget = Budget()
-        collector = MetricsCollector(tmp_path)
+        collector = MetricsCollector(MockProject(tmp_path))
 
         collector.record(
             LLMCall.create(phase="ideation-qa", cost_usd=100.0, latency_ms=1000)
@@ -265,7 +276,7 @@ class TestBudget:
     def test_budget_not_exceeded(self, tmp_path: Path) -> None:
         """Test budget when under limit."""
         budget = Budget(max_usd=10.0)
-        collector = MetricsCollector(tmp_path)
+        collector = MetricsCollector(MockProject(tmp_path))
 
         collector.record(
             LLMCall.create(phase="ideation-qa", cost_usd=5.0, latency_ms=1000)
@@ -278,7 +289,7 @@ class TestBudget:
     def test_budget_exceeded(self, tmp_path: Path) -> None:
         """Test budget when over limit."""
         budget = Budget(max_usd=1.0)
-        collector = MetricsCollector(tmp_path)
+        collector = MetricsCollector(MockProject(tmp_path))
 
         collector.record(
             LLMCall.create(phase="ideation-qa", cost_usd=1.50, latency_ms=1000)
@@ -294,7 +305,7 @@ class TestBudget:
     def test_budget_remaining_none(self, tmp_path: Path) -> None:
         """Test remaining when no budget set."""
         budget = Budget()
-        collector = MetricsCollector(tmp_path)
+        collector = MetricsCollector(MockProject(tmp_path))
 
         assert budget.remaining(collector) is None
 

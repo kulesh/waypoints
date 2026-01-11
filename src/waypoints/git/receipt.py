@@ -12,7 +12,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from waypoints.config.paths import get_paths
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from waypoints.models.project import Project
 
 logger = logging.getLogger(__name__)
 
@@ -152,22 +155,22 @@ class ReceiptValidator:
             receipt=receipt,
         )
 
-    def get_receipt_path(self, slug: str, waypoint_id: str) -> Path:
+    def get_receipt_path(self, project: "Project", waypoint_id: str) -> Path:
         """Get the expected receipt path for a waypoint.
 
         Receipts are stored in:
-        .waypoints/projects/{slug}/receipts/{waypoint-id}-{timestamp}.json
+        {project_dir}/receipts/{waypoint-id}-{timestamp}.json
 
         This returns the pattern to search for, not an exact path.
         """
-        receipts_dir = get_paths().receipts_dir(slug)
+        receipts_dir = project.get_path() / "receipts"
         # Normalize waypoint ID for filename (lowercase, no special chars)
         safe_id = waypoint_id.lower().replace("-", "")
         return receipts_dir / f"{safe_id}-*.json"
 
-    def find_latest_receipt(self, slug: str, waypoint_id: str) -> Path | None:
+    def find_latest_receipt(self, project: "Project", waypoint_id: str) -> Path | None:
         """Find the most recent receipt for a waypoint."""
-        receipts_dir = get_paths().receipts_dir(slug)
+        receipts_dir = project.get_path() / "receipts"
         if not receipts_dir.exists():
             return None
 
