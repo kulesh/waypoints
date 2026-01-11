@@ -213,6 +213,13 @@ class WaypointsApp(App[None]):
             else:
                 logger.warning("No flight-plan or spec found, starting fresh")
                 self.push_screen(IdeationScreen())
+        elif phase == "land":
+            # Resume land phase - load flight plan and spec
+            flight_plan = FlightPlanReader.load(project)
+            spec = self._load_latest_doc(project, "product-spec")
+            self.push_screen(
+                LandScreen(project=project, flight_plan=flight_plan, spec=spec or "")
+            )
         else:
             logger.warning("Unknown phase %s, starting fresh", phase)
             self.push_screen(IdeationScreen())
