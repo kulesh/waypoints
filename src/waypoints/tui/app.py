@@ -18,6 +18,7 @@ from waypoints.tui.screens.fly import FlyScreen
 from waypoints.tui.screens.idea_brief import IdeaBriefScreen
 from waypoints.tui.screens.ideation import IdeationScreen
 from waypoints.tui.screens.ideation_qa import IdeationQAScreen
+from waypoints.tui.screens.land import LandScreen
 from waypoints.tui.screens.product_spec import ProductSpecScreen
 from waypoints.tui.widgets.header import StatusHeader
 
@@ -341,6 +342,15 @@ class WaypointsApp(App[None]):
                 FlyScreen(
                     project=project,
                     flight_plan=flight_plan,
+                    spec=data.get("spec", ""),
+                )
+            )
+        elif phase == "land" and project:
+            land_flight_plan = cast(FlightPlan | None, data.get("flight_plan"))
+            self.switch_screen(
+                LandScreen(
+                    project=project,
+                    flight_plan=land_flight_plan,
                     spec=data.get("spec", ""),
                 )
             )

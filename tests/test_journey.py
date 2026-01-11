@@ -24,9 +24,10 @@ class TestJourneyState:
         for state in JourneyState:
             assert state in VALID_TRANSITIONS, f"{state} missing from VALID_TRANSITIONS"
 
-    def test_landed_is_terminal(self) -> None:
-        """LANDED should have no valid transitions (terminal state)."""
-        assert VALID_TRANSITIONS[JourneyState.LANDED] == set()
+    def test_land_review_transitions(self) -> None:
+        """LAND_REVIEW can transition to FLY_READY or SPARK_IDLE."""
+        expected = {JourneyState.FLY_READY, JourneyState.SPARK_IDLE}
+        assert VALID_TRANSITIONS[JourneyState.LAND_REVIEW] == expected
 
     def test_all_states_reachable(self) -> None:
         """Every state (except SPARK_IDLE) should be reachable from SPARK_IDLE."""
@@ -80,7 +81,7 @@ class TestJourney:
         journey = Journey.new("test")
 
         assert not journey.can_transition(JourneyState.FLY_EXECUTING)
-        assert not journey.can_transition(JourneyState.LANDED)
+        assert not journey.can_transition(JourneyState.LAND_REVIEW)
         assert not journey.can_transition(JourneyState.CHART_REVIEW)
 
     def test_valid_transition(self) -> None:
@@ -259,7 +260,7 @@ class TestTransitionPaths:
     """Tests for complete transition paths (happy paths)."""
 
     def test_full_happy_path(self) -> None:
-        """Test complete journey from SPARK to LANDED."""
+        """Test complete journey from SPARK to LAND_REVIEW."""
         journey = Journey.new("test")
 
         # SPARK -> SHAPE
@@ -277,9 +278,9 @@ class TestTransitionPaths:
         # FLY
         journey = journey.transition(JourneyState.FLY_READY)
         journey = journey.transition(JourneyState.FLY_EXECUTING)
-        journey = journey.transition(JourneyState.LANDED)
+        journey = journey.transition(JourneyState.LAND_REVIEW)
 
-        assert journey.state == JourneyState.LANDED
+        assert journey.state == JourneyState.LAND_REVIEW
         assert len(journey.state_history) == 11
 
     def test_regenerate_brief(self) -> None:
@@ -352,8 +353,8 @@ class TestTransitionPaths:
         assert journey.state == JourneyState.FLY_EXECUTING
 
         # Complete
-        journey = journey.transition(JourneyState.LANDED)
-        assert journey.state == JourneyState.LANDED
+        journey = journey.transition(JourneyState.LAND_REVIEW)
+        assert journey.state == JourneyState.LAND_REVIEW
 
     def test_intervention_edit_plan(self) -> None:
         """Test intervention with edit plan path."""

@@ -34,8 +34,8 @@ class JourneyState(Enum):
     FLY_PAUSED = "fly:paused"
     FLY_INTERVENTION = "fly:intervention"
 
-    # LAND phase - Completion
-    LANDED = "landed"
+    # LAND phase - Completion review
+    LAND_REVIEW = "land:review"
 
 
 class InvalidTransitionError(Exception):
@@ -78,7 +78,7 @@ VALID_TRANSITIONS: dict[JourneyState, set[JourneyState]] = {
     JourneyState.FLY_EXECUTING: {
         JourneyState.FLY_PAUSED,
         JourneyState.FLY_INTERVENTION,
-        JourneyState.LANDED,
+        JourneyState.LAND_REVIEW,
     },
     JourneyState.FLY_PAUSED: {
         JourneyState.FLY_EXECUTING,  # Resume
@@ -90,8 +90,11 @@ VALID_TRANSITIONS: dict[JourneyState, set[JourneyState]] = {
         JourneyState.FLY_PAUSED,  # Skip waypoint
         JourneyState.CHART_REVIEW,  # Edit plan
     },
-    # LAND phase - terminal
-    JourneyState.LANDED: set(),
+    # LAND phase - can return to fix issues or start V2
+    JourneyState.LAND_REVIEW: {
+        JourneyState.FLY_READY,  # Fix issues
+        JourneyState.SPARK_IDLE,  # Start V2 iteration
+    },
 }
 
 
@@ -110,7 +113,7 @@ STATE_TO_PHASE: dict[JourneyState, str] = {
     JourneyState.FLY_EXECUTING: "fly",
     JourneyState.FLY_PAUSED: "fly",
     JourneyState.FLY_INTERVENTION: "fly",
-    JourneyState.LANDED: "fly",
+    JourneyState.LAND_REVIEW: "land",
 }
 
 
@@ -122,6 +125,7 @@ PHASE_TO_STATE: dict[str, JourneyState] = {
     "product-spec": JourneyState.SHAPE_SPEC_GENERATING,
     "chart": JourneyState.CHART_GENERATING,
     "fly": JourneyState.FLY_READY,
+    "land": JourneyState.LAND_REVIEW,
 }
 
 
@@ -134,7 +138,7 @@ RECOVERABLE_STATES: set[JourneyState] = {
     JourneyState.CHART_REVIEW,
     JourneyState.FLY_READY,
     JourneyState.FLY_PAUSED,
-    JourneyState.LANDED,
+    JourneyState.LAND_REVIEW,
 }
 
 
