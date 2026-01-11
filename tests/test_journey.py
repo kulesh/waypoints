@@ -199,6 +199,19 @@ class TestJourneySerialization:
 
         assert journey.state_history == []
 
+    def test_from_dict_migrates_landed_to_land_review(self) -> None:
+        """from_dict should migrate old 'landed' state to 'land:review'."""
+        data = {
+            "state": "landed",  # Old value
+            "project_slug": "test",
+            "updated_at": "2025-01-01T12:00:00+00:00",
+            "state_history": [],
+        }
+
+        journey = Journey.from_dict(data)
+
+        assert journey.state == JourneyState.LAND_REVIEW
+
 
 class TestJourneyRecovery:
     """Tests for Journey recovery from non-recoverable states."""

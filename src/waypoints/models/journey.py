@@ -269,8 +269,13 @@ class Journey:
         Returns:
             A Journey instance.
         """
+        # Migrate old state values to new names
+        state_value = data["state"]
+        if state_value == "landed":
+            state_value = "land:review"
+
         return cls(
-            state=JourneyState(data["state"]),
+            state=JourneyState(state_value),
             project_slug=data["project_slug"],
             updated_at=datetime.fromisoformat(data["updated_at"]),
             state_history=data.get("state_history", []),
