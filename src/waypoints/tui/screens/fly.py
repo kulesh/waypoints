@@ -837,6 +837,11 @@ class WaypointListPanel(Vertical):
         margin-top: 0;
     }
 
+    WaypointListPanel .project-metrics {
+        color: $text-muted;
+        margin-top: 0;
+    }
+
     WaypointListPanel .panel-footer {
         dock: bottom;
         height: auto;
@@ -887,6 +892,7 @@ class WaypointListPanel(Vertical):
                 "□□□□□□□□□□ 0/0", classes="progress-bar", id="overall-progress"
             )
             yield Static("", classes="git-status", id="git-status")
+            yield Static("", classes="project-metrics", id="project-metrics")
         yield FlightPlanTree(id="waypoint-tree")
         with Vertical(classes="panel-footer"):
             yield Static("", classes="action-hint", id="action-hint")
@@ -899,6 +905,29 @@ class WaypointListPanel(Vertical):
     def update_git_status(self, message: str) -> None:
         """Update the git status indicator."""
         self.query_one("#git-status", Static).update(message)
+
+    def update_project_metrics(self, cost: float, time_seconds: int) -> None:
+        """Update the project metrics display (cost and time).
+
+        Args:
+            cost: Total cost in USD.
+            time_seconds: Total execution time in seconds.
+        """
+        parts = []
+        if cost > 0:
+            parts.append(f"${cost:.2f}")
+        if time_seconds > 0:
+            mins, secs = divmod(time_seconds, 60)
+            if mins >= 60:
+                hours, mins = divmod(mins, 60)
+                parts.append(f"{hours}h {mins}m")
+            elif mins > 0:
+                parts.append(f"{mins}m {secs}s")
+            else:
+                parts.append(f"{secs}s")
+
+        display = " · ".join(parts) if parts else ""
+        self.query_one("#project-metrics", Static).update(display)
 
     def update_flight_plan(
         self,
@@ -1112,11 +1141,38 @@ class FlyScreen(Screen[None]):
         self._update_git_status()
         self._git_status_timer = self.set_interval(10.0, self._update_git_status)
 
+        # Update project metrics (cost and time)
+        self._update_project_metrics()
+
     def _update_git_status(self) -> None:
         """Update git status indicator in the left panel."""
         status = get_git_status_summary(self.project.get_path())
         list_panel = self.query_one(WaypointListPanel)
         list_panel.update_git_status(status)
+
+    def _calculate_total_execution_time(self) -> int:
+        """Calculate total execution time across all waypoints in seconds."""
+        total_seconds = 0
+        log_files = ExecutionLogReader.list_logs(self.project)
+        for log_path in log_files:
+            try:
+                log = ExecutionLogReader.load(log_path)
+                if log.completed_at and log.started_at:
+                    total_seconds += int(
+                        (log.completed_at - log.started_at).total_seconds()
+                    )
+            except Exception:
+                continue
+        return total_seconds
+
+    def _update_project_metrics(self) -> None:
+        """Update project-wide cost and time metrics in the left panel."""
+        cost = 0.0
+        if self.waypoints_app.metrics_collector:
+            cost = self.waypoints_app.metrics_collector.total_cost
+        time_seconds = self._calculate_total_execution_time()
+        list_panel = self.query_one(WaypointListPanel)
+        list_panel.update_project_metrics(cost, time_seconds)
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted[Waypoint]) -> None:
         """Update detail panel when tree selection changes."""
@@ -1602,6 +1658,9 @@ class FlyScreen(Screen[None]):
 
         # Update header cost display after execution
         self.waypoints_app.update_header_cost()
+
+        # Update project metrics (cost and time) after execution
+        self._update_project_metrics()
 
         if result == ExecutionResult.SUCCESS:
             # Mark complete
