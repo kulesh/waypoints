@@ -427,7 +427,13 @@ class ChartScreen(Screen[None]):
         def on_complete() -> None:
             self._apply_waypoint_edits(waypoint, temp_path)
 
-        edit_file_in_editor(self.app, temp_path, on_complete)
+        if not edit_file_in_editor(self.app, temp_path, on_complete):
+            self.notify(
+                "Editor not allowed. Set $EDITOR to vim, code, etc.",
+                severity="error",
+            )
+            # Clean up temp file on failure
+            temp_path.unlink(missing_ok=True)
 
     def _apply_waypoint_edits(self, waypoint: Waypoint, yaml_path: Path) -> None:
         """Parse YAML and update waypoint."""

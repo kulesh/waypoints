@@ -4,7 +4,7 @@ Reusable modal that can be used across the app to preview files
 before optionally opening them in an external editor.
 """
 
-import os
+import logging
 import subprocess
 from pathlib import Path
 
@@ -16,8 +16,9 @@ from textual.containers import ScrollableContainer, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
-# TUI editors that need app suspension
-TUI_EDITORS = {"vim", "nvim", "vi", "emacs", "nano", "micro", "helix", "ne", "joe"}
+from waypoints.tui.utils import TUI_EDITORS, get_editor, validate_editor
+
+logger = logging.getLogger(__name__)
 
 
 def _get_language_from_path(file_path: Path) -> str:
@@ -255,25 +256,36 @@ class FilePreviewModal(ModalScreen[bool]):
 
     def action_open_editor(self) -> None:
         """Open file in $EDITOR, handling both GUI and TUI editors."""
-        editor = os.environ.get("EDITOR", "vim")
+        editor = get_editor()
+
+        # Validate editor before execution
+        resolved_editor = validate_editor(editor)
+        if resolved_editor is None:
+            logger.error("Editor validation failed for '%s'", editor)
+            self.app.notify(
+                f"Editor '{editor}' not allowed. Use a known editor like vim, code, etc.",
+                severity="error",
+            )
+            return
+
         line = self.highlight_line or 1
         editor_name = Path(editor).stem
 
         # Build editor command with line number
         if editor_name in ("vim", "nvim", "vi"):
-            args = [editor, f"+{line}", str(self.file_path)]
+            args = [resolved_editor, f"+{line}", str(self.file_path)]
         elif editor_name == "emacs":
-            args = [editor, f"+{line}", str(self.file_path)]
+            args = [resolved_editor, f"+{line}", str(self.file_path)]
         elif editor_name in ("nano", "micro"):
-            args = [editor, f"+{line}", str(self.file_path)]
+            args = [resolved_editor, f"+{line}", str(self.file_path)]
         elif editor_name == "helix":
-            args = [editor, f"{self.file_path}:{line}"]
+            args = [resolved_editor, f"{self.file_path}:{line}"]
         elif editor_name in ("code", "cursor", "zed", "subl", "sublime"):
             # GUI editors use file:line format
-            args = [editor, f"{self.file_path}:{line}"]
+            args = [resolved_editor, f"{self.file_path}:{line}"]
         else:
             # Default: try file:line format
-            args = [editor, f"{self.file_path}:{line}"]
+            args = [resolved_editor, f"{self.file_path}:{line}"]
 
         if editor_name in TUI_EDITORS:
             # TUI editors: suspend app, run editor (blocking), resume

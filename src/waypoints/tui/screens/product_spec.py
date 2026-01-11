@@ -513,7 +513,11 @@ class ProductSpecResumeScreen(Screen[None]):
         file_path = self._get_spec_file_path()
         file_path.write_text(self.spec_content)
 
-        edit_file_in_editor(self.app, file_path, self._reload_content)
+        if not edit_file_in_editor(self.app, file_path, self._reload_content):
+            self.notify(
+                "Editor not allowed. Set $EDITOR to vim, code, etc.",
+                severity="error",
+            )
 
     def _reload_content(self) -> None:
         """Reload content after external edit."""

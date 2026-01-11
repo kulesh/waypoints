@@ -22,7 +22,10 @@ from textual.worker import Worker
 if TYPE_CHECKING:
     from waypoints.tui.app import WaypointsApp
 
-from waypoints.fly.execution_log import ExecutionLogReader
+from waypoints.fly.execution_log import (
+    ExecutionLog as ExecLogType,
+    ExecutionLogReader,
+)
 from waypoints.fly.executor import (
     ExecutionContext,
     ExecutionResult,
@@ -41,6 +44,12 @@ from waypoints.models.flight_plan import FlightPlan, FlightPlanWriter
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.screens.intervention import InterventionModal
+from waypoints.tui.utils import (
+    get_status_color,
+    get_status_icon,
+    get_status_label,
+    get_status_markup,
+)
 from waypoints.tui.widgets.file_preview import FilePreviewModal
 from waypoints.tui.widgets.flight_plan import FlightPlanTree
 from waypoints.tui.widgets.header import StatusHeader
@@ -429,16 +438,8 @@ class WaypointDetailPanel(Vertical):
             objective.update(obj_text)
 
             # Format status with colored icon
-            status_formats = {
-                "complete": ("[green]✓[/]", "Complete"),
-                "failed": ("[red]✗[/]", "Failed"),
-                "in_progress": ("[yellow]●[/]", "Running"),
-                "pending": ("[dim]○[/]", "Pending"),
-                "skipped": ("[dim]⊘[/]", "Skipped"),
-            }
-            icon, label = status_formats.get(
-                waypoint.status.value, ("[dim]○[/]", "Unknown")
-            )
+            icon = get_status_markup(waypoint.status)
+            label = get_status_label(waypoint.status)
             status.update(Text.from_markup(f"{icon} {label}"))
 
             # Load completed criteria from execution log for completed waypoints
@@ -546,130 +547,10 @@ class WaypointDetailPanel(Vertical):
 
             log = self.execution_log
 
-            # Show execution summary header
-            log.log_heading(f"Execution Log · {exec_log.execution_id[:8]}")
-            started = exec_log.started_at.strftime("%Y-%m-%d %H:%M")
-            log.write_log(f"Started: {started}")
-
-            if exec_log.completed_at:
-                completed = exec_log.completed_at.strftime("%Y-%m-%d %H:%M")
-                duration = (exec_log.completed_at - exec_log.started_at).seconds
-                log.write_log(f"Completed: {completed} ({duration}s)")
-
-            if exec_log.result:
-                if exec_log.result == "success":
-                    log.log_success(f"Result: {exec_log.result}")
-                else:
-                    log.log_error(f"Result: {exec_log.result}")
-
-            if exec_log.total_cost_usd > 0:
-                log.write_log(f"Cost: ${exec_log.total_cost_usd:.4f}")
-
-            log.write_log("")  # Blank line
-
-            # Find max iteration count and show entries
-            max_iteration = 0
-            for entry in exec_log.entries:
-                if entry.entry_type == "iteration_start":
-                    max_iteration = max(max_iteration, entry.iteration)
-                    log.log_heading(f"Iteration {entry.iteration}")
-                elif entry.entry_type == "output":
-                    # Show output content (may contain code blocks)
-                    if entry.content:
-                        # Truncate very long outputs
-                        content = entry.content
-                        if len(content) > 24000:
-                            content = content[:24000] + "\n... (truncated)"
-                        log.write_log(content)
-                elif entry.entry_type == "error":
-                    log.log_error(entry.content)
-                elif entry.entry_type == "iteration_end":
-                    cost = entry.metadata.get("cost_usd")
-                    if cost:
-                        log.write_log(f"(Iteration cost: ${cost:.4f})")
-                elif entry.entry_type == "tool_call":
-                    tool_name = entry.metadata.get("tool_name", "unknown")
-                    tool_input = entry.metadata.get("tool_input", {})
-
-                    # Extract file path for file operations (same as live display)
-                    if tool_name in ("Edit", "Write", "Read") and isinstance(
-                        tool_input, dict
-                    ):
-                        file_path = tool_input.get("file_path")
-                        if file_path:
-                            icon = {"Edit": "✎", "Write": "✚", "Read": "📖"}.get(
-                                tool_name, "•"
-                            )
-                            style = "dim" if tool_name == "Read" else "cyan"
-                            escaped_path = file_path.replace("'", "\\'")
-                            markup = (
-                                f"  [{style}]{icon}[/] "
-                                f"[@click=screen.preview_file('{escaped_path}')]"
-                                f"[{style} underline]{file_path}[/][/]"
-                            )
-                            log.write(markup)
-                            continue
-
-                    # Fallback for other tools
-                    log.write_log(f"[dim]→ {tool_name}[/]")
-                elif entry.entry_type == "intervention_needed":
-                    int_type = entry.metadata.get("intervention_type", "unknown")
-                    reason = entry.metadata.get("reason", "")
-                    log.write_log(
-                        f"[yellow]⚠ Intervention needed ({int_type}): {reason}[/]"
-                    )
-                elif entry.entry_type == "intervention_resolved":
-                    action = entry.metadata.get("action", "unknown")
-                    log.write_log(f"[green]✓ Intervention resolved: {action}[/]")
-                elif entry.entry_type == "completion_detected":
-                    log.write_log("[green]✓ Completion marker detected[/]")
-                elif entry.entry_type == "receipt_validated":
-                    valid = entry.metadata.get("valid", False)
-                    if valid:
-                        log.write_log("[green]✓ Receipt validated[/]")
-                    else:
-                        msg = entry.metadata.get("message", "")
-                        log.write_log(f"[yellow]⚠ Receipt invalid: {msg}[/]")
-                elif entry.entry_type == "git_commit":
-                    success = entry.metadata.get("success", False)
-                    if success:
-                        hash_ = entry.metadata.get("commit_hash", "")
-                        log.write_log(f"[green]✓ Git commit: {hash_}[/]")
-                    else:
-                        msg = entry.metadata.get("message", "")
-                        log.write_log(f"[red]✗ Git commit failed: {msg}[/]")
-                elif entry.entry_type == "pause":
-                    log.write_log("[yellow]⏸ Execution paused[/]")
-                elif entry.entry_type == "security_violation":
-                    details = entry.metadata.get("details", "")
-                    log.write_log(f"[red]⚠ Security violation: {details}[/]")
-
-            # Update iteration label with stats
-            if max_iteration > 0:
-                s = "s" if max_iteration > 1 else ""
-                parts = [f"{max_iteration} iteration{s}"]
-
-                # Add duration
-                if exec_log.completed_at and exec_log.started_at:
-                    duration = (exec_log.completed_at - exec_log.started_at).seconds
-                    if duration >= 60:
-                        mins, secs = divmod(duration, 60)
-                        parts.append(f"{mins}m {secs}s")
-                    else:
-                        parts.append(f"{duration}s")
-
-                # Add cost from metrics collector (or fall back to execution log)
-                cost = self._waypoint_cost or exec_log.total_cost_usd
-                if cost and cost > 0:
-                    parts.append(f"${cost:.2f}")
-
-                # Add start time
-                started = exec_log.started_at.strftime("%b %d, %H:%M")
-                parts.append(f"started {started}")
-
-                self.query_one("#iteration-label", Static).update(" · ".join(parts))
-
-            # Show verification summary for historical waypoints
+            # Log the three main sections
+            self._log_execution_header(log, exec_log)
+            max_iteration = self._log_execution_entries(log, exec_log)
+            self._update_iteration_stats(exec_log, max_iteration)
             self._log_historical_verification(waypoint, log)
 
             return True
@@ -679,6 +560,152 @@ class WaypointDetailPanel(Vertical):
                 "Failed to load execution history for %s: %s", waypoint.id, e
             )
             return False
+
+    def _log_execution_header(
+        self, log: "ExecutionLog", exec_log: "ExecLogType"
+    ) -> None:
+        """Log execution summary header."""
+        log.log_heading(f"Execution Log · {exec_log.execution_id[:8]}")
+        started = exec_log.started_at.strftime("%Y-%m-%d %H:%M")
+        log.write_log(f"Started: {started}")
+
+        if exec_log.completed_at:
+            completed = exec_log.completed_at.strftime("%Y-%m-%d %H:%M")
+            duration = (exec_log.completed_at - exec_log.started_at).seconds
+            log.write_log(f"Completed: {completed} ({duration}s)")
+
+        if exec_log.result:
+            if exec_log.result == "success":
+                log.log_success(f"Result: {exec_log.result}")
+            else:
+                log.log_error(f"Result: {exec_log.result}")
+
+        if exec_log.total_cost_usd > 0:
+            log.write_log(f"Cost: ${exec_log.total_cost_usd:.4f}")
+
+        log.write_log("")  # Blank line
+
+    def _log_execution_entries(
+        self, log: "ExecutionLog", exec_log: "ExecLogType"
+    ) -> int:
+        """Log all execution entries and return max iteration count."""
+        max_iteration = 0
+
+        for entry in exec_log.entries:
+            entry_type = entry.entry_type
+
+            if entry_type == "iteration_start":
+                max_iteration = max(max_iteration, entry.iteration)
+                log.log_heading(f"Iteration {entry.iteration}")
+
+            elif entry_type == "output":
+                if entry.content:
+                    content = entry.content
+                    if len(content) > 24000:
+                        content = content[:24000] + "\n... (truncated)"
+                    log.write_log(content)
+
+            elif entry_type == "error":
+                log.log_error(entry.content)
+
+            elif entry_type == "iteration_end":
+                cost = entry.metadata.get("cost_usd")
+                if cost:
+                    log.write_log(f"(Iteration cost: ${cost:.4f})")
+
+            elif entry_type == "tool_call":
+                self._log_tool_call_entry(log, entry)
+
+            elif entry_type == "intervention_needed":
+                int_type = entry.metadata.get("intervention_type", "unknown")
+                reason = entry.metadata.get("reason", "")
+                log.write_log(
+                    f"[yellow]⚠ Intervention needed ({int_type}): {reason}[/]"
+                )
+
+            elif entry_type == "intervention_resolved":
+                action = entry.metadata.get("action", "unknown")
+                log.write_log(f"[green]✓ Intervention resolved: {action}[/]")
+
+            elif entry_type == "completion_detected":
+                log.write_log("[green]✓ Completion marker detected[/]")
+
+            elif entry_type == "receipt_validated":
+                valid = entry.metadata.get("valid", False)
+                if valid:
+                    log.write_log("[green]✓ Receipt validated[/]")
+                else:
+                    msg = entry.metadata.get("message", "")
+                    log.write_log(f"[yellow]⚠ Receipt invalid: {msg}[/]")
+
+            elif entry_type == "git_commit":
+                success = entry.metadata.get("success", False)
+                if success:
+                    hash_ = entry.metadata.get("commit_hash", "")
+                    log.write_log(f"[green]✓ Git commit: {hash_}[/]")
+                else:
+                    msg = entry.metadata.get("message", "")
+                    log.write_log(f"[red]✗ Git commit failed: {msg}[/]")
+
+            elif entry_type == "pause":
+                log.write_log("[yellow]⏸ Execution paused[/]")
+
+            elif entry_type == "security_violation":
+                details = entry.metadata.get("details", "")
+                log.write_log(f"[red]⚠ Security violation: {details}[/]")
+
+        return max_iteration
+
+    def _log_tool_call_entry(self, log: "ExecutionLog", entry: Any) -> None:
+        """Log a tool call entry with clickable file paths for file operations."""
+        tool_name = entry.metadata.get("tool_name", "unknown")
+        tool_input = entry.metadata.get("tool_input", {})
+
+        # Show clickable paths for file operations
+        if tool_name in ("Edit", "Write", "Read") and isinstance(tool_input, dict):
+            file_path = tool_input.get("file_path")
+            if file_path:
+                icon = {"Edit": "✎", "Write": "✚", "Read": "📖"}.get(tool_name, "•")
+                style = "dim" if tool_name == "Read" else "cyan"
+                escaped_path = file_path.replace("'", "\\'")
+                markup = (
+                    f"  [{style}]{icon}[/] "
+                    f"[@click=screen.preview_file('{escaped_path}')]"
+                    f"[{style} underline]{file_path}[/][/]"
+                )
+                log.write(markup)
+                return
+
+        # Fallback for other tools
+        log.write_log(f"[dim]→ {tool_name}[/]")
+
+    def _update_iteration_stats(
+        self, exec_log: "ExecLogType", max_iteration: int
+    ) -> None:
+        """Update iteration label with execution statistics."""
+        from waypoints.tui.utils import format_duration
+
+        if max_iteration <= 0:
+            return
+
+        s = "s" if max_iteration > 1 else ""
+        parts = [f"{max_iteration} iteration{s}"]
+
+        # Add duration
+        if exec_log.completed_at and exec_log.started_at:
+            duration = int((exec_log.completed_at - exec_log.started_at).total_seconds())
+            parts.append(format_duration(duration))
+
+        # Add cost from metrics collector (or fall back to execution log)
+        cost = self._waypoint_cost or exec_log.total_cost_usd
+        if cost and cost > 0:
+            parts.append(f"${cost:.2f}")
+
+        # Add start time
+        started = exec_log.started_at.strftime("%b %d, %H:%M")
+        parts.append(f"started {started}")
+
+        self.query_one("#iteration-label", Static).update(" · ".join(parts))
 
     def _log_historical_verification(
         self, waypoint: Waypoint, log: "ExecutionLog"
@@ -764,17 +791,10 @@ class WaypointDetailPanel(Vertical):
         log.write_log("")
         log.write_log("Children:")
 
-        # Status icons
-        status_icons = {
-            WaypointStatus.COMPLETE: ("◉", "green"),
-            WaypointStatus.IN_PROGRESS: ("◎", "cyan"),
-            WaypointStatus.FAILED: ("✗", "red"),
-            WaypointStatus.PENDING: ("○", "dim"),
-        }
-
         # Show each child
         for child in children:
-            icon, style = status_icons.get(child.status, ("○", "dim"))
+            icon = get_status_icon(child.status)
+            style = get_status_color(child.status)
             status_label = child.status.value.replace("_", " ").lower()
             text = Text()
             text.append(f"  {icon} ", style=style)
@@ -1885,12 +1905,18 @@ class FlyScreen(Screen[None]):
             return
 
         # Perform the rollback
-        # TODO: GitService.run_command doesn't exist - implement when rollback is needed
-        result = git.run_command(["reset", "--hard", target_tag])  # type: ignore[attr-defined]
+        result = git.reset_hard(target_tag)
         if result.success:
             self.notify(f"Rolled back to {target_tag}")
-            # Reload flight plan to reflect any changes
-            # TODO: Implement flight plan reload
+            # Reload flight plan from disk after reset
+            flight_plan_path = self.project.get_path() / "flight-plan.jsonl"
+            if flight_plan_path.exists():
+                from waypoints.models.flight_plan import FlightPlanReader
+
+                loaded = FlightPlanReader.load(self.project)
+                if loaded:
+                    self.flight_plan = loaded
+                    self._refresh_waypoint_list()
         else:
             self.notify(f"Rollback failed: {result.message}", severity="error")
 

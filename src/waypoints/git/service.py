@@ -224,3 +224,31 @@ class GitService:
         if result.returncode == 0:
             return result.stdout.strip()
         return None
+
+    def reset_hard(self, target: str) -> GitResult:
+        """Reset the working directory to a specific commit or tag.
+
+        WARNING: This is a destructive operation that discards uncommitted changes.
+
+        Args:
+            target: Commit hash, tag name, or branch to reset to.
+
+        Returns:
+            GitResult indicating success or failure.
+        """
+        try:
+            # Verify the target exists
+            check = self._run_git("rev-parse", "--verify", target)
+            if check.returncode != 0:
+                return GitResult(False, f"Target not found: {target}")
+
+            result = self._run_git("reset", "--hard", target)
+            if result.returncode == 0:
+                logger.info("Reset to: %s", target)
+                return GitResult(True, f"Reset to {target}", result.stdout)
+
+            logger.error("Reset failed: %s", result.stderr)
+            return GitResult(False, f"Reset failed: {result.stderr}")
+        except Exception as e:
+            logger.error("Reset error: %s", e)
+            return GitResult(False, f"Reset error: {e}")

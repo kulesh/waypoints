@@ -17,32 +17,10 @@ from waypoints.models import Project
 from waypoints.models.flight_plan import FlightPlanReader
 from waypoints.models.waypoint import WaypointStatus
 from waypoints.tui.screens.ideation import IdeationScreen
+from waypoints.tui.utils import format_duration, format_relative_time
 from waypoints.tui.widgets.header import StatusHeader
 
 logger = logging.getLogger(__name__)
-
-
-def _format_relative_time(dt: datetime) -> str:
-    """Format datetime as relative time string."""
-    now = datetime.now()
-    diff = now - dt
-
-    if diff.days > 365:
-        years = diff.days // 365
-        return f"{years}y ago"
-    elif diff.days > 30:
-        months = diff.days // 30
-        return f"{months}mo ago"
-    elif diff.days > 0:
-        return f"{diff.days}d ago"
-    elif diff.seconds > 3600:
-        hours = diff.seconds // 3600
-        return f"{hours}h ago"
-    elif diff.seconds > 60:
-        minutes = diff.seconds // 60
-        return f"{minutes}m ago"
-    else:
-        return "just now"
 
 
 class ConfirmDeleteProjectModal(ModalScreen[bool]):
@@ -193,7 +171,7 @@ class ProjectListPanel(Vertical):
             for project in projects:
                 # Format: name (phase) - time ago
                 phase = project.journey.phase if project.journey else "new"
-                time_ago = _format_relative_time(project.updated_at)
+                time_ago = format_relative_time(project.updated_at)
                 label = f"{project.name} ({phase}) - {time_ago}"
                 option_list.add_option(Option(label, id=project.slug))
 
@@ -364,7 +342,7 @@ class ProjectPreviewPanel(VerticalScroll):
 
             # Dates
             created = project.created_at.strftime("%Y-%m-%d %H:%M")
-            updated = _format_relative_time(project.updated_at)
+            updated = format_relative_time(project.updated_at)
             content.mount(Static(f"Created: {created}", classes="project-meta"))
             content.mount(Static(f"Updated: {updated}", classes="project-meta"))
 
@@ -386,21 +364,14 @@ class ProjectPreviewPanel(VerticalScroll):
                 if cost > 0:
                     parts.append(f"${cost:.2f}")
                 if time_secs > 0:
-                    mins, secs = divmod(time_secs, 60)
-                    if mins >= 60:
-                        hours, mins = divmod(mins, 60)
-                        parts.append(f"{hours}h {mins}m total")
-                    elif mins > 0:
-                        parts.append(f"{mins}m {secs}s total")
-                    else:
-                        parts.append(f"{secs}s total")
+                    parts.append(format_duration(time_secs, " total"))
                 content.mount(Static(" · ".join(parts), classes="project-stats"))
 
             # Last execution
             last_exec = self._get_last_execution(project)
             if last_exec:
                 exec_time, result = last_exec
-                time_ago = _format_relative_time(exec_time)
+                time_ago = format_relative_time(exec_time)
                 result_display = result.replace("_", " ").title()
                 css_class = "project-stats"
                 if result == "success":
