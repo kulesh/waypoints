@@ -5,19 +5,24 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from waypoints.config.paths import get_paths
+
 logger = logging.getLogger(__name__)
 
 
 def get_config_dir() -> Path:
-    """Get the waypoints config directory, creating if needed."""
-    config_dir = Path.home() / ".waypoints"
-    config_dir.mkdir(exist_ok=True)
+    """Get the waypoints config directory, creating if needed.
+
+    Returns XDG-compliant path: ~/.config/waypoints/
+    """
+    config_dir = get_paths().global_config_dir
+    config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir
 
 
 def get_settings_path() -> Path:
     """Get the path to the settings file."""
-    return get_config_dir() / "settings.json"
+    return get_paths().global_settings
 
 
 def detect_terminal_theme() -> str:
@@ -105,13 +110,12 @@ class Settings:
         """Get the projects directory path.
 
         Returns the configured project directory, or defaults to
-        cwd/.waypoints/projects if not set.
+        the centralized paths workspace projects directory.
         """
         saved = self._data.get("project_directory")
         if saved:
             return Path(saved).expanduser().resolve()
-        # Default: cwd/.waypoints/projects
-        return Path.cwd() / ".waypoints" / "projects"
+        return get_paths().projects_dir
 
     @project_directory.setter
     def project_directory(self, value: str | Path) -> None:

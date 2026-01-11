@@ -5,15 +5,15 @@ import logging
 import os
 from pathlib import Path
 
+from waypoints.config.paths import get_paths
 from waypoints.tui.app import WaypointsApp
 
 
 def setup_logging() -> None:
     """Configure logging to file for debugging."""
-    # Log to .waypoints/debug.log in current directory
-    log_dir = Path(".waypoints")
-    log_dir.mkdir(exist_ok=True)
-    log_file = log_dir / "debug.log"
+    paths = get_paths()
+    paths.workspace_config.mkdir(parents=True, exist_ok=True)
+    log_file = paths.debug_log
 
     # Set level from env var, default to INFO
     level = os.environ.get("WAYPOINTS_LOG_LEVEL", "INFO").upper()

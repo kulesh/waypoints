@@ -1,7 +1,7 @@
 """Git configuration for waypoints.
 
 Configuration is hierarchical:
-1. Global defaults (~/.waypoints/git-config.json)
+1. Global defaults (~/.config/waypoints/git-config.json)
 2. Workspace config (.waypoints/git-config.json)
 
 Checklists are per-project artifacts:
@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+from waypoints.config.paths import get_paths
 
 logger = logging.getLogger(__name__)
 
@@ -40,31 +42,20 @@ class GitConfig:
     create_waypoint_tags: bool = False  # Create tags per waypoint completion
 
     @classmethod
-    def load(cls, project_path: Path | None = None) -> "GitConfig":
+    def load(cls, slug: str | None = None) -> "GitConfig":
         """Load config from project, workspace, or global settings.
 
+        Resolution order: project > workspace > global.
+
         Args:
-            project_path: Path to project directory. If provided, checks for
-                project-specific config first.
+            slug: Project slug. If provided, checks for project-specific config first.
         """
-        # Try project-specific config first
-        if project_path:
-            project_config = project_path / ".waypoints" / "git-config.json"
-            if project_config.exists():
-                return cls._from_file(project_config)
+        paths = get_paths()
 
-        # Try workspace config
-        if project_path:
-            workspace_path = project_path / ".waypoints" / "git-config.json"
-        else:
-            workspace_path = Path.cwd() / ".waypoints" / "git-config.json"
-        if workspace_path.exists():
-            return cls._from_file(workspace_path)
-
-        # Fall back to global
-        global_path = Path.home() / ".waypoints" / "git-config.json"
-        if global_path.exists():
-            return cls._from_file(global_path)
+        # Use centralized resolution: project > workspace > global
+        config_path = paths.git_config(slug)
+        if config_path:
+            return cls._from_file(config_path)
 
         # Return defaults
         logger.debug("Using default git config")
@@ -88,11 +79,16 @@ class GitConfig:
             return cls()
 
     def save(self, workspace: bool = True) -> None:
-        """Save configuration."""
+        """Save configuration.
+
+        Args:
+            workspace: If True, save to workspace config. If False, save to global.
+        """
+        paths = get_paths()
         if workspace:
-            path = Path.cwd() / ".waypoints" / "git-config.json"
+            path = paths.workspace_git_config
         else:
-            path = Path.home() / ".waypoints" / "git-config.json"
+            path = paths.global_git_config
 
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(self._to_dict(), indent=2))
@@ -120,18 +116,18 @@ class Checklist:
     items: list[str] = field(default_factory=lambda: list(DEFAULT_CHECKLIST))
 
     @classmethod
-    def load(cls, project_path: Path) -> "Checklist":
+    def load(cls, slug: str) -> "Checklist":
         """Load checklist from project directory.
 
         Args:
-            project_path: Path to .waypoints/projects/{slug}/
+            slug: Project slug.
         """
-        checklist_path = project_path / "checklist.yaml"
+        checklist_path = get_paths().checklist(slug)
 
         if not checklist_path.exists():
             # Create default checklist as project artifact
             checklist = cls()
-            checklist.save(project_path)
+            checklist.save(slug)
             return checklist
 
         try:
@@ -145,9 +141,9 @@ class Checklist:
             logger.warning("Failed to load checklist from %s: %s", checklist_path, e)
             return cls()
 
-    def save(self, project_path: Path) -> None:
+    def save(self, slug: str) -> None:
         """Save checklist to project directory."""
-        checklist_path = project_path / "checklist.yaml"
+        checklist_path = get_paths().checklist(slug)
         checklist_path.parent.mkdir(parents=True, exist_ok=True)
 
         content = yaml.dump(

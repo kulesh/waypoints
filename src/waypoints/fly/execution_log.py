@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from waypoints.config.paths import get_paths
+
 if TYPE_CHECKING:
     from waypoints.models.project import Project
     from waypoints.models.waypoint import Waypoint
@@ -141,8 +143,7 @@ class ExecutionLogWriter:
 
     def _generate_path(self) -> Path:
         """Generate the JSONL file path for this execution."""
-        # Store in project's sessions folder under "fly" subfolder
-        fly_dir = self.project.get_sessions_path() / "fly"
+        fly_dir = get_paths().execution_logs_dir(self.project.slug)
         fly_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -427,7 +428,7 @@ class ExecutionLogReader:
         Returns:
             List of log file paths, sorted by modification time (newest first)
         """
-        fly_dir = project.get_sessions_path() / "fly"
+        fly_dir = get_paths().execution_logs_dir(project.slug)
         if not fly_dir.exists():
             return []
 

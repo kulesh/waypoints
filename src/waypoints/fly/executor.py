@@ -317,7 +317,7 @@ class WaypointExecutor:
     async def _execute_impl(self, project_path: Path) -> ExecutionResult:
         """Internal implementation of execute, runs in project directory."""
         # Load checklist from project (creates default if not exists)
-        checklist = Checklist.load(self.project.get_path())
+        checklist = Checklist.load(self.project.slug)
 
         prompt = _build_prompt(self.waypoint, self.spec, project_path, checklist)
 
@@ -677,7 +677,7 @@ When complete, output the completion marker specified in the instructions."""
 
         validator = ReceiptValidator()
         receipt_path = validator.find_latest_receipt(
-            self.project.get_path(), self.waypoint.id
+            self.project.slug, self.waypoint.id
         )
 
         if receipt_path:
@@ -776,7 +776,7 @@ Create the receipt now.
 
         # Check for receipt again
         receipt_path = validator.find_latest_receipt(
-            self.project.get_path(), self.waypoint.id
+            self.project.slug, self.waypoint.id
         )
         if receipt_path:
             result = validator.validate(receipt_path)
