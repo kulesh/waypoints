@@ -5,17 +5,21 @@ Configuration is hierarchical:
 2. Workspace config (.waypoints/git-config.json)
 
 Checklists are per-project artifacts:
-- .waypoints/projects/{slug}/checklist.yaml
+- {project_dir}/checklist.yaml
 """
 
 import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
 from waypoints.config.paths import get_paths
+
+if TYPE_CHECKING:
+    from waypoints.models.project import Project
 
 logger = logging.getLogger(__name__)
 
@@ -109,25 +113,25 @@ class GitConfig:
 class Checklist:
     """Conceptual checklist for a project.
 
-    Stored as a project artifact at .waypoints/projects/{slug}/checklist.yaml
+    Stored as a project artifact at {project_dir}/checklist.yaml
     The model interprets these conceptually and produces receipts.
     """
 
     items: list[str] = field(default_factory=lambda: list(DEFAULT_CHECKLIST))
 
     @classmethod
-    def load(cls, slug: str) -> "Checklist":
+    def load(cls, project: "Project") -> "Checklist":
         """Load checklist from project directory.
 
         Args:
-            slug: Project slug.
+            project: The project to load checklist for.
         """
-        checklist_path = get_paths().checklist(slug)
+        checklist_path = project.get_path() / "checklist.yaml"
 
         if not checklist_path.exists():
             # Create default checklist as project artifact
             checklist = cls()
-            checklist.save(slug)
+            checklist.save(project)
             return checklist
 
         try:
@@ -141,9 +145,9 @@ class Checklist:
             logger.warning("Failed to load checklist from %s: %s", checklist_path, e)
             return cls()
 
-    def save(self, slug: str) -> None:
+    def save(self, project: "Project") -> None:
         """Save checklist to project directory."""
-        checklist_path = get_paths().checklist(slug)
+        checklist_path = project.get_path() / "checklist.yaml"
         checklist_path.parent.mkdir(parents=True, exist_ok=True)
 
         content = yaml.dump(

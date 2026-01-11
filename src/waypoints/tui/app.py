@@ -115,7 +115,7 @@ class WaypointsApp(App[None]):
         """
         if project.slug != self._current_project_slug:
             self._current_project_slug = project.slug
-            self._metrics_collector = MetricsCollector(project.slug)
+            self._metrics_collector = MetricsCollector(project)
             logger.info("Metrics collector initialized for project: %s", project.slug)
 
     def update_header_cost(self) -> None:
