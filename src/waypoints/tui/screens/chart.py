@@ -1,8 +1,6 @@
 """Chart screen for waypoint planning (CHART phase)."""
 
-import json
 import logging
-import re
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -19,6 +17,7 @@ if TYPE_CHECKING:
     from waypoints.tui.app import WaypointsApp
 
 from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
+from waypoints.llm.validation import WaypointValidationError, validate_waypoints
 from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader, FlightPlanWriter
@@ -294,19 +293,28 @@ class ChartScreen(Screen[None]):
 
         self.app.call_from_thread(self._set_thinking, False)
 
-    def _parse_waypoints(self, response: str) -> list[Waypoint]:
-        """Parse waypoints from LLM response."""
-        # Try to extract JSON array from response
-        # Handle potential markdown code blocks
-        json_match = re.search(r"\[[\s\S]*\]", response)
-        if not json_match:
-            raise ValueError("No JSON array found in response")
+    def _parse_waypoints(
+        self, response: str, existing_ids: set[str] | None = None
+    ) -> list[Waypoint]:
+        """Parse and validate waypoints from LLM response.
 
-        json_str = json_match.group()
-        data = json.loads(json_str)
+        Args:
+            response: Raw LLM response containing waypoint JSON.
+            existing_ids: Set of existing waypoint IDs (for sub-waypoint validation).
+
+        Returns:
+            List of validated Waypoint objects.
+
+        Raises:
+            WaypointValidationError: If validation fails.
+        """
+        result = validate_waypoints(response, existing_ids)
+
+        if not result.valid:
+            raise WaypointValidationError(result.errors)
 
         waypoints = []
-        for item in data:
+        for item in result.data or []:
             wp = Waypoint(
                 id=item["id"],
                 title=item["title"],
@@ -520,8 +528,9 @@ class ChartScreen(Screen[None]):
                     # Update header cost display
                     self.app.call_from_thread(self.waypoints_app.update_header_cost)
 
-            # Parse the sub-waypoints
-            sub_waypoints = self._parse_waypoints(full_response)
+            # Parse the sub-waypoints (pass existing IDs for validation)
+            existing_ids = {wp.id for wp in self.flight_plan.waypoints} if self.flight_plan else set()
+            sub_waypoints = self._parse_waypoints(full_response, existing_ids)
 
             # Ensure all have correct parent_id
             for wp in sub_waypoints:
