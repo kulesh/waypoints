@@ -25,7 +25,7 @@ class StatusIcon(Static):
         padding: 0 1;
         width: 3;
         content-align: left middle;
-        background: transparent;
+        background: $panel;
     }
 
     StatusIcon.ready {
