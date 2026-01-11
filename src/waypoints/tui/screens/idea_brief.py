@@ -342,7 +342,7 @@ class IdeaBriefResumeScreen(Screen[None]):
         Binding("ctrl+enter", "proceed_to_spec", "Continue", show=True),
         Binding("escape", "back", "Back", show=True),
         Binding("ctrl+f", "forward", "Forward", show=True),
-        Binding("ctrl+e", "toggle_edit", "Edit", show=True),
+        Binding("e", "edit_external", "Edit", show=True),
         Binding("ctrl+s", "save", "Save", show=True),
     ]
 
@@ -423,48 +423,50 @@ class IdeaBriefResumeScreen(Screen[None]):
 
         logger.info("Resumed idea brief for project: %s", self.project.slug)
 
-    def action_toggle_edit(self) -> None:
-        """Toggle between view and edit modes."""
-        self.is_editing = not self.is_editing
-
-        content_scroll = self.query_one("#brief-content", VerticalScroll)
-        editor = self.query_one("#brief-editor", TextArea)
-
-        if self.is_editing:
-            content_scroll.add_class("editing")
-            editor.add_class("editing")
-            editor.text = self.brief_content
-            editor.focus()
-            self.app.sub_title = f"{self.project.name} · Idea Brief (editing)"
-        else:
-            # Save edits
-            self.brief_content = editor.text
-            display = self.query_one("#brief-display", Markdown)
-            display.update(self.brief_content)
-            content_scroll.remove_class("editing")
-            editor.remove_class("editing")
-            self._save_to_disk()
-            self.app.sub_title = f"{self.project.name} · Idea Brief"
-
-    def action_save(self) -> None:
-        """Save the current content to disk."""
-        if self.is_editing:
-            editor = self.query_one("#brief-editor", TextArea)
-            self.brief_content = editor.text
-        self._save_to_disk()
-
-    def _save_to_disk(self) -> None:
-        """Save the brief content to disk (overwriting latest)."""
+    def _get_brief_file_path(self) -> Path:
+        """Get the path to the latest brief file."""
         docs_dir = self.project.get_docs_path()
         pattern = "idea-brief-*.md"
         matching_files = sorted(docs_dir.glob(pattern), reverse=True)
 
         if matching_files:
-            file_path = matching_files[0]
+            return matching_files[0]
         else:
             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-            file_path = docs_dir / f"idea-brief-{timestamp}.md"
+            return docs_dir / f"idea-brief-{timestamp}.md"
 
+    def action_edit_external(self) -> None:
+        """Open brief in external editor."""
+        from waypoints.tui.utils import edit_file_in_editor
+
+        # Save current content first
+        file_path = self._get_brief_file_path()
+        file_path.write_text(self.brief_content)
+
+        edit_file_in_editor(self.app, file_path, self._reload_content)
+
+    def _reload_content(self) -> None:
+        """Reload content after external edit."""
+        file_path = self._get_brief_file_path()
+        self.brief_content = file_path.read_text()
+
+        # Update display
+        display = self.query_one("#brief-display", Markdown)
+        display.update(self.brief_content)
+
+        # Update editor too in case user switches to inline edit
+        editor = self.query_one("#brief-editor", TextArea)
+        editor.text = self.brief_content
+
+        self.notify("Brief reloaded")
+
+    def action_save(self) -> None:
+        """Save the current content to disk."""
+        self._save_to_disk()
+
+    def _save_to_disk(self) -> None:
+        """Save the brief content to disk (overwriting latest)."""
+        file_path = self._get_brief_file_path()
         try:
             file_path.write_text(self.brief_content)
             logger.info("Saved brief to %s", file_path)

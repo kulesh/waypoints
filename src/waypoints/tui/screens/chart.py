@@ -3,8 +3,11 @@
 import json
 import logging
 import re
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import yaml
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -27,7 +30,6 @@ from waypoints.tui.widgets.flight_plan import (
     ConfirmDeleteModal,
     FlightPlanPanel,
     WaypointDetailModal,
-    WaypointEditModal,
     WaypointOpenDetail,
     WaypointPreviewPanel,
     WaypointRequestBreakDown,
@@ -377,25 +379,77 @@ class ChartScreen(Screen[None]):
             self.query_one("#preview-panel").focus()
 
     def action_edit_waypoint(self) -> None:
-        """Edit the selected waypoint."""
+        """Edit the selected waypoint in external editor as YAML."""
         plan_panel = self.query_one("#flight-plan-panel", FlightPlanPanel)
         if plan_panel.selected_id and self.flight_plan:
             waypoint = self.flight_plan.get_waypoint(plan_panel.selected_id)
             if waypoint:
-                self._show_edit_modal(waypoint)
+                self._edit_waypoint_external(waypoint)
 
     def on_waypoint_request_edit(self, event: WaypointRequestEdit) -> None:
         """Handle edit request from detail modal."""
-        self._show_edit_modal(event.waypoint)
+        self._edit_waypoint_external(event.waypoint)
 
-    def _show_edit_modal(self, waypoint: Waypoint) -> None:
-        """Show edit modal for a waypoint."""
+    def _edit_waypoint_external(self, waypoint: Waypoint) -> None:
+        """Edit waypoint in external editor as YAML."""
+        from waypoints.tui.utils import edit_file_in_editor
 
-        def handle_edit(updated: Waypoint | None) -> None:
-            if updated:
-                self._save_waypoint(updated)
+        # Serialize waypoint to human-readable YAML
+        data = {
+            "id": waypoint.id,
+            "title": waypoint.title,
+            "objective": waypoint.objective,
+            "acceptance_criteria": waypoint.acceptance_criteria,
+        }
 
-        self.app.push_screen(WaypointEditModal(waypoint), handle_edit)
+        # Write to temp file
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=f"-{waypoint.id}.yaml",
+            delete=False,
+            prefix="waypoint-",
+        ) as f:
+            f.write(f"# Editing waypoint {waypoint.id}\n")
+            f.write("# Save and close to apply changes\n\n")
+            yaml.dump(
+                data, f, default_flow_style=False, allow_unicode=True, sort_keys=False
+            )
+            temp_path = Path(f.name)
+
+        def on_complete() -> None:
+            self._apply_waypoint_edits(waypoint, temp_path)
+
+        edit_file_in_editor(self.app, temp_path, on_complete)
+
+    def _apply_waypoint_edits(self, waypoint: Waypoint, yaml_path: Path) -> None:
+        """Parse YAML and update waypoint."""
+        try:
+            data = yaml.safe_load(yaml_path.read_text())
+            if not data:
+                self.notify("Empty file, no changes applied", severity="warning")
+                return
+
+            # Update waypoint fields (but not id)
+            waypoint.title = data.get("title", waypoint.title)
+            waypoint.objective = data.get("objective", waypoint.objective)
+            waypoint.acceptance_criteria = data.get("acceptance_criteria", [])
+
+            # Save via coordinator
+            self.coordinator.update_waypoint(waypoint)
+
+            # Refresh display
+            self._update_panels()
+            self.notify(f"Updated {waypoint.id}")
+        except yaml.YAMLError as e:
+            self.notify(f"Invalid YAML: {e}", severity="error")
+        except Exception as e:
+            self.notify(f"Error applying edits: {e}", severity="error")
+        finally:
+            # Clean up temp file
+            try:
+                yaml_path.unlink()
+            except OSError:
+                pass
 
     def _save_waypoint(self, waypoint: Waypoint) -> None:
         """Save an updated waypoint."""
