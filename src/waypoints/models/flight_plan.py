@@ -88,7 +88,17 @@ class FlightPlan:
         return False
 
     def remove_waypoint(self, waypoint_id: str) -> None:
-        """Remove a waypoint and update dependencies."""
+        """Remove a waypoint, its children, and update dependencies.
+
+        This recursively removes all child waypoints to prevent orphaned
+        waypoints with dangling parent_id references.
+        """
+        # First, recursively remove all children
+        children = self.get_children(waypoint_id)
+        for child in children:
+            self.remove_waypoint(child.id)
+
+        # Remove the waypoint itself
         self.waypoints = [wp for wp in self.waypoints if wp.id != waypoint_id]
         # Update any waypoints that depended on this one
         for wp in self.waypoints:
