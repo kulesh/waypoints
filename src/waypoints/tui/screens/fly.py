@@ -192,6 +192,10 @@ class ExecutionLog(RichLog):
         scrollbar-color-hover: $surface-lighten-3;
         scrollbar-color-active: $surface-lighten-3;
         scrollbar-corner-color: $surface;
+        link-color: cyan;
+        link-style: underline;
+        link-hover-color: cyan;
+        link-hover-style: bold underline;
     }
     """
 

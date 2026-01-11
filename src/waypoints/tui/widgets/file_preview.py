@@ -109,33 +109,36 @@ class FilePreviewModal(ModalScreen[bool]):
         border: thick $primary;
     }
 
-    FilePreviewModal .modal-title {
-        height: 3;
+    FilePreviewModal .modal-header {
+        height: auto;
         padding: 1 2;
-        background: $surface-lighten-1;
-        border-bottom: solid $surface-lighten-2;
+        background: $primary;
+        color: $text;
     }
 
     FilePreviewModal .file-path {
         text-style: bold;
-    }
-
-    FilePreviewModal .line-info {
-        color: $text-muted;
+        color: $text;
     }
 
     FilePreviewModal .content-container {
         height: 1fr;
         overflow-y: auto;
         padding: 0 1;
+        background: $surface;
     }
 
     FilePreviewModal .modal-footer {
-        height: 3;
+        height: auto;
         padding: 1 2;
         background: $surface-lighten-1;
         border-top: solid $surface-lighten-2;
-        color: $text-muted;
+        color: $text;
+    }
+
+    FilePreviewModal .keybinding {
+        color: cyan;
+        text-style: bold;
     }
 
     FilePreviewModal .error-message {
@@ -170,11 +173,8 @@ class FilePreviewModal(ModalScreen[bool]):
             self._error = f"Error reading file: {e}"
 
         with Vertical():
-            # Title bar
-            with Vertical(classes="modal-title"):
-                yield Static(str(self.file_path), classes="file-path")
-                if self.highlight_line:
-                    yield Static(f"Line {self.highlight_line}", classes="line-info")
+            # Header with filename
+            yield Static(str(self.file_path), classes="modal-header file-path")
 
             # Content area
             with ScrollableContainer(classes="content-container"):
@@ -183,10 +183,11 @@ class FilePreviewModal(ModalScreen[bool]):
                 else:
                     yield Static(self._build_file_content(), id="file-content")
 
-            # Footer
+            # Footer with keybindings
             yield Static(
-                "[e] Open in Editor    [Esc/q] Close",
+                "[cyan bold]e[/] Open in Editor    [cyan bold]Esc[/] Close",
                 classes="modal-footer",
+                markup=True,
             )
 
     def _build_file_content(self) -> Syntax | Text:
