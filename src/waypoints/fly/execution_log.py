@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from waypoints.models.schema import migrate_if_needed, write_schema_fields
 
 if TYPE_CHECKING:
     from waypoints.models.project import Project
@@ -153,6 +154,7 @@ class ExecutionLogWriter:
         """Write the execution header as the first line."""
         header = {
             "type": "header",
+            **write_schema_fields("execution_log"),
             "execution_id": self.execution_id,
             "waypoint_id": self.waypoint.id,
             "waypoint_title": self.waypoint.title,
@@ -360,7 +362,13 @@ class ExecutionLogReader:
 
     @classmethod
     def load(cls, file_path: Path) -> ExecutionLog:
-        """Load an execution log from a JSONL file."""
+        """Load an execution log from a JSONL file.
+
+        Automatically migrates legacy files to current schema version.
+        """
+        # Migrate legacy files if needed
+        migrate_if_needed(file_path, "execution_log")
+
         log: ExecutionLog | None = None
         entries: list[ExecutionEntry] = []
 

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Iterator
 
+from waypoints.models.schema import migrate_if_needed, write_schema_fields
 from waypoints.models.waypoint import Waypoint
 
 if TYPE_CHECKING:
@@ -165,8 +166,9 @@ class FlightPlanWriter:
         """Save entire flight plan (overwrites file)."""
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.file_path, "w") as f:
-            # Header line
+            # Header line with schema version
             header = {
+                **write_schema_fields("flight_plan"),
                 "created_at": flight_plan.created_at.isoformat(),
                 "updated_at": datetime.now().isoformat(),
             }
@@ -188,6 +190,8 @@ class FlightPlanReader:
     def load(cls, project: "Project") -> FlightPlan | None:
         """Load flight plan from project.
 
+        Automatically migrates legacy files to current schema version.
+
         Args:
             project: The project to load from
 
@@ -197,6 +201,9 @@ class FlightPlanReader:
         file_path = project.get_path() / "flight-plan.jsonl"
         if not file_path.exists():
             return None
+
+        # Migrate legacy files if needed
+        migrate_if_needed(file_path, "flight_plan")
 
         flight_plan = FlightPlan()
 
@@ -209,7 +216,7 @@ class FlightPlanReader:
                 data = json.loads(line)
 
                 if line_num == 0 and "created_at" in data and "id" not in data:
-                    # Header line
+                    # Header line (may include _schema, _version which we ignore)
                     flight_plan.created_at = datetime.fromisoformat(data["created_at"])
                     if "updated_at" in data:
                         flight_plan.updated_at = datetime.fromisoformat(

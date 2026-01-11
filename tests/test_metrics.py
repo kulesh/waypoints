@@ -209,7 +209,7 @@ class TestMetricsCollector:
         assert collector2.total_cost == pytest.approx(0.15)
 
     def test_metrics_file_format(self, tmp_path: Path) -> None:
-        """Test that metrics are stored as JSONL."""
+        """Test that metrics are stored as JSONL with header."""
         collector = MetricsCollector(MockProject(tmp_path))
         collector.record(
             LLMCall.create(phase="ideation-qa", cost_usd=0.05, latency_ms=1000)
@@ -222,8 +222,17 @@ class TestMetricsCollector:
         with open(metrics_file) as f:
             lines = f.readlines()
 
-        assert len(lines) == 1
-        data = json.loads(lines[0])
+        # Should have header + 1 call entry
+        assert len(lines) == 2
+
+        # First line is header with schema version
+        header = json.loads(lines[0])
+        assert header["_schema"] == "metrics"
+        assert header["_version"] == "1.0"
+        assert "created_at" in header
+
+        # Second line is the call data
+        data = json.loads(lines[1])
         assert data["phase"] == "ideation-qa"
         assert data["cost_usd"] == 0.05
 
