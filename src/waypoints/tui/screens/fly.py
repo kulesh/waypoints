@@ -1505,7 +1505,7 @@ class FlyScreen(Screen[None]):
         if ctx.step == "executing":
             log.log_heading(f"Iteration {ctx.iteration}/{ctx.total_iterations}")
         elif ctx.step == "tool_use":
-            # Display file operation with icon
+            # Display file operation with icon (clickable for file operations)
             if ctx.file_operations:
                 op: FileOperation = ctx.file_operations[-1]  # Get the latest op
                 icon = {
@@ -1517,9 +1517,21 @@ class FlyScreen(Screen[None]):
                     "Grep": "🔍",
                 }.get(op.tool_name, "•")
                 style = "dim" if op.tool_name == "Read" else "cyan"
-                # Format the file operation line
+                # Format the file operation line - make file paths clickable
                 if op.file_path:
-                    log.write(Text.from_markup(f"  [{style}]{icon}[/] {op.file_path}"))
+                    # Escape quotes in path for action parameter
+                    escaped_path = op.file_path.replace("'", "\\'")
+                    if op.tool_name in ("Edit", "Write", "Read"):
+                        # File operations are clickable
+                        markup = (
+                            f"  [{style}]{icon}[/] "
+                            f"[@click=screen.preview_file('{escaped_path}')]"
+                            f"[{style} underline]{op.file_path}[/][/]"
+                        )
+                    else:
+                        # Bash/Glob/Grep just show the command/pattern
+                        markup = f"  [{style}]{icon}[/] {op.file_path}"
+                    log.write(Text.from_markup(markup))
         elif ctx.step == "streaming":
             # Show streaming output (code blocks will be syntax-highlighted)
             output = ctx.output.strip()
