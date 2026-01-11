@@ -99,6 +99,7 @@ class FilePreviewModal(ModalScreen[bool]):
     DEFAULT_CSS = """
     FilePreviewModal {
         align: center middle;
+        background: $surface 60%;
     }
 
     FilePreviewModal > Vertical {
@@ -106,39 +107,40 @@ class FilePreviewModal(ModalScreen[bool]):
         max-width: 120;
         height: 80%;
         background: $surface;
-        border: thick $primary;
+        border: solid $surface-lighten-2;
     }
 
     FilePreviewModal .modal-header {
         height: auto;
         padding: 1 2;
-        background: $primary;
+        border-bottom: solid $surface-lighten-1;
+    }
+
+    FilePreviewModal .file-name {
+        text-style: bold;
         color: $text;
     }
 
-    FilePreviewModal .file-path {
-        text-style: bold;
-        color: $text;
+    FilePreviewModal .file-dir {
+        color: $text-disabled;
     }
 
     FilePreviewModal .content-container {
         height: 1fr;
         overflow-y: auto;
-        padding: 0 1;
+        padding: 1 2;
         background: $surface;
+        scrollbar-gutter: stable;
+        scrollbar-size: 1 1;
+        scrollbar-background: transparent;
+        scrollbar-color: $surface-lighten-2;
     }
 
     FilePreviewModal .modal-footer {
         height: auto;
         padding: 1 2;
-        background: $surface-lighten-1;
-        border-top: solid $surface-lighten-2;
-        color: $text;
-    }
-
-    FilePreviewModal .keybinding {
-        color: cyan;
-        text-style: bold;
+        border-top: solid $surface-lighten-1;
+        color: $text-muted;
     }
 
     FilePreviewModal .error-message {
@@ -173,8 +175,10 @@ class FilePreviewModal(ModalScreen[bool]):
             self._error = f"Error reading file: {e}"
 
         with Vertical():
-            # Header with filename
-            yield Static(str(self.file_path), classes="modal-header file-path")
+            # Header: filename + directory
+            with Vertical(classes="modal-header"):
+                yield Static(self.file_path.name, classes="file-name")
+                yield Static(str(self.file_path.parent), classes="file-dir")
 
             # Content area
             with ScrollableContainer(classes="content-container"):
@@ -185,7 +189,7 @@ class FilePreviewModal(ModalScreen[bool]):
 
             # Footer with keybindings
             yield Static(
-                "[cyan bold]e[/] Open in Editor    [cyan bold]Esc[/] Close",
+                "[bold]e[/] Open in Editor    [bold]Esc[/] Close",
                 classes="modal-footer",
                 markup=True,
             )
