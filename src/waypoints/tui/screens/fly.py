@@ -1495,6 +1495,11 @@ class FlyScreen(Screen[None]):
     def _update_progress_ui(self, ctx: ExecutionContext) -> None:
         """Update UI with progress (called on main thread)."""
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
+
+        # Guard: Only update if this waypoint's output is currently displayed
+        if detail_panel._showing_output_for != ctx.waypoint.id:
+            return
+
         log = detail_panel.execution_log
 
         # Update iteration display
