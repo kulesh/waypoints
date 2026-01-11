@@ -316,14 +316,24 @@ class ProjectPreviewPanel(VerticalScroll):
         return (cost, total_seconds)
 
     def _get_last_execution(self, project: Project) -> tuple[datetime, str] | None:
-        """Get (timestamp, result) of most recent execution. Returns None if none."""
+        """Get (timestamp, result) of most recent execution by completion time."""
         try:
             log_files = ExecutionLogReader.list_logs(project)
             if not log_files:
                 return None
-            latest_log = ExecutionLogReader.load(log_files[0])
-            if latest_log.completed_at:
-                return (latest_log.completed_at, latest_log.result or "unknown")
+
+            # Find the log with the most recent completed_at timestamp
+            latest: tuple[datetime, str] | None = None
+            for log_path in log_files:
+                try:
+                    log = ExecutionLogReader.load(log_path)
+                    if log.completed_at:
+                        if latest is None or log.completed_at > latest[0]:
+                            latest = (log.completed_at, log.result or "unknown")
+                except Exception:
+                    continue
+
+            return latest
         except Exception:
             pass
         return None
