@@ -145,7 +145,7 @@ class JourneyCoordinator:
         Selection logic:
         1. If include_failed, check for IN_PROGRESS or FAILED waypoints first
         2. Find first PENDING waypoint with all dependencies met
-        3. Skip epics (they complete when all children complete)
+        3. Epics are eligible once all their children complete
 
         Args:
             include_failed: Whether to consider failed/in-progress waypoints
@@ -169,9 +169,16 @@ class JourneyCoordinator:
             if wp.status != WaypointStatus.PENDING:
                 continue
 
-            # Skip epics - they auto-complete when children complete
+            # Epics can only run after all children complete
             if self.flight_plan.is_epic(wp.id):
-                continue
+                children = self.flight_plan.get_children(wp.id)
+                all_children_done = all(
+                    c.status in (WaypointStatus.COMPLETE, WaypointStatus.SKIPPED)
+                    for c in children
+                )
+                if not all_children_done:
+                    continue  # Skip until children are done
+                # Fall through - parent is ready for execution
 
             # Check dependencies
             if not self._dependencies_met(wp):
@@ -318,16 +325,17 @@ class JourneyCoordinator:
             return NextAction(action="pause", waypoint=waypoint)
 
     def _check_parent_completion(self, waypoint: Waypoint) -> None:
-        """Check if parent epic should auto-complete when child completes.
+        """Check if parent epic is ready for execution (all children done).
 
-        Recursively checks up the tree - if all siblings complete,
-        parent completes, which may trigger grandparent completion, etc.
+        This method logs when a parent becomes ready but does NOT auto-complete.
+        Parents will be selected and executed like regular waypoints to verify
+        their own acceptance criteria.
         """
         if self.flight_plan is None or waypoint.parent_id is None:
             return
 
         parent = self.flight_plan.get_waypoint(waypoint.parent_id)
-        if parent is None:
+        if parent is None or parent.status == WaypointStatus.COMPLETE:
             return
 
         # Check if all children are complete or skipped
@@ -337,13 +345,10 @@ class JourneyCoordinator:
             for c in children
         )
 
-        if all_done and parent.status != WaypointStatus.COMPLETE:
-            logger.info("Auto-completing parent epic: %s", parent.id)
-            parent.status = WaypointStatus.COMPLETE
-            self._save_flight_plan()
-
-            # Recursively check grandparent
-            self._check_parent_completion(parent)
+        if all_done:
+            logger.info("Parent epic %s ready for execution (all children done)", parent.id)
+            # Don't auto-complete - parent will be selected and executed
+            # to verify its own acceptance criteria
 
     # ─── FLY Phase: Intervention Handling ────────────────────────────────
 

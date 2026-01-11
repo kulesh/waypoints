@@ -2047,12 +2047,13 @@ class FlyScreen(Screen[None]):
                 self._executor._log_writer.log_git_commit(False, "", result.message)
 
     def _check_parent_completion(self, completed_waypoint: Waypoint) -> None:
-        """Check if parent epic should be auto-completed.
+        """Check if parent epic is ready for execution.
 
-        Delegates to coordinator which handles the recursive check.
+        Delegates to coordinator. Note: parents are no longer auto-completed;
+        they will be selected and executed to verify their acceptance criteria.
 
         Args:
             completed_waypoint: The waypoint that just completed
         """
-        # Delegate to coordinator - it handles the recursive parent check
+        # Delegate to coordinator - it logs readiness but doesn't auto-complete
         self.coordinator._check_parent_completion(completed_waypoint)
