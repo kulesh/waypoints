@@ -103,6 +103,8 @@ class WaypointsApp(App[None]):
         # Will be updated when a project is selected
         self._metrics_collector: MetricsCollector | None = None
         self._current_project_slug: str | None = None
+        # Track theme before toggling so we can restore it
+        self._previous_theme: str | None = None
 
     @property
     def metrics_collector(self) -> MetricsCollector | None:
@@ -363,10 +365,22 @@ class WaypointsApp(App[None]):
             )
 
     def action_toggle_dark(self) -> None:
-        """Toggle dark mode (saving handled by watch_theme)."""
-        self.theme = (
-            "textual-dark" if self.theme == "textual-light" else "textual-light"
-        )
+        """Toggle dark mode (saving handled by watch_theme).
+
+        If toggling back, restores the previous theme instead of defaulting
+        to textual-dark/textual-light.
+        """
+        if self._previous_theme is not None:
+            # Restore previous theme
+            restored = self._previous_theme
+            self._previous_theme = None
+            self.theme = restored
+        else:
+            # Store current theme and switch to opposite
+            self._previous_theme = self.theme
+            self.theme = (
+                "textual-dark" if self.theme == "textual-light" else "textual-light"
+            )
 
     def _commit_phase_transition(
         self, project: Project, from_phase: str, to_phase: str
