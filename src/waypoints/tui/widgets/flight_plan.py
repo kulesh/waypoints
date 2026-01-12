@@ -568,14 +568,6 @@ class WaypointDetailModal(ModalScreen[bool]):
         background: $surface-lighten-2;
         color: $text;
     }
-
-    WaypointDetailModal Button#btn-delete {
-        color: $text-disabled;
-    }
-
-    WaypointDetailModal Button#btn-delete:hover {
-        color: $error;
-    }
     """
 
     def __init__(
