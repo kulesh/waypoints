@@ -378,7 +378,18 @@ class ChartScreen(Screen[None]):
         waypoint = self.flight_plan.get_waypoint(event.waypoint_id)
         if waypoint:
             is_epic = self.flight_plan.is_epic(event.waypoint_id)
-            self.app.push_screen(WaypointDetailModal(waypoint, is_epic))
+
+            def handle_modal_result(action: str | None) -> None:
+                if action == "edit":
+                    self._edit_waypoint_external(waypoint)
+                elif action == "break_down":
+                    self._start_break_down(waypoint)
+                elif action == "delete":
+                    self._show_delete_confirmation(waypoint.id)
+
+            self.app.push_screen(
+                WaypointDetailModal(waypoint, is_epic), handle_modal_result
+            )
 
     def action_switch_panel(self) -> None:
         """Switch focus between panels."""
