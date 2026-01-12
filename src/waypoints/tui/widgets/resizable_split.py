@@ -19,10 +19,9 @@ class ResizableSplit(Horizontal):
     The left pane width is stored as a percentage of the total width.
     """
 
-    BINDINGS = [
-        ("ctrl+left", "resize_left", "Shrink left pane"),
-        ("ctrl+right", "resize_right", "Expand left pane"),
-    ]
+    # Bindings are handled by parent screens (ChartScreen, FlyScreen)
+    # to avoid terminal capturing ctrl+arrow keys
+    BINDINGS: list[tuple[str, str, str]] = []
 
     DEFAULT_CSS = """
     ResizableSplit {
