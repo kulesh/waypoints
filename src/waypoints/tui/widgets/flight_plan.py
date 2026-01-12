@@ -559,15 +559,12 @@ class WaypointDetailModal(ModalScreen[bool]):
 
     WaypointDetailModal Button {
         margin: 0 1;
-        min-width: 8;
-        height: 1;
+        min-width: 6;
+        height: 3;
         background: $surface-lighten-1;
         color: $text-muted;
         border: none;
-        border-top: none;
-        border-bottom: none;
         padding: 0 1;
-        text-style: none;
     }
 
     WaypointDetailModal Button:hover {
