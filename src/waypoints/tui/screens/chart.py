@@ -116,8 +116,8 @@ class ChartScreen(Screen[None]):
         Binding("tab", "switch_panel", "Switch Panel", show=False),
         Binding("ctrl+f", "forward", "Forward", show=False),
         Binding("?", "help", "Help", show=False),
-        Binding("comma", "shrink_left", ", Shrink", show=True),
-        Binding("full_stop", "expand_left", ". Expand", show=True),
+        Binding("comma", "shrink_left", "< Pane", show=True),
+        Binding("full_stop", "expand_left", "> Pane", show=True),
     ]
 
     DEFAULT_CSS = """
