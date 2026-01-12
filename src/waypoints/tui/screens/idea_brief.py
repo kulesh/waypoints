@@ -66,8 +66,8 @@ Based on this idea brief, write a concise 100-150 word summary that captures:
 - The core problem it solves
 - Key features
 
-Write in third person, present tense. No markdown formatting, no headers, just plain prose.
-This summary will be shown in a project list view.
+Write in third person, present tense. No markdown formatting, no headers,
+just plain prose. This summary will be shown in a project list view.
 
 Idea Brief:
 {brief_content}
@@ -291,9 +291,10 @@ class IdeaBriefScreen(Screen[None]):
 
         try:
             summary = ""
+            system = "You are a concise technical writer. Write plain prose."
             for result in self.llm_client.stream_message(
                 messages=[{"role": "user", "content": prompt}],
-                system="You are a concise technical writer. Write plain prose summaries.",
+                system=system,
             ):
                 if isinstance(result, StreamChunk):
                     summary += result.text

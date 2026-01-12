@@ -44,7 +44,11 @@ More output
 
     def test_extracts_index_and_text(self) -> None:
         """Correctly extract index number and criterion text."""
-        text = '<criterion-verified index="5">Tests pass with 100% coverage</criterion-verified>'
+        text = (
+            '<criterion-verified index="5">'
+            "Tests pass with 100% coverage"
+            "</criterion-verified>"
+        )
         matches = CRITERION_PATTERN.findall(text)
         assert matches[0][0] == "5"
         assert matches[0][1] == "Tests pass with 100% coverage"

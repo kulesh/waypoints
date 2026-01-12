@@ -21,7 +21,6 @@ class ResizableSplit(Horizontal):
 
     # Bindings are handled by parent screens (ChartScreen, FlyScreen)
     # to avoid terminal capturing ctrl+arrow keys
-    BINDINGS: list[tuple[str, str, str]] = []
 
     DEFAULT_CSS = """
     ResizableSplit {

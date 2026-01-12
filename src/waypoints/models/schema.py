@@ -303,7 +303,8 @@ def _migrate_execution_log_legacy(path: Path) -> None:
     """Add schema fields to legacy execution log.
 
     Legacy format has header: {"type": "header", "execution_id": ..., ...}
-    New format adds: {"type": "header", "_schema": "execution_log", "_version": "1.0", ...}
+    New format adds: {"type": "header", "_schema": "execution_log",
+    "_version": "1.0", ...}
     """
 
     def transform(lines: list[str]) -> list[str]:

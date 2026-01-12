@@ -263,7 +263,7 @@ class FilePreviewModal(ModalScreen[bool]):
         if resolved_editor is None:
             logger.error("Editor validation failed for '%s'", editor)
             self.app.notify(
-                f"Editor '{editor}' not allowed. Use a known editor like vim, code, etc.",
+                f"Editor '{editor}' not allowed. Use vim, code, etc.",
                 severity="error",
             )
             return
