@@ -558,7 +558,7 @@ class WaypointDetailModal(ModalScreen[bool]):
     WaypointDetailModal Button {
         margin: 0 1;
         min-width: 10;
-        height: 1;
+        height: 3;
     }
 
     WaypointDetailModal Button#btn-edit {
