@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
 from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory
+from waypoints.tui.mixins import MentionProcessingMixin
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
 
@@ -398,11 +399,12 @@ class ProductSpecScreen(Screen[None]):
         )
 
 
-class ProductSpecResumeScreen(Screen[None]):
+class ProductSpecResumeScreen(Screen[None], MentionProcessingMixin):
     """
     Resume screen for Product Spec - displays existing spec without regenerating.
 
     Used when resuming a project that already has a generated specification.
+    Supports @waypoints mentions for AI-assisted editing (Ctrl+R).
     """
 
     BINDINGS = [
@@ -412,6 +414,7 @@ class ProductSpecResumeScreen(Screen[None]):
         Binding("ctrl+f", "forward", "Forward", show=True),
         Binding("e", "edit_external", "Edit", show=True),
         Binding("ctrl+s", "save", "Save", show=True),
+        *MentionProcessingMixin.MENTION_BINDINGS,
     ]
 
     DEFAULT_CSS = """
@@ -467,6 +470,33 @@ class ProductSpecResumeScreen(Screen[None]):
         self.spec_content = spec
         self.brief = brief or ""
         self.is_editing: bool = False
+        self._init_mention_state()
+
+    # --- MentionProcessingMixin protocol implementation ---
+
+    @property
+    def document_content(self) -> str:
+        """Get current document content for mention processing."""
+        return self.spec_content
+
+    @document_content.setter
+    def document_content(self, value: str) -> None:
+        """Set document content from mention processing."""
+        self.spec_content = value
+
+    @property
+    def document_type(self) -> str:
+        """Document type identifier for mention processing."""
+        return "product-spec"
+
+    def _get_docs_path(self) -> Path:
+        """Get docs directory path for mention processing."""
+        return self.project.get_docs_path()
+
+    def _update_mention_display(self, content: str) -> None:
+        """Update display after mention processing."""
+        display = self.query_one("#spec-display", Markdown)
+        display.update(content)
 
     @property
     def waypoints_app(self) -> "WaypointsApp":
