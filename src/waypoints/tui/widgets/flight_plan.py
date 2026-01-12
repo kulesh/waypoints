@@ -594,9 +594,9 @@ class WaypointDetailModal(ModalScreen[bool]):
             with VerticalScroll(classes="modal-content"):
                 yield Markdown(self._format_details())
             with Horizontal(classes="modal-actions"):
-                yield Button("Edit", id="btn-edit", variant="primary")
+                yield Button("Edit", id="btn-edit")
                 yield Button("Break Down", id="btn-break")
-                yield Button("Delete", id="btn-delete", variant="error")
+                yield Button("Delete", id="btn-delete")
                 yield Button("Close", id="btn-close")
 
     def _format_details(self) -> str:
