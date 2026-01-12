@@ -381,7 +381,7 @@ class ChartScreen(Screen[None]):
 
             def handle_modal_result(action: str | None) -> None:
                 if action == "edit":
-                    self._edit_waypoint_external(waypoint)
+                    self._edit_waypoint_external(waypoint, reopen_modal=True)
                 elif action == "break_down":
                     self._start_break_down(waypoint)
                 elif action == "delete":
@@ -411,7 +411,9 @@ class ChartScreen(Screen[None]):
         """Handle edit request from detail modal."""
         self._edit_waypoint_external(event.waypoint)
 
-    def _edit_waypoint_external(self, waypoint: Waypoint) -> None:
+    def _edit_waypoint_external(
+        self, waypoint: Waypoint, reopen_modal: bool = False
+    ) -> None:
         """Edit waypoint in external editor as YAML."""
         from waypoints.tui.utils import edit_file_in_editor
 
@@ -438,7 +440,7 @@ class ChartScreen(Screen[None]):
             temp_path = Path(f.name)
 
         def on_complete() -> None:
-            self._apply_waypoint_edits(waypoint, temp_path)
+            self._apply_waypoint_edits(waypoint, temp_path, reopen_modal)
 
         if not edit_file_in_editor(self.app, temp_path, on_complete):
             self.notify(
@@ -448,7 +450,9 @@ class ChartScreen(Screen[None]):
             # Clean up temp file on failure
             temp_path.unlink(missing_ok=True)
 
-    def _apply_waypoint_edits(self, waypoint: Waypoint, yaml_path: Path) -> None:
+    def _apply_waypoint_edits(
+        self, waypoint: Waypoint, yaml_path: Path, reopen_modal: bool = False
+    ) -> None:
         """Parse YAML and update waypoint."""
         try:
             data = yaml.safe_load(yaml_path.read_text())
@@ -475,6 +479,10 @@ class ChartScreen(Screen[None]):
             preview_panel.show_waypoint(waypoint, is_epic)
 
             self.notify(f"Updated {waypoint.id}")
+
+            # Reopen modal if requested (when editing from modal)
+            if reopen_modal:
+                self._reopen_waypoint_modal(waypoint)
         except yaml.YAMLError as e:
             self.notify(f"Invalid YAML: {e}", severity="error")
         except Exception as e:
@@ -485,6 +493,25 @@ class ChartScreen(Screen[None]):
                 yaml_path.unlink()
             except OSError:
                 pass
+
+    def _reopen_waypoint_modal(self, waypoint: Waypoint) -> None:
+        """Reopen the waypoint detail modal after editing."""
+        if not self.flight_plan:
+            return
+
+        is_epic = self.flight_plan.is_epic(waypoint.id)
+
+        def handle_modal_result(action: str | None) -> None:
+            if action == "edit":
+                self._edit_waypoint_external(waypoint, reopen_modal=True)
+            elif action == "break_down":
+                self._start_break_down(waypoint)
+            elif action == "delete":
+                self._show_delete_confirmation(waypoint.id)
+
+        self.app.push_screen(
+            WaypointDetailModal(waypoint, is_epic), handle_modal_result
+        )
 
     def _save_waypoint(self, waypoint: Waypoint) -> None:
         """Save an updated waypoint."""
