@@ -116,8 +116,8 @@ class ChartScreen(Screen[None]):
         Binding("tab", "switch_panel", "Switch Panel", show=False),
         Binding("ctrl+f", "forward", "Forward", show=False),
         Binding("?", "help", "Help", show=False),
-        Binding("bracketleft", "shrink_left", "[ Shrink pane", show=True),
-        Binding("bracketright", "expand_left", "] Expand pane", show=True),
+        Binding("comma", "shrink_left", ", Shrink", show=True),
+        Binding("full_stop", "expand_left", ". Expand", show=True),
     ]
 
     DEFAULT_CSS = """
@@ -753,9 +753,9 @@ class ChartScreen(Screen[None]):
     def action_shrink_left(self) -> None:
         """Shrink the left pane."""
         split = self.query_one(ResizableSplit)
-        split.action_resize_left()
+        split.left_pct = max(15, split.left_pct - 5)
 
     def action_expand_left(self) -> None:
         """Expand the left pane."""
         split = self.query_one(ResizableSplit)
-        split.action_resize_right()
+        split.left_pct = min(70, split.left_pct + 5)
