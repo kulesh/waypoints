@@ -523,23 +523,24 @@ class WaypointDetailModal(ModalScreen[bool]):
         max-height: 80%;
         background: $surface;
         border: solid $surface-lighten-2;
-        padding: 1 2;
+        padding: 0 1;
     }
 
     WaypointDetailModal .modal-title {
         text-style: bold;
         color: $text;
         text-align: center;
-        padding: 1 0;
-        margin-bottom: 1;
+        padding: 0;
+        margin: 0 0 1 0;
         border-bottom: solid $surface-lighten-1;
     }
 
     WaypointDetailModal .modal-content {
         height: 1fr;
-        min-height: 10;
+        min-height: 5;
         max-height: 50;
-        padding: 1 0;
+        padding: 0;
+        margin: 0;
     }
 
     WaypointDetailModal .modal-content Markdown {
@@ -550,7 +551,7 @@ class WaypointDetailModal(ModalScreen[bool]):
     WaypointDetailModal .modal-actions {
         dock: bottom;
         height: auto;
-        padding: 1 0 0 0;
+        padding: 0;
         margin-top: 1;
         border-top: solid $surface-lighten-1;
         align: center middle;
