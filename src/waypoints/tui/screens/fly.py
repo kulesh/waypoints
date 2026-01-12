@@ -1054,6 +1054,8 @@ class FlyScreen(Screen[None]):
         Binding("p", "pause", "Pause", show=True),
         Binding("s", "skip", "Skip", show=True),
         Binding("escape", "back", "Back", show=True),
+        Binding("comma", "shrink_left", "< Pane", show=True),
+        Binding("full_stop", "expand_left", "> Pane", show=True),
     ]
 
     DEFAULT_CSS = """
@@ -2100,3 +2102,13 @@ class FlyScreen(Screen[None]):
         """
         # Delegate to coordinator - it logs readiness but doesn't auto-complete
         self.coordinator._check_parent_completion(completed_waypoint)
+
+    def action_shrink_left(self) -> None:
+        """Shrink the left pane."""
+        split = self.query_one(ResizableSplit)
+        split.left_pct = max(15, split.left_pct - 5)
+
+    def action_expand_left(self) -> None:
+        """Expand the left pane."""
+        split = self.query_one(ResizableSplit)
+        split.left_pct = min(70, split.left_pct + 5)
