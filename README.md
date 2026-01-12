@@ -30,6 +30,8 @@ Waypoints guides you through four phases:
 - **Live brief generation**: Watch your idea crystallize into a structured document
 - **Automatic waypoint planning**: AI decomposes your product spec into executable tasks
 - **Agentic execution**: AI implements each waypoint using test-driven development
+- **Inline AI editing**: Leave `@waypoints:` instructions in documents for AI to process
+- **Document versioning**: All document changes create new timestamped versions
 - **Crash-safe persistence**: Resume exactly where you left off
 - **Terminal-native TUI**: Fast, keyboard-driven interface built with [Textual](https://textual.textualize.io/)
 
@@ -73,10 +75,25 @@ uv run waypoints
 | `?` | Show help |
 | `j/k` | Navigate up/down |
 | `Enter` | Select/confirm |
-| `r` | Start/resume execution (FLY phase) |
-| `p` | Pause execution |
 | `Escape` | Go back |
 | `Ctrl+Q` | Quit |
+
+**Document Review (SHAPE phase):**
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+E` | Toggle inline edit mode |
+| `Ctrl+R` | Process `@waypoints:` mentions |
+| `Ctrl+S` | Save document |
+| `e` | Open in external editor |
+| `Ctrl+Enter` | Proceed to next phase |
+
+**Execution (FLY phase):**
+
+| Key | Action |
+|-----|--------|
+| `r` | Start/resume execution |
+| `p` | Pause execution |
 
 ## Project Structure
 
@@ -118,6 +135,25 @@ Waypoints use a state machine:
 - `IN_PROGRESS` → currently executing
 - `FAILED` → execution failed (can retry)
 - `COMPLETE` → successfully finished
+
+### Inline AI Editing
+
+During document review (Idea Brief or Product Spec), you can leave instructions for the AI:
+
+```markdown
+## Problem Statement
+
+This section describes the problem.
+
+@waypoints: please expand this section with specific user pain points
+```
+
+Press `Ctrl+R` to process all `@waypoints:` mentions. The AI:
+1. Reads the full document for context
+2. Updates each section based on its instruction
+3. Marks mentions as resolved (hidden in rendered markdown)
+4. Saves a new timestamped version of the document
+5. Logs instructions to `{document}-comments.jsonl` for history
 
 ## Development
 
