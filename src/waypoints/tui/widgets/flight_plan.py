@@ -558,20 +558,24 @@ class WaypointDetailModal(ModalScreen[bool]):
 
     WaypointDetailModal Button {
         margin: 0 1;
-        min-width: 10;
+        min-width: 8;
+        background: $surface-lighten-1;
+        color: $text-muted;
+        border: none;
+        padding: 0 2;
     }
 
-    WaypointDetailModal Button#btn-edit {
-        background: $primary-darken-2;
+    WaypointDetailModal Button:hover {
+        background: $surface-lighten-2;
+        color: $text;
     }
 
     WaypointDetailModal Button#btn-delete {
-        background: $surface-lighten-1;
-        color: $error;
+        color: $text-disabled;
     }
 
-    WaypointDetailModal Button#btn-close {
-        background: $surface-lighten-1;
+    WaypointDetailModal Button#btn-delete:hover {
+        color: $error;
     }
     """
 
