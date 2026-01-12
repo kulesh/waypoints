@@ -4,11 +4,8 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from waypoints.mentions import (
     CommentLogEntry,
-    DocumentSection,
     Mention,
     find_mentions,
     is_mention_resolved,
