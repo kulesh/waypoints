@@ -109,13 +109,15 @@ class ChartScreen(Screen[None]):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", show=True),
         Binding("ctrl+enter", "proceed", "Takeoff", show=True),
-        Binding("escape", "back", "Back", show=True),
-        Binding("e", "edit_waypoint", "Edit", show=True),
-        Binding("b", "break_down", "Break Down", show=True),
-        Binding("d", "delete_waypoint", "Delete", show=True),
+        Binding("escape", "back", "Back", show=False),
+        Binding("e", "edit_waypoint", "Edit", show=False),
+        Binding("b", "break_down", "Break Down", show=False),
+        Binding("d", "delete_waypoint", "Delete", show=False),
         Binding("tab", "switch_panel", "Switch Panel", show=False),
-        Binding("ctrl+f", "forward", "Forward", show=True),
-        Binding("?", "help", "Help", show=True),
+        Binding("ctrl+f", "forward", "Forward", show=False),
+        Binding("?", "help", "Help", show=False),
+        Binding("ctrl+left", "shrink_left", "Shrink left pane", show=True),
+        Binding("ctrl+right", "expand_left", "Expand left pane", show=True),
     ]
 
     DEFAULT_CSS = """
@@ -709,3 +711,13 @@ class ChartScreen(Screen[None]):
                 spec=self.spec,
             )
         )
+
+    def action_shrink_left(self) -> None:
+        """Shrink the left pane."""
+        split = self.query_one(ResizableSplit)
+        split.action_resize_left()
+
+    def action_expand_left(self) -> None:
+        """Expand the left pane."""
+        split = self.query_one(ResizableSplit)
+        split.action_resize_right()
