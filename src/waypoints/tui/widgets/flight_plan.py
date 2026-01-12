@@ -560,11 +560,8 @@ class WaypointDetailModal(ModalScreen[bool]):
     WaypointDetailModal Button {
         margin: 0 1;
         min-width: 6;
-        height: 3;
         background: $surface-lighten-1;
         color: $text-muted;
-        border: none;
-        padding: 0 1;
     }
 
     WaypointDetailModal Button:hover {
@@ -596,10 +593,10 @@ class WaypointDetailModal(ModalScreen[bool]):
             with VerticalScroll(classes="modal-content"):
                 yield Markdown(self._format_details())
             with Horizontal(classes="modal-actions"):
-                yield Button("Edit", id="btn-edit")
-                yield Button("Break Down", id="btn-break")
-                yield Button("Delete", id="btn-delete")
-                yield Button("Close", id="btn-close")
+                yield Button("Edit", id="btn-edit", compact=True)
+                yield Button("Break Down", id="btn-break", compact=True)
+                yield Button("Delete", id="btn-delete", compact=True)
+                yield Button("Close", id="btn-close", compact=True)
 
     def _format_details(self) -> str:
         """Format waypoint as Markdown."""
