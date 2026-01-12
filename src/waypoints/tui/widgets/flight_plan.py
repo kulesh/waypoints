@@ -500,7 +500,7 @@ class WaypointPreviewPanel(VerticalScroll):
             content.mount(Static("Press Enter for details", classes="wp-hint"))
 
 
-class WaypointDetailModal(ModalScreen[bool]):
+class WaypointDetailModal(ModalScreen[str | None]):
     """Modal screen showing full waypoint details."""
 
     BINDINGS = [
@@ -622,7 +622,7 @@ class WaypointDetailModal(ModalScreen[bool]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "btn-close":
-            self.dismiss(False)
+            self.dismiss(None)
         elif event.button.id == "btn-edit":
             self.action_edit()
         elif event.button.id == "btn-break":
@@ -632,22 +632,19 @@ class WaypointDetailModal(ModalScreen[bool]):
 
     def action_close(self) -> None:
         """Close the modal."""
-        self.dismiss(False)
+        self.dismiss(None)
 
     def action_edit(self) -> None:
-        """Edit waypoint - handled by parent screen."""
-        self.dismiss(False)
-        self.app.post_message(WaypointRequestEdit(self.waypoint))
+        """Edit waypoint."""
+        self.dismiss("edit")
 
     def action_break_down(self) -> None:
-        """Break down waypoint - handled by parent screen."""
-        self.dismiss(False)
-        self.app.post_message(WaypointRequestBreakDown(self.waypoint))
+        """Break down waypoint."""
+        self.dismiss("break_down")
 
     def action_delete(self) -> None:
-        """Delete waypoint - handled by parent screen."""
-        self.dismiss(False)
-        self.app.post_message(WaypointRequestDelete(self.waypoint.id))
+        """Delete waypoint."""
+        self.dismiss("delete")
 
 
 class WaypointRequestDelete(Message):
