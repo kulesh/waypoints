@@ -1054,6 +1054,7 @@ class FlyScreen(Screen[None]):
         Binding("p", "pause", "Pause", show=True),
         Binding("s", "skip", "Skip", show=True),
         Binding("escape", "back", "Back", show=True),
+        Binding("ctrl+f", "forward", "Forward", show=False),
         Binding("comma", "shrink_left", "< Pane", show=True),
         Binding("full_stop", "expand_left", "> Pane", show=True),
     ]
@@ -2102,6 +2103,25 @@ class FlyScreen(Screen[None]):
         """
         # Delegate to coordinator - it logs readiness but doesn't auto-complete
         self.coordinator._check_parent_completion(completed_waypoint)
+
+    def action_forward(self) -> None:
+        """Go forward to Land screen if available."""
+        # Check if Land is available (all waypoints complete or already in LAND_REVIEW)
+        journey = self.project.journey
+        if journey and journey.state == JourneyState.LAND_REVIEW:
+            self._switch_to_land_screen()
+            return
+
+        # Check if all waypoints are complete
+        all_complete, pending, failed, blocked = self._get_completion_status()
+        if all_complete:
+            self.project.transition_journey(JourneyState.LAND_REVIEW)
+            self._switch_to_land_screen()
+        elif self.execution_state == ExecutionState.DONE:
+            # DONE but not all_complete - blocked waypoints
+            self.notify("Cannot land yet - some waypoints are blocked or failed")
+        else:
+            self.notify("Cannot land yet - waypoints still in progress")
 
     def action_shrink_left(self) -> None:
         """Shrink the left pane."""
