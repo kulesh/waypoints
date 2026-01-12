@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
 from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory, MessageRole
+from waypoints.tui.mixins import MentionProcessingMixin
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
 
@@ -374,11 +375,12 @@ class IdeaBriefScreen(Screen[None]):
         self.app.switch_screen(ProjectSelectionScreen())
 
 
-class IdeaBriefResumeScreen(Screen[None]):
+class IdeaBriefResumeScreen(Screen[None], MentionProcessingMixin):
     """
     Resume screen for Idea Brief - displays existing brief without regenerating.
 
     Used when resuming a project that already has a generated brief.
+    Supports @waypoints mentions for AI-assisted editing (Ctrl+R).
     """
 
     BINDINGS = [
@@ -388,6 +390,7 @@ class IdeaBriefResumeScreen(Screen[None]):
         Binding("ctrl+f", "forward", "Forward", show=True),
         Binding("e", "edit_external", "Edit", show=True),
         Binding("ctrl+s", "save", "Save", show=True),
+        *MentionProcessingMixin.MENTION_BINDINGS,
     ]
 
     DEFAULT_CSS = """
@@ -441,6 +444,33 @@ class IdeaBriefResumeScreen(Screen[None]):
         self.project = project
         self.brief_content = brief
         self.is_editing: bool = False
+        self._init_mention_state()
+
+    # --- MentionProcessingMixin protocol implementation ---
+
+    @property
+    def document_content(self) -> str:
+        """Get current document content for mention processing."""
+        return self.brief_content
+
+    @document_content.setter
+    def document_content(self, value: str) -> None:
+        """Set document content from mention processing."""
+        self.brief_content = value
+
+    @property
+    def document_type(self) -> str:
+        """Document type identifier for mention processing."""
+        return "idea-brief"
+
+    def _get_docs_path(self) -> Path:
+        """Get docs directory path for mention processing."""
+        return self.project.get_docs_path()
+
+    def _update_mention_display(self, content: str) -> None:
+        """Update display after mention processing."""
+        display = self.query_one("#brief-display", Markdown)
+        display.update(content)
 
     @property
     def waypoints_app(self) -> "WaypointsApp":
