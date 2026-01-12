@@ -453,6 +453,14 @@ class ChartScreen(Screen[None]):
 
             # Refresh display
             self._update_panels()
+
+            # Also refresh the preview panel with updated waypoint
+            is_epic = (
+                self.flight_plan.is_epic(waypoint.id) if self.flight_plan else False
+            )
+            preview_panel = self.query_one("#preview-panel", WaypointPreviewPanel)
+            preview_panel.show_waypoint(waypoint, is_epic)
+
             self.notify(f"Updated {waypoint.id}")
         except yaml.YAMLError as e:
             self.notify(f"Invalid YAML: {e}", severity="error")
