@@ -1730,8 +1730,8 @@ class FlyScreen(Screen[None]):
                     self._execute_current_waypoint()
                 else:
                     # _select_next_waypoint sets execution_state appropriately
-                    # Only transition to LAND_REVIEW if truly all complete (state is DONE)
-                    # Note: mypy doesn't track that _select_next_waypoint modifies state
+                    # Only transition to LAND_REVIEW if truly all complete
+                    # (state is DONE). mypy doesn't track state modification.
                     if self.execution_state == ExecutionState.DONE:  # type: ignore[comparison-overlap]
                         self.project.transition_journey(JourneyState.LAND_REVIEW)
                         self._switch_to_land_screen()

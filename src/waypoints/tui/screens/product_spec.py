@@ -86,14 +86,15 @@ Here is the Idea Brief to expand:
 Generate the complete Product Specification now:"""
 
 SPEC_SUMMARY_PROMPT = """\
-Based on this product specification, write a polished 200-250 word summary that captures:
+Based on this product specification, write a polished 200-250 word summary
+that captures:
 - What the product is and does
 - The problem it solves and for whom
 - Key features and differentiators
 - Technical approach (briefly)
 
-Write in third person, present tense. No markdown formatting, no headers, just plain prose.
-This summary will be shown in a project list view.
+Write in third person, present tense. No markdown formatting, no headers,
+just plain prose. This summary will be shown in a project list view.
 
 Product Specification:
 {spec_content}
@@ -310,9 +311,10 @@ class ProductSpecScreen(Screen[None]):
 
         try:
             summary = ""
+            system = "You are a concise technical writer. Write plain prose."
             for result in self.llm_client.stream_message(
                 messages=[{"role": "user", "content": prompt}],
-                system="You are a concise technical writer. Write plain prose summaries.",
+                system=system,
             ):
                 if isinstance(result, StreamChunk):
                     summary += result.text

@@ -348,7 +348,10 @@ class TestValidateWaypoints:
 
     def test_schema_error(self) -> None:
         """Schema violation returns validation error."""
-        response = '[{"id": "BAD-ID", "title": "X", "objective": "Y", "acceptance_criteria": []}]'
+        response = (
+            '[{"id": "BAD-ID", "title": "X", '
+            '"objective": "Y", "acceptance_criteria": []}]'
+        )
         result = validate_waypoints(response)
         assert result.valid is False
         assert len(result.errors) > 0
@@ -356,8 +359,10 @@ class TestValidateWaypoints:
     def test_semantic_error(self) -> None:
         """Semantic violation returns validation error."""
         response = """[
-            {"id": "WP-1", "title": "First", "objective": "First objective here", "acceptance_criteria": ["OK"]},
-            {"id": "WP-1", "title": "Duplicate", "objective": "Duplicate ID here", "acceptance_criteria": ["OK"]}
+            {"id": "WP-1", "title": "First",
+             "objective": "First objective", "acceptance_criteria": ["OK"]},
+            {"id": "WP-1", "title": "Duplicate",
+             "objective": "Duplicate ID", "acceptance_criteria": ["OK"]}
         ]"""
         result = validate_waypoints(response)
         assert result.valid is False
