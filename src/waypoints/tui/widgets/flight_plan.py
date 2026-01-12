@@ -548,7 +548,7 @@ class WaypointDetailModal(ModalScreen[bool]):
 
     WaypointDetailModal .modal-actions {
         dock: bottom;
-        height: 3;
+        height: auto;
         padding: 1 0 0 0;
         margin-top: 1;
         border-top: solid $surface-lighten-1;
@@ -558,7 +558,6 @@ class WaypointDetailModal(ModalScreen[bool]):
     WaypointDetailModal Button {
         margin: 0 1;
         min-width: 10;
-        height: 3;
     }
 
     WaypointDetailModal Button#btn-edit {
