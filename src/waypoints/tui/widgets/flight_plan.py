@@ -536,7 +536,8 @@ class WaypointDetailModal(ModalScreen[bool]):
     }
 
     WaypointDetailModal .modal-content {
-        height: auto;
+        height: 1fr;
+        min-height: 10;
         max-height: 50;
         padding: 1 0;
     }
