@@ -257,14 +257,16 @@ class DebriefPanel(VerticalScroll):
             log_files = ExecutionLogReader.list_logs(self.project)
             if log_files:
                 lines.append(f"├─ {len(log_files)} execution(s)")
-                # Show last 3 runs
+                # Show last 3 runs with waypoint info
                 for i, log_path in enumerate(log_files[:3]):
                     log = ExecutionLogReader.load(log_path)
                     if log.completed_at:
                         time_ago = format_relative_time(log.completed_at)
                         result = log.result or "unknown"
+                        # Truncate waypoint title if too long
+                        wp_title = (log.waypoint_title or log.waypoint_id or "?")[:25]
                         prefix = "└─" if i == min(2, len(log_files) - 1) else "├─"
-                        lines.append(f"{prefix} {time_ago}: {result}")
+                        lines.append(f"{prefix} {wp_title}: {result} ({time_ago})")
         except Exception:
             pass
 
