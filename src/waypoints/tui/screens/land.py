@@ -26,7 +26,7 @@ from waypoints.llm.metrics import MetricsCollector
 from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader
 from waypoints.models.waypoint import WaypointStatus
-from waypoints.tui.utils import format_duration, format_relative_time
+from waypoints.tui.utils import format_duration
 from waypoints.tui.widgets.header import StatusHeader
 
 logger = logging.getLogger(__name__)
@@ -252,21 +252,11 @@ class DebriefPanel(VerticalScroll):
         except Exception:
             pass
 
-        # Session history (recent runs)
+        # Waypoint run count
         try:
             log_files = ExecutionLogReader.list_logs(self.project)
             if log_files:
-                lines.append(f"├─ {len(log_files)} waypoint runs")
-                # Show last 3 runs with waypoint info
-                for i, log_path in enumerate(log_files[:3]):
-                    log = ExecutionLogReader.load(log_path)
-                    if log.completed_at:
-                        time_ago = format_relative_time(log.completed_at)
-                        result = log.result or "unknown"
-                        # Truncate waypoint title if too long
-                        wp_title = (log.waypoint_title or log.waypoint_id or "?")[:25]
-                        prefix = "└─" if i == min(2, len(log_files) - 1) else "├─"
-                        lines.append(f"{prefix} {wp_title}: {result} ({time_ago})")
+                lines.append(f"└─ {len(log_files)} waypoint runs")
         except Exception:
             pass
 
