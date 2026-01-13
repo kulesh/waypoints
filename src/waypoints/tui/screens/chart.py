@@ -34,7 +34,6 @@ from waypoints.tui.widgets.flight_plan import (
     BreakDownPreviewModal,
     ConfirmDeleteModal,
     FlightPlanPanel,
-    ManualWaypointModal,
     WaypointDetailModal,
     WaypointOpenDetail,
     WaypointPreviewPanel,
@@ -730,26 +729,11 @@ class ChartScreen(Screen[None]):
             self.notify("No flight plan loaded", severity="error")
             return
 
-        def handle_result(result: str | None) -> None:
-            if result is None:
-                return  # Cancelled
-            elif result == "__MANUAL__":
-                self._show_manual_waypoint_modal()
-            else:
-                # User provided a description, generate waypoint
-                self._generate_new_waypoint(result)
+        def handle_result(description: str | None) -> None:
+            if description:
+                self._generate_new_waypoint(description)
 
         self.app.push_screen(AddWaypointModal(), handle_result)
-
-    def _show_manual_waypoint_modal(self) -> None:
-        """Show modal for manually entering waypoint details."""
-        next_id = self._next_waypoint_id()
-
-        def handle_result(waypoint: Waypoint | None) -> None:
-            if waypoint:
-                self._add_waypoint(waypoint, after_id=None)
-
-        self.app.push_screen(ManualWaypointModal(next_id), handle_result)
 
     def _next_waypoint_id(self) -> str:
         """Generate next available waypoint ID."""

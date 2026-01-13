@@ -1136,7 +1136,7 @@ class AddWaypointModal(ModalScreen[str | None]):
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=True),
-        Binding("ctrl+enter", "generate", "Generate", show=True),
+        Binding("ctrl+enter", "add", "Add", show=True),
     ]
 
     DEFAULT_CSS = """
@@ -1206,8 +1206,7 @@ class AddWaypointModal(ModalScreen[str | None]):
             )
             yield TextArea(id="description-input")
             with Horizontal(classes="modal-actions"):
-                yield Button("Generate with AI", id="btn-generate")
-                yield Button("Add Manually", id="btn-manual")
+                yield Button("Add", id="btn-add")
                 yield Button("Cancel", id="btn-cancel")
 
     def on_mount(self) -> None:
@@ -1216,175 +1215,22 @@ class AddWaypointModal(ModalScreen[str | None]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
-        if event.button.id == "btn-generate":
-            description = self.query_one("#description-input", TextArea).text.strip()
-            if description:
-                self.dismiss(description)
-            else:
-                self.notify("Please enter a description", severity="warning")
-        elif event.button.id == "btn-manual":
-            self.dismiss("__MANUAL__")  # Special sentinel for manual mode
+        if event.button.id == "btn-add":
+            self._submit()
         else:
             self.dismiss(None)
 
-    def action_generate(self) -> None:
-        """Generate waypoint from description."""
+    def _submit(self) -> None:
+        """Submit the description for AI generation."""
         description = self.query_one("#description-input", TextArea).text.strip()
         if description:
             self.dismiss(description)
         else:
             self.notify("Please enter a description", severity="warning")
 
-    def action_cancel(self) -> None:
-        """Cancel."""
-        self.dismiss(None)
-
-
-class ManualWaypointModal(ModalScreen[Waypoint | None]):
-    """Modal for manually entering waypoint details."""
-
-    BINDINGS = [
-        Binding("escape", "cancel", "Cancel", show=True),
-        Binding("ctrl+s", "save", "Save", show=True),
-    ]
-
-    DEFAULT_CSS = """
-    ManualWaypointModal {
-        align: center middle;
-        background: $surface 60%;
-    }
-
-    ManualWaypointModal > Vertical {
-        width: 70;
-        height: auto;
-        max-height: 36;
-        background: $surface;
-        border: solid $surface-lighten-2;
-        padding: 1 2;
-    }
-
-    ManualWaypointModal .modal-title {
-        text-style: bold;
-        color: $text;
-        text-align: center;
-        padding: 1 0;
-        margin-bottom: 1;
-        border-bottom: solid $surface-lighten-1;
-    }
-
-    ManualWaypointModal .field-label {
-        color: $text-muted;
-        padding: 1 0 0 0;
-    }
-
-    ManualWaypointModal Input {
-        margin-bottom: 0;
-        background: $surface-lighten-1;
-        border: none;
-    }
-
-    ManualWaypointModal Input:focus {
-        background: $surface-lighten-2;
-        border: none;
-    }
-
-    ManualWaypointModal TextArea {
-        background: $surface-lighten-1;
-        border: none;
-    }
-
-    ManualWaypointModal TextArea:focus {
-        background: $surface-lighten-2;
-        border: none;
-    }
-
-    ManualWaypointModal TextArea#objective-input {
-        height: 4;
-    }
-
-    ManualWaypointModal TextArea#criteria-input {
-        height: 6;
-    }
-
-    ManualWaypointModal .modal-actions {
-        dock: bottom;
-        height: auto;
-        padding: 1 0 0 0;
-        margin-top: 1;
-        border-top: solid $surface-lighten-1;
-        align: center middle;
-    }
-
-    ManualWaypointModal Button {
-        margin: 0 1;
-        min-width: 10;
-        height: 3;
-        background: $surface-lighten-1;
-    }
-    """
-
-    def __init__(self, next_id: str, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.next_id = next_id
-
-    def compose(self) -> ComposeResult:
-        with Vertical():
-            yield Static("Add Waypoint Manually", classes="modal-title")
-            yield Static(f"ID: {self.next_id}", classes="field-label")
-            yield Static("Title:", classes="field-label")
-            yield Input(id="title-input", placeholder="Brief descriptive title")
-            yield Static("Objective:", classes="field-label")
-            yield TextArea(id="objective-input")
-            yield Static("Acceptance Criteria (one per line):", classes="field-label")
-            yield TextArea(id="criteria-input")
-            with Horizontal(classes="modal-actions"):
-                yield Button("Save", id="btn-save")
-                yield Button("Cancel", id="btn-cancel")
-
-    def on_mount(self) -> None:
-        """Focus the title input."""
-        self.query_one("#title-input", Input).focus()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses."""
-        if event.button.id == "btn-save":
-            self._save()
-        else:
-            self.dismiss(None)
-
-    def _save(self) -> None:
-        """Validate and save the waypoint."""
-        title = self.query_one("#title-input", Input).value.strip()
-        objective = self.query_one("#objective-input", TextArea).text.strip()
-        criteria_text = self.query_one("#criteria-input", TextArea).text.strip()
-
-        # Validate
-        if not title:
-            self.notify("Title is required", severity="warning")
-            return
-        if not objective:
-            self.notify("Objective is required", severity="warning")
-            return
-        if not criteria_text:
-            self.notify(
-                "At least one acceptance criterion is required", severity="warning"
-            )
-            return
-
-        # Parse criteria (one per line)
-        criteria = [c.strip() for c in criteria_text.split("\n") if c.strip()]
-
-        waypoint = Waypoint(
-            id=self.next_id,
-            title=title,
-            objective=objective,
-            acceptance_criteria=criteria,
-        )
-        self.dismiss(waypoint)
-
-    def action_save(self) -> None:
-        """Save the waypoint."""
-        self._save()
+    def action_add(self) -> None:
+        """Add waypoint from description."""
+        self._submit()
 
     def action_cancel(self) -> None:
         """Cancel."""
