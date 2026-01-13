@@ -194,7 +194,7 @@ class ProjectPreviewPanel(VerticalScroll):
     ProjectPreviewPanel {
         width: 1fr;
         height: 100%;
-        padding: 1 2;
+        padding: 0 2;
     }
 
     ProjectPreviewPanel .panel-title {
