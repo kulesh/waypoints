@@ -21,11 +21,12 @@ if TYPE_CHECKING:
     from waypoints.tui.app import WaypointsApp
 
 from waypoints.fly.execution_log import ExecutionLogReader
+from waypoints.git.service import GitService
 from waypoints.llm.metrics import MetricsCollector
 from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader
 from waypoints.models.waypoint import WaypointStatus
-from waypoints.tui.utils import format_duration
+from waypoints.tui.utils import format_duration, format_relative_time
 from waypoints.tui.widgets.header import StatusHeader
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ class ActivityListPanel(Vertical):
 
 
 class DebriefPanel(VerticalScroll):
-    """Debrief content panel - shows completion stats and issues."""
+    """Debrief content panel - shows completion stats, issues, and project context."""
 
     DEFAULT_CSS = """
     DebriefPanel {
@@ -108,6 +109,11 @@ class DebriefPanel(VerticalScroll):
         color: $error;
         padding-left: 2;
     }
+
+    DebriefPanel .muted-line {
+        color: $text-muted;
+        padding-left: 2;
+    }
     """
 
     def __init__(self, project: Project, flight_plan: FlightPlan | None, **kwargs: Any):
@@ -118,6 +124,14 @@ class DebriefPanel(VerticalScroll):
     def compose(self) -> ComposeResult:
         yield Static("DEBRIEF", classes="section-title")
         yield Static("", id="stats-content")
+        yield Static("Project Outputs", classes="section-title")
+        yield Static("", id="outputs-content")
+        yield Static("Execution Details", classes="section-title")
+        yield Static("", id="execution-content")
+        yield Static("Git Context", classes="section-title")
+        yield Static("", id="git-content")
+        yield Static("Top Spenders", classes="section-title")
+        yield Static("", id="waypoint-costs-content")
         yield Static("Outstanding Issues", classes="section-title")
         yield Static("", id="issues-content")
         yield Static("Quality Gates", classes="section-title")
@@ -126,6 +140,10 @@ class DebriefPanel(VerticalScroll):
     def on_mount(self) -> None:
         """Load and display debrief data."""
         self._update_stats()
+        self._update_outputs()
+        self._update_execution()
+        self._update_git()
+        self._update_waypoint_costs()
         self._update_issues()
         self._update_quality_gates()
 
@@ -170,17 +188,12 @@ class DebriefPanel(VerticalScroll):
                     total_seconds += int(
                         (log.completed_at - log.started_at).total_seconds()
                     )
-                # Get max iteration from actual iteration entries only
-                # (exclude finalize entries which were logged as max+1 in legacy logs)
                 if log.entries:
                     iteration_entries = [
                         e for e in log.entries if e.entry_type == "iteration_start"
                     ]
                     if iteration_entries:
-                        # Filter out finalize phase (legacy logs used max+1)
-                        # Real iterations start at 1 and are contiguous
                         iterations = sorted(e.iteration for e in iteration_entries)
-                        # Find the highest contiguous iteration (1, 2, 3... not 11)
                         max_iter = 0
                         for i, it in enumerate(iterations, start=1):
                             if it == i:
@@ -199,6 +212,124 @@ class DebriefPanel(VerticalScroll):
         content = self.query_one("#stats-content", Static)
         content.update("\n".join(lines) if lines else "No statistics available")
 
+    def _update_outputs(self) -> None:
+        """Update project outputs section."""
+        lines: list[str] = []
+
+        # Project directory
+        lines.append(f"├─ Directory: {self.project.get_path()}")
+
+        # Generated documents
+        docs_path = self.project.get_docs_path()
+        if docs_path.exists():
+            docs = sorted(docs_path.glob("*.md"))
+            if docs:
+                for i, doc in enumerate(docs[:5]):  # Show up to 5 docs
+                    prefix = "└─" if i == len(docs) - 1 else "├─"
+                    lines.append(f"{prefix} {doc.name}")
+            else:
+                lines.append("└─ No documents generated")
+        else:
+            lines.append("└─ No documents generated")
+
+        content = self.query_one("#outputs-content", Static)
+        content.update("\n".join(lines))
+        content.add_class("muted-line")
+
+    def _update_execution(self) -> None:
+        """Update execution details section."""
+        lines: list[str] = []
+
+        # Model used (most common model from metrics)
+        try:
+            collector = MetricsCollector(self.project)
+            if collector._calls:
+                model_counts: dict[str, int] = {}
+                for call in collector._calls:
+                    model_counts[call.model] = model_counts.get(call.model, 0) + 1
+                primary_model = max(model_counts, key=model_counts.get)  # type: ignore
+                lines.append(f"├─ Model: {primary_model}")
+        except Exception:
+            pass
+
+        # Session history (recent runs)
+        try:
+            log_files = ExecutionLogReader.list_logs(self.project)
+            if log_files:
+                lines.append(f"├─ {len(log_files)} execution(s)")
+                # Show last 3 runs
+                for i, log_path in enumerate(log_files[:3]):
+                    log = ExecutionLogReader.load(log_path)
+                    if log.completed_at:
+                        time_ago = format_relative_time(log.completed_at)
+                        result = log.result or "unknown"
+                        prefix = "└─" if i == min(2, len(log_files) - 1) else "├─"
+                        lines.append(f"{prefix} {time_ago}: {result}")
+        except Exception:
+            pass
+
+        content = self.query_one("#execution-content", Static)
+        content.update("\n".join(lines) if lines else "└─ No execution data")
+        content.add_class("muted-line")
+
+    def _update_git(self) -> None:
+        """Update git context section."""
+        lines: list[str] = []
+
+        try:
+            git = GitService(self.project.get_path())
+            if git.is_git_repo():
+                branch = git.get_current_branch()
+                if branch:
+                    lines.append(f"├─ Branch: {branch}")
+
+                head = git.get_head_commit()
+                if head:
+                    lines.append(f"├─ HEAD: {head}")
+
+                has_changes = git.has_uncommitted_changes()
+                status = "Yes" if has_changes else "No"
+                lines.append(f"└─ Uncommitted changes: {status}")
+            else:
+                lines.append("└─ Not a git repository")
+        except Exception:
+            lines.append("└─ Git info unavailable")
+
+        content = self.query_one("#git-content", Static)
+        content.update("\n".join(lines))
+        content.add_class("muted-line")
+
+    def _update_waypoint_costs(self) -> None:
+        """Update top waypoint costs section (top 5)."""
+        lines: list[str] = []
+
+        try:
+            collector = MetricsCollector(self.project)
+            costs = collector.cost_by_waypoint()
+            if costs:
+                # Sort by cost descending, take top 5
+                sorted_costs = sorted(costs.items(), key=lambda x: x[1], reverse=True)
+                top5 = sorted_costs[:5]
+
+                # Get waypoint titles from flight plan
+                titles: dict[str, str] = {}
+                if self.flight_plan:
+                    for wp in self.flight_plan.waypoints:
+                        titles[wp.id] = wp.title[:30]  # Truncate long titles
+
+                for i, (wp_id, cost) in enumerate(top5):
+                    prefix = "└─" if i == len(top5) - 1 else "├─"
+                    title = titles.get(wp_id, wp_id)
+                    lines.append(f"{prefix} ${cost:.2f} - {title}")
+            else:
+                lines.append("└─ No waypoint cost data")
+        except Exception:
+            lines.append("└─ Cost breakdown unavailable")
+
+        content = self.query_one("#waypoint-costs-content", Static)
+        content.update("\n".join(lines))
+        content.add_class("muted-line")
+
     def _update_issues(self) -> None:
         """Update outstanding issues list."""
         issues: list[str] = []
@@ -208,8 +339,6 @@ class DebriefPanel(VerticalScroll):
             for wp in self.flight_plan.waypoints:
                 if wp.status == WaypointStatus.FAILED:
                     issues.append(f"├─ {wp.id}: {wp.title} (failed)")
-
-        # TODO: Parse receipts for quality gate failures
 
         content = self.query_one("#issues-content", Static)
         if issues:
@@ -221,9 +350,42 @@ class DebriefPanel(VerticalScroll):
 
     def _update_quality_gates(self) -> None:
         """Update quality gate results."""
-        # TODO: Parse receipts for quality gate results
+        lines: list[str] = []
+
+        # Check receipts directory for quality gate data
+        receipts_path = self.project.get_path() / "receipts"
+        if receipts_path.exists():
+            receipts = list(receipts_path.glob("*.json"))
+            if receipts:
+                lines.append(f"├─ {len(receipts)} receipt(s) found")
+                # Count pass/fail from most recent receipts per waypoint
+                passed = 0
+                failed = 0
+                for receipt_path in receipts:
+                    try:
+                        import json
+
+                        data = json.loads(receipt_path.read_text())
+                        checklist = data.get("checklist", [])
+                        all_passed = all(
+                            item.get("status") in ("passed", "skipped")
+                            for item in checklist
+                        )
+                        if all_passed:
+                            passed += 1
+                        else:
+                            failed += 1
+                    except Exception:
+                        continue
+                lines.append(f"└─ {passed} passed, {failed} failed")
+            else:
+                lines.append("└─ No quality receipts")
+        else:
+            lines.append("└─ No quality data")
+
         content = self.query_one("#quality-content", Static)
-        content.update("└─ Quality gate data not yet implemented")
+        content.update("\n".join(lines))
+        content.add_class("muted-line")
 
 
 class ShipPanel(VerticalScroll):
