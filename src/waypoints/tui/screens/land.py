@@ -273,23 +273,65 @@ class DebriefPanel(VerticalScroll):
         content.add_class("muted-line")
 
     def _update_git(self) -> None:
-        """Update git context section."""
+        """Update git context section with status icons and file counts."""
+        import subprocess
+
         lines: list[str] = []
+        project_path = self.project.get_path()
 
         try:
-            git = GitService(self.project.get_path())
+            git = GitService(project_path)
             if git.is_git_repo():
-                branch = git.get_current_branch()
-                if branch:
-                    lines.append(f"├─ Branch: {branch}")
-
+                branch = git.get_current_branch() or "HEAD"
                 head = git.get_head_commit()
-                if head:
-                    lines.append(f"├─ HEAD: {head}")
 
-                has_changes = git.has_uncommitted_changes()
-                status = "Yes" if has_changes else "No"
-                lines.append(f"└─ Uncommitted changes: {status}")
+                # Get detailed status
+                status_result = subprocess.run(
+                    ["git", "status", "--porcelain"],
+                    cwd=project_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                status_lines = [
+                    line for line in status_result.stdout.strip().split("\n") if line
+                ]
+
+                # Count file types
+                staged = sum(1 for ln in status_lines if ln[0] in "MADRC")
+                modified = sum(1 for ln in status_lines if ln[1] in "MD")
+                untracked = sum(1 for ln in status_lines if ln.startswith("??"))
+                total = len(status_lines)
+
+                # Determine status icon
+                if total == 0:
+                    icon = "[green]✓[/]"
+                    status_text = "clean"
+                elif untracked > 0:
+                    icon = "[red]●[/]"
+                    status_text = f"{total} changed"
+                else:
+                    icon = "[yellow]●[/]"
+                    status_text = f"{total} changed"
+
+                # Branch with icon
+                branch_line = f"├─ {branch} {icon} {status_text}"
+                if head:
+                    branch_line += f" ({head})"
+                lines.append(branch_line)
+
+                # File breakdown if there are changes
+                if total > 0:
+                    parts = []
+                    if staged > 0:
+                        parts.append(f"{staged} staged")
+                    if modified > 0:
+                        parts.append(f"{modified} modified")
+                    if untracked > 0:
+                        parts.append(f"{untracked} untracked")
+                    lines.append(f"└─ {', '.join(parts)}")
+                else:
+                    lines.append("└─ Working tree clean")
             else:
                 lines.append("└─ Not a git repository")
         except Exception:
