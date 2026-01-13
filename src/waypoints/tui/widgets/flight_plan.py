@@ -1192,17 +1192,7 @@ class AddWaypointModal(ModalScreen[str | None]):
     AddWaypointModal Button {
         margin: 0 1;
         min-width: 10;
-    }
-
-    AddWaypointModal Button#btn-generate {
-        background: $success-darken-2;
-    }
-
-    AddWaypointModal Button#btn-manual {
-        background: $surface-lighten-1;
-    }
-
-    AddWaypointModal Button#btn-cancel {
+        height: 3;
         background: $surface-lighten-1;
     }
     """
@@ -1216,7 +1206,7 @@ class AddWaypointModal(ModalScreen[str | None]):
             )
             yield TextArea(id="description-input")
             with Horizontal(classes="modal-actions"):
-                yield Button("Generate with AI", id="btn-generate", variant="primary")
+                yield Button("Generate with AI", id="btn-generate")
                 yield Button("Add Manually", id="btn-manual")
                 yield Button("Cancel", id="btn-cancel")
 
@@ -1328,13 +1318,7 @@ class ManualWaypointModal(ModalScreen[Waypoint | None]):
     ManualWaypointModal Button {
         margin: 0 1;
         min-width: 10;
-    }
-
-    ManualWaypointModal Button#btn-save {
-        background: $success-darken-2;
-    }
-
-    ManualWaypointModal Button#btn-cancel {
+        height: 3;
         background: $surface-lighten-1;
     }
     """
@@ -1354,7 +1338,7 @@ class ManualWaypointModal(ModalScreen[Waypoint | None]):
             yield Static("Acceptance Criteria (one per line):", classes="field-label")
             yield TextArea(id="criteria-input")
             with Horizontal(classes="modal-actions"):
-                yield Button("Save", id="btn-save", variant="primary")
+                yield Button("Save", id="btn-save")
                 yield Button("Cancel", id="btn-cancel")
 
     def on_mount(self) -> None:
@@ -1494,13 +1478,7 @@ class AddWaypointPreviewModal(ModalScreen[bool]):
     AddWaypointPreviewModal Button {
         margin: 0 1;
         min-width: 10;
-    }
-
-    AddWaypointPreviewModal Button#btn-confirm {
-        background: $success-darken-2;
-    }
-
-    AddWaypointPreviewModal Button#btn-cancel {
+        height: 3;
         background: $surface-lighten-1;
     }
     """
@@ -1541,7 +1519,7 @@ class AddWaypointPreviewModal(ModalScreen[bool]):
                 else:
                     yield Static("Will be appended to end", classes="insert-info")
             with Horizontal(classes="modal-actions"):
-                yield Button("Add Waypoint", id="btn-confirm", variant="primary")
+                yield Button("Add Waypoint", id="btn-confirm")
                 yield Button("Cancel", id="btn-cancel")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
