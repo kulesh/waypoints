@@ -53,7 +53,8 @@ class ActivityListPanel(Vertical):
     ActivityListPanel .panel-title {
         text-style: bold;
         color: $text;
-        padding: 0 0 0 1;
+        padding: 1 0 0 0;
+        text-align: center;
         border-bottom: solid $surface-lighten-1;
     }
 
