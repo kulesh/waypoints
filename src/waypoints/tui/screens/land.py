@@ -256,7 +256,7 @@ class DebriefPanel(VerticalScroll):
         try:
             log_files = ExecutionLogReader.list_logs(self.project)
             if log_files:
-                lines.append(f"├─ {len(log_files)} execution(s)")
+                lines.append(f"├─ {len(log_files)} waypoint runs")
                 # Show last 3 runs with waypoint info
                 for i, log_path in enumerate(log_files[:3]):
                     log = ExecutionLogReader.load(log_path)
