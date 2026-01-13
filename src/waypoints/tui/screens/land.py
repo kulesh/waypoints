@@ -472,13 +472,23 @@ class ShipPanel(VerticalScroll):
         yield Static("", classes="hint", id="ship-hint")
 
     def on_mount(self) -> None:
-        """Generate changelog preview."""
+        """Show release notes or changelog preview."""
         self._update_changelog()
         hint = self.query_one("#ship-hint", Static)
-        hint.update("Press 'g' to generate release notes, 't' to create git tag")
+        hint.update("Press 'g' to regenerate, 't' to create git tag")
 
     def _update_changelog(self) -> None:
-        """Generate changelog from completed waypoints."""
+        """Show release notes if available, otherwise show changelog preview."""
+        content = self.query_one("#changelog-content", Static)
+
+        # Check for generated release notes
+        release_notes_path = self.project.get_docs_path() / "release-notes.md"
+        if release_notes_path.exists():
+            notes = release_notes_path.read_text()
+            content.update(notes)
+            return
+
+        # Fallback to basic changelog preview
         lines: list[str] = ["Changelog Preview:", ""]
 
         if self.flight_plan:
@@ -490,7 +500,6 @@ class ShipPanel(VerticalScroll):
             for wp in completed:
                 lines.append(f"- {wp.title}")
 
-        content = self.query_one("#changelog-content", Static)
         content.update("\n".join(lines) if lines else "No completed waypoints")
 
 
@@ -716,9 +725,13 @@ class LandScreen(Screen[None]):
         self.app.switch_screen(ProjectSelectionScreen())
 
     def action_generate_release(self) -> None:
-        """Generate release notes (placeholder)."""
+        """Regenerate release notes."""
         if self.current_activity == LandActivity.SHIP:
-            self.notify("Release notes generation not yet implemented")
+            self.project._generate_release_notes()
+            # Refresh the ship panel
+            ship_panel = self.query_one("#ship-panel", ShipPanel)
+            ship_panel._update_changelog()
+            self.notify("Release notes regenerated")
 
     def action_create_tag(self) -> None:
         """Create git tag (placeholder)."""
