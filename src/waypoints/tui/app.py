@@ -25,24 +25,30 @@ from waypoints.tui.widgets.header import StatusHeader
 logger = logging.getLogger(__name__)
 
 # Phase transition commit messages and tags
+# Only commits when transitioning FROM the specified phase (forward transitions only)
 PHASE_COMMITS: dict[str, dict[str, str | None]] = {
     "idea-brief": {
+        "from": "ideation-qa",
         "message": "feat({slug}): Complete ideation phase",
         "tag": "{slug}/idea-brief",
     },
     "product-spec": {
+        "from": "idea-brief",
         "message": "feat({slug}): Finalize idea brief",
         "tag": None,
     },
     "chart": {
+        "from": "product-spec",
         "message": "feat({slug}): Complete product specification",
         "tag": "{slug}/spec",
     },
     "fly": {
+        "from": "chart",
         "message": "feat({slug}): Flight plan ready for takeoff",
         "tag": "{slug}/ready",
     },
     "land": {
+        "from": "fly",
         "message": "feat({slug}): Complete all waypoints",
         "tag": "{slug}/complete",
     },
@@ -401,10 +407,21 @@ class WaypointsApp(App[None]):
             logger.debug("Auto-commit disabled, skipping phase commit")
             return
 
-        # Get commit config for this phase
+        # Get commit config for this phase transition
         phase_config = PHASE_COMMITS.get(to_phase)
         if not phase_config:
             logger.debug("No commit config for phase: %s", to_phase)
+            return
+
+        # Only commit on forward transitions (from expected source phase)
+        expected_from = phase_config.get("from")
+        if expected_from and from_phase != expected_from:
+            logger.debug(
+                "Skipping commit: transition %s->%s is not forward (expected from %s)",
+                from_phase,
+                to_phase,
+                expected_from,
+            )
             return
 
         git = GitService(project_path)
