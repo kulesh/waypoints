@@ -386,7 +386,6 @@ class ProductSpecScreen(Screen[None]):
                 "idea": self.idea,
                 "brief": self.brief,
                 "history": self.history,
-                "from_phase": "product-spec",
             },
         )
 
@@ -597,7 +596,6 @@ class ProductSpecResumeScreen(Screen[None], MentionProcessingMixin):
                 "spec": self.spec_content,
                 "idea": self.project.initial_idea,
                 "brief": self.brief,
-                "from_phase": "product-spec",
             },
         )
 

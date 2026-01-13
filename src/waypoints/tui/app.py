@@ -8,7 +8,6 @@ from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 
 from waypoints.config import settings
-from waypoints.git import GitConfig, GitService
 from waypoints.llm.metrics import MetricsCollector
 from waypoints.models import PHASE_TO_STATE, Project
 from waypoints.models.dialogue import DialogueHistory
@@ -23,36 +22,6 @@ from waypoints.tui.screens.product_spec import ProductSpecScreen
 from waypoints.tui.widgets.header import StatusHeader
 
 logger = logging.getLogger(__name__)
-
-# Phase transition commit messages and tags
-# Only commits when transitioning FROM the specified phase (forward transitions only)
-PHASE_COMMITS: dict[str, dict[str, str | None]] = {
-    "idea-brief": {
-        "from": "ideation-qa",
-        "message": "feat({slug}): Complete ideation phase",
-        "tag": "{slug}/idea-brief",
-    },
-    "product-spec": {
-        "from": "idea-brief",
-        "message": "feat({slug}): Finalize idea brief",
-        "tag": None,
-    },
-    "chart": {
-        "from": "product-spec",
-        "message": "feat({slug}): Complete product specification",
-        "tag": "{slug}/spec",
-    },
-    "fly": {
-        "from": "chart",
-        "message": "feat({slug}): Flight plan ready for takeoff",
-        "tag": "{slug}/ready",
-    },
-    "land": {
-        "from": "fly",
-        "message": "feat({slug}): Complete all waypoints",
-        "tag": "{slug}/complete",
-    },
-}
 
 
 class WaypointsCommands(Provider):
@@ -297,26 +266,24 @@ class WaypointsApp(App[None]):
         settings.theme = new_theme
 
     def switch_phase(self, phase: str, data: dict[str, Any] | None = None) -> None:
-        """Switch to a different phase, optionally with data."""
+        """Switch to a different phase, optionally with data.
+
+        Note: Git commits happen in Project.transition_journey(), not here.
+        This method only handles screen navigation.
+        """
         data = data or {}
         project: Project | None = cast(Project | None, data.get("project"))
-        from_phase = data.get("from_phase")
 
         # Log journey state for debugging
         if project:
             target_state = PHASE_TO_STATE.get(phase)
             current_state = project.journey.state if project.journey else None
             logger.info(
-                "Phase switch: %s -> %s (journey: %s -> %s)",
-                from_phase,
+                "Screen switch to %s (journey: %s -> %s)",
                 phase,
                 current_state.value if current_state else "none",
                 target_state.value if target_state else "unknown",
             )
-
-        # Commit phase transition if we have a project and a from_phase
-        if project and from_phase:
-            self._commit_phase_transition(project, from_phase, phase)
 
         if phase == "ideation":
             self.switch_screen(IdeationScreen())
@@ -391,76 +358,3 @@ class WaypointsApp(App[None]):
             self.theme = (
                 "textual-dark" if self.theme == "textual-light" else "textual-light"
             )
-
-    def _commit_phase_transition(
-        self, project: Project, from_phase: str, to_phase: str
-    ) -> None:
-        """Commit project artifacts at phase transition.
-
-        Unlike waypoint completion (which requires receipt validation),
-        phase transitions just commit the generated artifacts directly.
-        """
-        project_path = project.get_path()
-        config = GitConfig.load(project.slug)
-
-        if not config.auto_commit:
-            logger.debug("Auto-commit disabled, skipping phase commit")
-            return
-
-        # Get commit config for this phase transition
-        phase_config = PHASE_COMMITS.get(to_phase)
-        if not phase_config:
-            logger.debug("No commit config for phase: %s", to_phase)
-            return
-
-        # Only commit on forward transitions (from expected source phase)
-        expected_from = phase_config.get("from")
-        if expected_from and from_phase != expected_from:
-            logger.debug(
-                "Skipping commit: transition %s->%s is not forward (expected from %s)",
-                from_phase,
-                to_phase,
-                expected_from,
-            )
-            return
-
-        git = GitService(project_path)
-
-        # Auto-init if needed
-        if not git.is_git_repo():
-            if config.auto_init:
-                result = git.init_repo()
-                if result.success:
-                    self.notify("Initialized git repository")
-                else:
-                    logger.warning("Failed to init git repo: %s", result.message)
-                    return
-            else:
-                logger.debug("Not a git repo and auto-init disabled")
-                return
-
-        # Stage project files
-        git.stage_project_files(project.slug)
-
-        # Build and execute commit
-        message = phase_config["message"]
-        if message:
-            commit_msg = message.format(slug=project.slug)
-            result = git.commit(commit_msg)
-
-            if result.success and "Nothing to commit" not in result.message:
-                logger.info("Phase commit: %s", commit_msg)
-                self.notify(f"Committed: {to_phase} phase")
-
-                # Create tag if configured
-                if config.create_phase_tags:
-                    tag_template = phase_config.get("tag")
-                    if tag_template:
-                        tag_name = tag_template.format(slug=project.slug)
-                        tag_result = git.tag(
-                            tag_name, f"Phase transition: {from_phase} → {to_phase}"
-                        )
-                        if tag_result.success:
-                            logger.info("Created tag: %s", tag_name)
-            elif not result.success:
-                logger.error("Phase commit failed: %s", result.message)
