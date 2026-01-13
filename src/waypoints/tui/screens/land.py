@@ -252,11 +252,21 @@ class DebriefPanel(VerticalScroll):
         except Exception:
             pass
 
-        # Waypoint run count
+        # Waypoint run count and total time
         try:
             log_files = ExecutionLogReader.list_logs(self.project)
             if log_files:
-                lines.append(f"└─ {len(log_files)} waypoint runs")
+                lines.append(f"├─ {len(log_files)} waypoint runs")
+                # Calculate total execution time
+                total_seconds = 0
+                for log_path in log_files:
+                    log = ExecutionLogReader.load(log_path)
+                    if log.completed_at and log.started_at:
+                        total_seconds += int(
+                            (log.completed_at - log.started_at).total_seconds()
+                        )
+                if total_seconds > 0:
+                    lines.append(f"└─ {format_duration(total_seconds)} build time")
         except Exception:
             pass
 
