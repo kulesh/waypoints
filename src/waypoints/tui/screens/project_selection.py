@@ -131,7 +131,7 @@ class ProjectListPanel(Vertical):
     ProjectListPanel .panel-title {
         text-style: bold;
         color: $text;
-        padding: 0 1;
+        padding: 1 1 0 1;
         text-align: center;
         border-bottom: solid $surface-lighten-1;
     }
@@ -200,6 +200,7 @@ class ProjectPreviewPanel(VerticalScroll):
     ProjectPreviewPanel .panel-title {
         text-style: bold;
         color: $text;
+        padding-top: 1;
         text-align: center;
         border-bottom: solid $surface-lighten-1;
         margin-bottom: 1;
