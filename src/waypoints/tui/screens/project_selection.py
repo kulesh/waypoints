@@ -131,7 +131,8 @@ class ProjectListPanel(Vertical):
     ProjectListPanel .panel-title {
         text-style: bold;
         color: $text;
-        padding: 1;
+        padding: 0 1;
+        text-align: center;
         border-bottom: solid $surface-lighten-1;
     }
 
@@ -199,7 +200,7 @@ class ProjectPreviewPanel(VerticalScroll):
     ProjectPreviewPanel .panel-title {
         text-style: bold;
         color: $text;
-        padding-bottom: 1;
+        text-align: center;
         border-bottom: solid $surface-lighten-1;
         margin-bottom: 1;
     }
@@ -345,6 +346,9 @@ class ProjectPreviewPanel(VerticalScroll):
             updated = format_relative_time(project.updated_at)
             content.mount(Static(f"Created: {created}", classes="project-meta"))
             content.mount(Static(f"Updated: {updated}", classes="project-meta"))
+            content.mount(
+                Static(f"Directory: {project.get_path()}", classes="project-meta")
+            )
 
             # Waypoint progress (only if flight plan exists)
             stats = self._get_waypoint_stats(project)
