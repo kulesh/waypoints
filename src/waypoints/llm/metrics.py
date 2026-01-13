@@ -73,7 +73,7 @@ class LLMCall:
         phase: str,
         cost_usd: float,
         latency_ms: int,
-        model: str = "claude-3-5-sonnet",
+        model: str = "claude-sonnet-4",
         waypoint_id: str | None = None,
         success: bool = True,
         error: str | None = None,

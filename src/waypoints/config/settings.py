@@ -122,6 +122,22 @@ class Settings:
         """Set the projects directory."""
         self.set("project_directory", str(value))
 
+    @property
+    def model(self) -> str:
+        """Get the LLM model name for metrics tracking.
+
+        This should match the model used by Claude Agent SDK.
+        """
+        saved = self._data.get("model")
+        if saved:
+            return str(saved)
+        return "claude-sonnet-4"  # Current default model
+
+    @model.setter
+    def model(self, value: str) -> None:
+        """Set the model name."""
+        self.set("model", value)
+
 
 # Global settings instance
 settings = Settings()
