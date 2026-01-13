@@ -135,15 +135,15 @@ class GitService:
     def stage_project_files(self, project_slug: str) -> GitResult:
         """Stage all project artifacts for commit.
 
-        Stages:
-        - .waypoints/projects/{slug}/** (sessions, docs, receipts, flight-plan)
+        Stages all files in the project directory, including:
+        - Waypoints metadata (docs/, project.json, flight-plan.jsonl, etc.)
+        - Generated source code (src/, tests/, etc.)
+        - Receipts (.waypoints/projects/{slug}/receipts/)
 
-        Does NOT stage (via .gitignore):
-        - .waypoints/debug.log (application logs)
-        - .waypoints/settings.json (user preferences)
+        Respects .gitignore for excluding unwanted files.
         """
-        project_path = f".waypoints/projects/{project_slug}/"
-        return self.stage_files(project_path)
+        # Stage all files in the working directory (respects .gitignore)
+        return self.stage_files(".")
 
     def has_staged_changes(self) -> bool:
         """Check if there are staged changes ready to commit."""

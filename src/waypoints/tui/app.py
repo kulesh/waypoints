@@ -42,6 +42,10 @@ PHASE_COMMITS: dict[str, dict[str, str | None]] = {
         "message": "feat({slug}): Flight plan ready for takeoff",
         "tag": "{slug}/ready",
     },
+    "land": {
+        "message": "feat({slug}): Complete all waypoints",
+        "tag": "{slug}/complete",
+    },
 }
 
 
