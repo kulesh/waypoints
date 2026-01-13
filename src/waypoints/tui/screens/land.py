@@ -53,7 +53,7 @@ class ActivityListPanel(Vertical):
     ActivityListPanel .panel-title {
         text-style: bold;
         color: $text;
-        padding: 1;
+        padding: 0 0 0 1;
         border-bottom: solid $surface-lighten-1;
     }
 
@@ -474,8 +474,6 @@ class ShipPanel(VerticalScroll):
     def on_mount(self) -> None:
         """Show release notes or changelog preview."""
         self._update_changelog()
-        hint = self.query_one("#ship-hint", Static)
-        hint.update("Press 'g' to regenerate, 't' to create git tag")
 
     def _update_changelog(self) -> None:
         """Show release notes if available, otherwise show changelog preview."""
@@ -550,8 +548,6 @@ class IteratePanel(VerticalScroll):
             "├─ Mark project as closed\n"
             "└─ Return to project list"
         )
-        hint = self.query_one("#iterate-hint", Static)
-        hint.update("Press 'n' for new iteration, 'c' to close, 'esc' to go back")
 
 
 class LandScreen(Screen[None]):
