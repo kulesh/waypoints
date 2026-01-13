@@ -365,7 +365,6 @@ class IdeaBriefScreen(Screen[None]):
                 "idea": self.idea,
                 "brief": self.brief_content,
                 "history": self.history,
-                "from_phase": "idea-brief",
             },
         )
 
@@ -569,7 +568,6 @@ class IdeaBriefResumeScreen(Screen[None], MentionProcessingMixin):
                 "project": self.project,
                 "idea": self.project.initial_idea,
                 "brief": self.brief_content,
-                "from_phase": "idea-brief",
             },
         )
 

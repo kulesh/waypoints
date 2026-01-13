@@ -179,6 +179,90 @@ class Project:
         self.journey = self.journey.transition(target)
         self.save()
 
+        # Commit at milestone states (domain layer, not UX layer)
+        self._commit_milestone_if_needed(target)
+
+    def _commit_milestone_if_needed(self, state: JourneyState) -> None:
+        """Commit project artifacts when reaching a milestone state.
+
+        This is called from transition_journey() to ensure commits only
+        happen on actual state transitions, not screen navigation.
+        """
+        import logging
+        from datetime import UTC, datetime
+
+        from waypoints.git.config import GitConfig
+        from waypoints.git.service import GitService
+        from waypoints.models.journey import JourneyState
+
+        logger = logging.getLogger(__name__)
+
+        # Map milestone states to (commit_message, phase_name)
+        milestone_commits = {
+            JourneyState.SHAPE_BRIEF_REVIEW: (
+                "feat({slug}): Complete ideation",
+                "idea-brief",
+            ),
+            JourneyState.SHAPE_SPEC_REVIEW: (
+                "feat({slug}): Finalize idea brief",
+                "product-spec",
+            ),
+            JourneyState.CHART_REVIEW: (
+                "feat({slug}): Complete product spec",
+                "chart",
+            ),
+            JourneyState.FLY_READY: (
+                "feat({slug}): Flight plan ready",
+                "fly",
+            ),
+            JourneyState.LAND_REVIEW: (
+                "feat({slug}): Complete all waypoints",
+                "land",
+            ),
+        }
+
+        if state not in milestone_commits:
+            return
+
+        config = GitConfig.load(self.slug)
+        if not config.auto_commit:
+            logger.debug("Auto-commit disabled, skipping milestone commit")
+            return
+
+        message_template, phase_name = milestone_commits[state]
+        git = GitService(self.get_path())
+
+        # Auto-init if needed
+        if not git.is_git_repo():
+            if config.auto_init:
+                result = git.init_repo()
+                if not result.success:
+                    logger.warning("Failed to init git repo: %s", result.message)
+                    return
+            else:
+                logger.debug("Not a git repo and auto-init disabled")
+                return
+
+        # Stage all project files
+        git.stage_project_files(self.slug)
+
+        # Commit
+        commit_msg = message_template.format(slug=self.slug)
+        result = git.commit(commit_msg)
+
+        if result.success and "Nothing to commit" not in result.message:
+            logger.info("Milestone commit: %s", commit_msg)
+
+            # Tag with phase name and timestamp
+            if config.create_phase_tags:
+                timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+                tag_name = f"{self.slug}/{phase_name}-{timestamp}"
+                tag_result = git.tag(tag_name, f"Phase: {phase_name}")
+                if tag_result.success:
+                    logger.info("Created tag: %s", tag_name)
+        elif not result.success:
+            logger.error("Milestone commit failed: %s", result.message)
+
     def delete(self) -> None:
         """Delete this project and all its files.
 

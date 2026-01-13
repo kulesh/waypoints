@@ -1542,7 +1542,6 @@ class FlyScreen(Screen[None]):
                 "project": self.project,
                 "flight_plan": self.flight_plan,
                 "spec": self.spec,
-                "from_phase": "fly",
             },
         )
 
