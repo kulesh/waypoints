@@ -182,6 +182,78 @@ class Project:
         # Commit at milestone states (domain layer, not UX layer)
         self._commit_milestone_if_needed(target)
 
+    def _generate_release_notes(self) -> None:
+        """Generate release notes from completed waypoints.
+
+        Creates a docs/release-notes.md file with project summary
+        and list of completed features from the flight plan.
+        """
+        import logging
+        from datetime import UTC, datetime
+
+        from waypoints.models.flight_plan import FlightPlanReader
+        from waypoints.models.waypoint import WaypointStatus
+
+        logger = logging.getLogger(__name__)
+
+        flight_plan = FlightPlanReader.load(self)
+        if not flight_plan:
+            logger.debug("No flight plan found, skipping release notes")
+            return
+
+        # Get completed top-level waypoints (not subtasks)
+        completed = [
+            wp
+            for wp in flight_plan.waypoints
+            if wp.status == WaypointStatus.COMPLETE and not wp.parent_id
+        ]
+
+        if not completed:
+            logger.debug("No completed waypoints, skipping release notes")
+            return
+
+        # Generate release notes content
+        lines = [
+            f"# {self.name} - Release Notes",
+            "",
+        ]
+
+        # Add summary if available
+        summary = self.summary or self.initial_idea or ""
+        if summary:
+            # Truncate long summaries
+            if len(summary) > 500:
+                summary = summary[:500] + "..."
+            lines.extend([summary, ""])
+
+        lines.extend(["## Features", ""])
+
+        for wp in completed:
+            lines.append(f"- **{wp.title}**")
+            if wp.objective:
+                # Indent first 2 lines of objective
+                obj_lines = wp.objective.strip().split("\n")
+                for line in obj_lines[:2]:
+                    if line.strip():
+                        lines.append(f"  {line.strip()}")
+
+        lines.extend(
+            [
+                "",
+                "## Build Info",
+                "",
+                f"- Waypoints completed: {len(completed)}",
+                f"- Generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
+            ]
+        )
+
+        # Save to docs directory
+        docs_dir = self.get_docs_path()
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        release_notes_path = docs_dir / "release-notes.md"
+        release_notes_path.write_text("\n".join(lines))
+        logger.info("Generated release notes: %s", release_notes_path)
+
     def _commit_milestone_if_needed(self, state: JourneyState) -> None:
         """Commit project artifacts when reaching a milestone state.
 
@@ -223,6 +295,10 @@ class Project:
 
         if state not in milestone_commits:
             return
+
+        # Generate release notes at landing (before staging)
+        if state == JourneyState.LAND_REVIEW:
+            self._generate_release_notes()
 
         config = GitConfig.load(self.slug)
         if not config.auto_commit:
