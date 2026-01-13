@@ -21,6 +21,17 @@ DEFAULT_GITIGNORE = """\
 # User settings (not project-specific)
 .waypoints/settings.json
 
+# Build artifacts
+target/
+build/
+dist/
+out/
+*.egg-info/
+
+# Dependencies
+node_modules/
+vendor/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -28,6 +39,10 @@ __pycache__/
 .venv/
 venv/
 .env
+.coverage
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # IDE
 .idea/
