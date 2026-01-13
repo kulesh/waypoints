@@ -4,7 +4,7 @@
 
 Waypoints transforms software development from a task-management exercise into a guided journey. Like an aircraft's flight management system, Waypoints takes your destination (a product idea), collaborates with you to chart waypoints, then engages autopilot for the journey—with you always able to take control.
 
-> **Status**: Work in progress. Currently implementing the FLY phase (automated waypoint execution).
+> **Status**: Work in progress. All four phases (SPARK, SHAPE, CHART, FLY) are functional.
 
 ## The Journey
 
@@ -29,6 +29,7 @@ Waypoints guides you through four phases:
 - **Conversational ideation**: Talk through your idea with AI that asks clarifying questions
 - **Live brief generation**: Watch your idea crystallize into a structured document
 - **Automatic waypoint planning**: AI decomposes your product spec into executable tasks
+- **Waypoint management**: Add, edit, break down, or delete waypoints with AI assistance
 - **Agentic execution**: AI implements each waypoint using test-driven development
 - **Inline AI editing**: Leave `@waypoints:` instructions in documents for AI to process
 - **Document versioning**: All document changes create new timestamped versions
@@ -87,6 +88,16 @@ uv run waypoints
 | `Ctrl+S` | Save document |
 | `e` | Open in external editor |
 | `Ctrl+Enter` | Proceed to next phase |
+
+**Waypoint Planning (CHART phase):**
+
+| Key | Action |
+|-----|--------|
+| `a` | Add new waypoint (AI-assisted) |
+| `e` | Edit selected waypoint |
+| `b` | Break down into sub-waypoints |
+| `d` | Delete waypoint |
+| `Ctrl+Enter` | Proceed to FLY phase |
 
 **Execution (FLY phase):**
 
