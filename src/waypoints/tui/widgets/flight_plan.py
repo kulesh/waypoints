@@ -1146,13 +1146,11 @@ class AddWaypointModal(ModalScreen[str | None]):
     }
 
     AddWaypointModal > Vertical {
-        width: 80%;
-        max-width: 100;
+        width: 70;
         height: auto;
-        max-height: 30;
+        max-height: 24;
         background: $surface;
         border: solid $surface-lighten-2;
-        border-top: solid $primary;
         padding: 1 2;
     }
 
@@ -1161,6 +1159,8 @@ class AddWaypointModal(ModalScreen[str | None]):
         color: $text;
         text-align: center;
         padding: 1 0;
+        margin-bottom: 1;
+        border-bottom: solid $surface-lighten-1;
     }
 
     AddWaypointModal .modal-label {
@@ -1169,29 +1169,41 @@ class AddWaypointModal(ModalScreen[str | None]):
     }
 
     AddWaypointModal TextArea {
-        height: 8;
+        height: 6;
         margin-bottom: 1;
+        background: $surface-lighten-1;
+        border: none;
+    }
+
+    AddWaypointModal TextArea:focus {
+        background: $surface-lighten-2;
+        border: none;
     }
 
     AddWaypointModal .modal-actions {
         dock: bottom;
         height: auto;
         padding: 1 0 0 0;
+        margin-top: 1;
         border-top: solid $surface-lighten-1;
         align: center middle;
     }
 
     AddWaypointModal Button {
         margin: 0 1;
-        min-width: 16;
+        min-width: 10;
     }
 
     AddWaypointModal Button#btn-generate {
-        background: $primary-darken-1;
+        background: $success-darken-2;
     }
 
     AddWaypointModal Button#btn-manual {
-        background: $surface-lighten-2;
+        background: $surface-lighten-1;
+    }
+
+    AddWaypointModal Button#btn-cancel {
+        background: $surface-lighten-1;
     }
     """
 
@@ -1253,13 +1265,11 @@ class ManualWaypointModal(ModalScreen[Waypoint | None]):
     }
 
     ManualWaypointModal > Vertical {
-        width: 80%;
-        max-width: 100;
+        width: 70;
         height: auto;
-        max-height: 40;
+        max-height: 36;
         background: $surface;
         border: solid $surface-lighten-2;
-        border-top: solid $primary;
         padding: 1 2;
     }
 
@@ -1268,6 +1278,8 @@ class ManualWaypointModal(ModalScreen[Waypoint | None]):
         color: $text;
         text-align: center;
         padding: 1 0;
+        margin-bottom: 1;
+        border-bottom: solid $surface-lighten-1;
     }
 
     ManualWaypointModal .field-label {
@@ -1277,6 +1289,23 @@ class ManualWaypointModal(ModalScreen[Waypoint | None]):
 
     ManualWaypointModal Input {
         margin-bottom: 0;
+        background: $surface-lighten-1;
+        border: none;
+    }
+
+    ManualWaypointModal Input:focus {
+        background: $surface-lighten-2;
+        border: none;
+    }
+
+    ManualWaypointModal TextArea {
+        background: $surface-lighten-1;
+        border: none;
+    }
+
+    ManualWaypointModal TextArea:focus {
+        background: $surface-lighten-2;
+        border: none;
     }
 
     ManualWaypointModal TextArea#objective-input {
@@ -1303,6 +1332,10 @@ class ManualWaypointModal(ModalScreen[Waypoint | None]):
 
     ManualWaypointModal Button#btn-save {
         background: $success-darken-2;
+    }
+
+    ManualWaypointModal Button#btn-cancel {
+        background: $surface-lighten-1;
     }
     """
 
@@ -1389,13 +1422,11 @@ class AddWaypointPreviewModal(ModalScreen[bool]):
     }
 
     AddWaypointPreviewModal > Vertical {
-        width: 80%;
-        max-width: 100;
+        width: 70;
         height: auto;
-        max-height: 35;
+        max-height: 32;
         background: $surface;
         border: solid $surface-lighten-2;
-        border-top: solid $success;
         padding: 1 2;
     }
 
@@ -1404,12 +1435,18 @@ class AddWaypointPreviewModal(ModalScreen[bool]):
         color: $text;
         text-align: center;
         padding: 1 0;
+        margin-bottom: 1;
+        border-bottom: solid $surface-lighten-1;
     }
 
     AddWaypointPreviewModal .modal-content {
         height: auto;
-        max-height: 20;
-        padding: 1;
+        max-height: 18;
+        padding: 0;
+        scrollbar-gutter: stable;
+        scrollbar-size: 1 1;
+        scrollbar-background: transparent;
+        scrollbar-color: $surface-lighten-2;
     }
 
     AddWaypointPreviewModal .waypoint-id {
@@ -1449,6 +1486,7 @@ class AddWaypointPreviewModal(ModalScreen[bool]):
         dock: bottom;
         height: auto;
         padding: 1 0 0 0;
+        margin-top: 1;
         border-top: solid $surface-lighten-1;
         align: center middle;
     }
@@ -1460,6 +1498,10 @@ class AddWaypointPreviewModal(ModalScreen[bool]):
 
     AddWaypointPreviewModal Button#btn-confirm {
         background: $success-darken-2;
+    }
+
+    AddWaypointPreviewModal Button#btn-cancel {
+        background: $surface-lighten-1;
     }
     """
 
