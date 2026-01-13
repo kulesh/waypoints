@@ -169,12 +169,14 @@ class ChatClient:
             # Record metrics
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
             if self._metrics is not None:
+                from waypoints.config.settings import settings
                 from waypoints.llm.metrics import LLMCall
 
                 call = LLMCall.create(
                     phase=self._phase,
                     cost_usd=cost or 0.0,
                     latency_ms=elapsed_ms,
+                    model=settings.model,
                     success=success,
                     error=error_msg,
                 )
@@ -360,6 +362,7 @@ async def agent_query(
             # Record successful metrics
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
             if metrics_collector is not None:
+                from waypoints.config.settings import settings
                 from waypoints.llm.metrics import LLMCall
 
                 call = LLMCall.create(
@@ -367,6 +370,7 @@ async def agent_query(
                     waypoint_id=waypoint_id,
                     cost_usd=cost or 0.0,
                     latency_ms=elapsed_ms,
+                    model=settings.model,
                     success=True,
                     error=None,
                 )
@@ -386,6 +390,7 @@ async def agent_query(
                 # Record failed metrics
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
                 if metrics_collector is not None:
+                    from waypoints.config.settings import settings
                     from waypoints.llm.metrics import LLMCall
 
                     call = LLMCall.create(
@@ -393,6 +398,7 @@ async def agent_query(
                         waypoint_id=waypoint_id,
                         cost_usd=cost or 0.0,
                         latency_ms=elapsed_ms,
+                        model=settings.model,
                         success=False,
                         error=error_msg,
                     )
@@ -413,6 +419,7 @@ async def agent_query(
         # Record final failure metrics
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
         if metrics_collector is not None:
+            from waypoints.config.settings import settings
             from waypoints.llm.metrics import LLMCall
 
             call = LLMCall.create(
@@ -420,6 +427,7 @@ async def agent_query(
                 waypoint_id=waypoint_id,
                 cost_usd=final_cost or 0.0,
                 latency_ms=elapsed_ms,
+                model=settings.model,
                 success=False,
                 error=error_msg,
             )
