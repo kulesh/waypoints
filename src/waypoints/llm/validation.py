@@ -11,6 +11,30 @@ from typing import Any
 
 import jsonschema  # type: ignore[import-untyped]
 
+# JSON Schema for a single waypoint (used when adding new waypoints)
+SINGLE_WAYPOINT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["id", "title", "objective", "acceptance_criteria"],
+    "properties": {
+        "id": {"type": "string", "pattern": "^WP-[0-9]+[a-z]?$"},
+        "title": {"type": "string", "minLength": 3},
+        "objective": {"type": "string", "minLength": 10},
+        "acceptance_criteria": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+        },
+        "parent_id": {"type": ["string", "null"]},
+        "dependencies": {
+            "type": "array",
+            "items": {"type": "string"},
+            "default": [],
+        },
+        "insert_after": {"type": ["string", "null"]},
+    },
+    "additionalProperties": False,
+}
+
 # JSON Schema for waypoint array
 WAYPOINT_SCHEMA: dict[str, Any] = {
     "type": "array",
@@ -186,3 +210,97 @@ def validate_waypoints(
         return ValidationResult(valid=False, errors=semantic_errors)
 
     return ValidationResult(valid=True, data=data)
+
+
+def extract_json_object(response: str) -> dict[str, Any]:
+    """Extract JSON object from LLM response.
+
+    Handles:
+    - Plain JSON object
+    - JSON wrapped in markdown code fences
+    - JSON with surrounding text
+
+    Args:
+        response: Raw LLM response text.
+
+    Returns:
+        Parsed JSON object.
+
+    Raises:
+        ValueError: If no JSON object found.
+        json.JSONDecodeError: If JSON is malformed.
+    """
+    # Strip markdown fences if present
+    cleaned = re.sub(r"```json\s*", "", response)
+    cleaned = re.sub(r"```\s*", "", cleaned)
+
+    # Find object pattern (match outermost braces)
+    match = re.search(r"\{[\s\S]*\}", cleaned)
+    if not match:
+        raise ValueError("No JSON object found in response")
+
+    result: dict[str, Any] = json.loads(match.group())
+    return result
+
+
+@dataclass
+class SingleWaypointResult:
+    """Result of single waypoint validation."""
+
+    valid: bool
+    data: dict[str, Any] | None = None
+    insert_after: str | None = None
+    errors: list[str] = field(default_factory=list)
+
+
+def validate_single_waypoint(
+    response: str, existing_ids: set[str]
+) -> SingleWaypointResult:
+    """Validate a single waypoint from LLM response.
+
+    Args:
+        response: Raw LLM response containing waypoint JSON object.
+        existing_ids: Set of existing waypoint IDs.
+
+    Returns:
+        SingleWaypointResult with valid flag, parsed data, insert position, and errors.
+    """
+    # Extract JSON object
+    try:
+        data = extract_json_object(response)
+    except ValueError as e:
+        return SingleWaypointResult(valid=False, errors=[str(e)])
+    except json.JSONDecodeError as e:
+        return SingleWaypointResult(valid=False, errors=[f"Invalid JSON: {e}"])
+
+    # Schema validation
+    errors: list[str] = []
+    validator = jsonschema.Draft7Validator(SINGLE_WAYPOINT_SCHEMA)
+    for error in validator.iter_errors(data):
+        path = error.json_path if error.json_path != "$" else "root"
+        errors.append(f"{path}: {error.message}")
+
+    if errors:
+        return SingleWaypointResult(valid=False, errors=errors)
+
+    # Semantic validation
+    wp_id = data.get("id", "")
+
+    # Check ID not already used
+    if wp_id in existing_ids:
+        errors.append(f"ID '{wp_id}' already exists")
+
+    # Check dependencies reference existing waypoints
+    for dep_id in data.get("dependencies", []):
+        if dep_id not in existing_ids:
+            errors.append(f"Dependency '{dep_id}' not found")
+
+    # Check insert_after references existing waypoint
+    insert_after = data.get("insert_after")
+    if insert_after and insert_after not in existing_ids:
+        errors.append(f"insert_after '{insert_after}' not found")
+
+    if errors:
+        return SingleWaypointResult(valid=False, errors=errors)
+
+    return SingleWaypointResult(valid=True, data=data, insert_after=insert_after)
