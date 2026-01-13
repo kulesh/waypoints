@@ -71,6 +71,27 @@ class FlightPlan:
                 self.waypoints.insert(parent_idx + 1 + i, wp)
         self.updated_at = datetime.now()
 
+    def insert_waypoint_at(self, waypoint: Waypoint, after_id: str | None) -> None:
+        """Insert a single waypoint at a specific position.
+
+        Args:
+            waypoint: The waypoint to insert.
+            after_id: Insert after this waypoint ID. If None, insert at the beginning.
+        """
+        if after_id is None:
+            self.waypoints.insert(0, waypoint)
+        else:
+            idx = next(
+                (i for i, wp in enumerate(self.waypoints) if wp.id == after_id),
+                None,
+            )
+            if idx is None:
+                # Fallback: append to end
+                self.waypoints.append(waypoint)
+            else:
+                self.waypoints.insert(idx + 1, waypoint)
+        self.updated_at = datetime.now()
+
     def update_waypoint(self, waypoint: Waypoint) -> bool:
         """Update an existing waypoint.
 

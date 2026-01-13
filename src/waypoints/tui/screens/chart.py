@@ -17,7 +17,11 @@ if TYPE_CHECKING:
     from waypoints.tui.app import WaypointsApp
 
 from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
-from waypoints.llm.validation import WaypointValidationError, validate_waypoints
+from waypoints.llm.validation import (
+    WaypointValidationError,
+    validate_single_waypoint,
+    validate_waypoints,
+)
 from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader, FlightPlanWriter
@@ -25,9 +29,12 @@ from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.flight_plan import (
+    AddWaypointModal,
+    AddWaypointPreviewModal,
     BreakDownPreviewModal,
     ConfirmDeleteModal,
     FlightPlanPanel,
+    ManualWaypointModal,
     WaypointDetailModal,
     WaypointOpenDetail,
     WaypointPreviewPanel,
@@ -95,6 +102,35 @@ Product Specification:
 
 Generate the waypoints JSON now:"""
 
+WAYPOINT_ADD_PROMPT = """\
+Generate a single waypoint based on the user's description.
+
+User's description:
+{description}
+
+Existing flight plan waypoints:
+{existing_waypoints}
+
+Product Spec (summary):
+{spec_summary}
+
+Generate a waypoint that fits logically into the existing plan. Consider:
+1. What existing waypoints this should depend on (prerequisites)
+2. Where it fits in the execution order
+3. Clear, testable acceptance criteria
+
+Output a JSON object with:
+- id: "{next_id}"
+- title: Brief descriptive title (5-10 words)
+- objective: What this waypoint accomplishes (1-2 sentences)
+- acceptance_criteria: Array of 2-5 testable success criteria
+- dependencies: Array of waypoint IDs this depends on (empty array if none)
+- insert_after: ID of waypoint to insert after, or null to append at end
+
+Output ONLY the JSON object, no markdown code blocks or other text.
+
+Generate the waypoint JSON now:"""
+
 
 class ChartScreen(Screen[None]):
     """
@@ -110,6 +146,7 @@ class ChartScreen(Screen[None]):
         Binding("ctrl+q", "quit", "Quit", show=True),
         Binding("ctrl+enter", "proceed", "Takeoff", show=True),
         Binding("escape", "back", "Back", show=False),
+        Binding("a", "add_waypoint", "Add", show=True),
         Binding("e", "edit_waypoint", "Edit", show=False),
         Binding("b", "break_down", "Break Down", show=False),
         Binding("d", "delete_waypoint", "Delete", show=False),
@@ -684,6 +721,148 @@ class ChartScreen(Screen[None]):
         # Refresh the tree
         self._update_panels()
         self.notify(f"Deleted {waypoint_id}")
+
+    # ─── Add Waypoint ────────────────────────────────────────────────────
+
+    def action_add_waypoint(self) -> None:
+        """Show modal to add a new waypoint."""
+        if not self.flight_plan:
+            self.notify("No flight plan loaded", severity="error")
+            return
+
+        def handle_result(result: str | None) -> None:
+            if result is None:
+                return  # Cancelled
+            elif result == "__MANUAL__":
+                self._show_manual_waypoint_modal()
+            else:
+                # User provided a description, generate waypoint
+                self._generate_new_waypoint(result)
+
+        self.app.push_screen(AddWaypointModal(), handle_result)
+
+    def _show_manual_waypoint_modal(self) -> None:
+        """Show modal for manually entering waypoint details."""
+        next_id = self._next_waypoint_id()
+
+        def handle_result(waypoint: Waypoint | None) -> None:
+            if waypoint:
+                self._add_waypoint(waypoint, after_id=None)
+
+        self.app.push_screen(ManualWaypointModal(next_id), handle_result)
+
+    def _next_waypoint_id(self) -> str:
+        """Generate next available waypoint ID."""
+        if not self.flight_plan:
+            return "WP-001"
+        existing = {wp.id for wp in self.flight_plan.waypoints}
+        for i in range(1, 1000):
+            candidate = f"WP-{i:03d}"
+            if candidate not in existing:
+                return candidate
+        return "WP-999"  # Fallback
+
+    @work(thread=True)
+    def _generate_new_waypoint(self, description: str) -> None:
+        """Generate a waypoint from user description via LLM."""
+        assert self.llm_client is not None
+        assert self.flight_plan is not None
+
+        next_id = self._next_waypoint_id()
+        existing_ids = {wp.id for wp in self.flight_plan.waypoints}
+
+        # Format existing waypoints for context
+        existing_waypoints = "\n".join(
+            f"- {wp.id}: {wp.title}" for wp in self.flight_plan.get_root_waypoints()
+        )
+
+        # Truncate spec for prompt
+        spec_summary = self.spec[:2000] if self.spec else "No product spec available"
+
+        prompt = WAYPOINT_ADD_PROMPT.format(
+            description=description,
+            existing_waypoints=existing_waypoints or "No existing waypoints",
+            spec_summary=spec_summary,
+            next_id=next_id,
+        )
+
+        self.app.call_from_thread(
+            self.notify, "Generating waypoint...", severity="information"
+        )
+
+        full_response = ""
+        try:
+            system_prompt = (
+                "You are a technical project planner. "
+                "Generate clear, testable waypoints. Output valid JSON only."
+            )
+            for result in self.llm_client.stream_message(
+                messages=[{"role": "user", "content": prompt}],
+                system=system_prompt,
+            ):
+                if isinstance(result, StreamChunk):
+                    full_response += result.text
+                elif isinstance(result, StreamComplete):
+                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
+        except Exception as e:
+            logger.exception("Error generating waypoint: %s", e)
+            self.app.call_from_thread(
+                self.notify, f"Error generating waypoint: {e}", severity="error"
+            )
+            return
+
+        # Validate the response
+        validation = validate_single_waypoint(full_response, existing_ids)
+        if not validation.valid:
+            logger.error("Waypoint validation failed: %s", validation.errors)
+            self.app.call_from_thread(
+                self.notify,
+                f"Invalid waypoint: {validation.errors[0]}",
+                severity="error",
+            )
+            return
+
+        # Create waypoint from validated data
+        data = validation.data
+        assert data is not None
+        waypoint = Waypoint(
+            id=data["id"],
+            title=data["title"],
+            objective=data["objective"],
+            acceptance_criteria=data.get("acceptance_criteria", []),
+            dependencies=data.get("dependencies", []),
+            status=WaypointStatus.PENDING,
+        )
+
+        # Show preview modal
+        insert_after = validation.insert_after
+        self.app.call_from_thread(self._show_waypoint_preview, waypoint, insert_after)
+
+    def _show_waypoint_preview(
+        self, waypoint: Waypoint, insert_after: str | None
+    ) -> None:
+        """Show preview modal for generated waypoint."""
+
+        def handle_confirm(confirmed: bool | None) -> None:
+            if confirmed:
+                self._add_waypoint(waypoint, insert_after)
+
+        self.app.push_screen(
+            AddWaypointPreviewModal(waypoint, insert_after),
+            handle_confirm,
+        )
+
+    def _add_waypoint(self, waypoint: Waypoint, after_id: str | None) -> None:
+        """Add waypoint to flight plan and refresh UI."""
+        if not self.flight_plan:
+            return
+
+        # Delegate to coordinator
+        self.coordinator.add_waypoint(waypoint, after_id)
+
+        # Refresh the tree
+        self._update_panels()
+        self.notify(f"Added waypoint: {waypoint.id}")
 
     def action_help(self) -> None:
         """Show help overlay."""

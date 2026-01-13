@@ -1129,3 +1129,390 @@ class BreakDownPreviewModal(ModalScreen[bool]):
     def action_cancel(self) -> None:
         """Cancel."""
         self.dismiss(False)
+
+
+class AddWaypointModal(ModalScreen[str | None]):
+    """Modal for describing a new waypoint for AI generation."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+enter", "generate", "Generate", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    AddWaypointModal {
+        align: center middle;
+        background: $surface 60%;
+    }
+
+    AddWaypointModal > Vertical {
+        width: 80%;
+        max-width: 100;
+        height: auto;
+        max-height: 30;
+        background: $surface;
+        border: solid $surface-lighten-2;
+        border-top: solid $primary;
+        padding: 1 2;
+    }
+
+    AddWaypointModal .modal-title {
+        text-style: bold;
+        color: $text;
+        text-align: center;
+        padding: 1 0;
+    }
+
+    AddWaypointModal .modal-label {
+        color: $text-muted;
+        padding: 0 0 1 0;
+    }
+
+    AddWaypointModal TextArea {
+        height: 8;
+        margin-bottom: 1;
+    }
+
+    AddWaypointModal .modal-actions {
+        dock: bottom;
+        height: auto;
+        padding: 1 0 0 0;
+        border-top: solid $surface-lighten-1;
+        align: center middle;
+    }
+
+    AddWaypointModal Button {
+        margin: 0 1;
+        min-width: 16;
+    }
+
+    AddWaypointModal Button#btn-generate {
+        background: $primary-darken-1;
+    }
+
+    AddWaypointModal Button#btn-manual {
+        background: $surface-lighten-2;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Add New Waypoint", classes="modal-title")
+            yield Static(
+                "Describe what you want to add and AI will generate the waypoint:",
+                classes="modal-label",
+            )
+            yield TextArea(id="description-input")
+            with Horizontal(classes="modal-actions"):
+                yield Button("Generate with AI", id="btn-generate", variant="primary")
+                yield Button("Add Manually", id="btn-manual")
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_mount(self) -> None:
+        """Focus the description input."""
+        self.query_one("#description-input", TextArea).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "btn-generate":
+            description = self.query_one("#description-input", TextArea).text.strip()
+            if description:
+                self.dismiss(description)
+            else:
+                self.notify("Please enter a description", severity="warning")
+        elif event.button.id == "btn-manual":
+            self.dismiss("__MANUAL__")  # Special sentinel for manual mode
+        else:
+            self.dismiss(None)
+
+    def action_generate(self) -> None:
+        """Generate waypoint from description."""
+        description = self.query_one("#description-input", TextArea).text.strip()
+        if description:
+            self.dismiss(description)
+        else:
+            self.notify("Please enter a description", severity="warning")
+
+    def action_cancel(self) -> None:
+        """Cancel."""
+        self.dismiss(None)
+
+
+class ManualWaypointModal(ModalScreen[Waypoint | None]):
+    """Modal for manually entering waypoint details."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+s", "save", "Save", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    ManualWaypointModal {
+        align: center middle;
+        background: $surface 60%;
+    }
+
+    ManualWaypointModal > Vertical {
+        width: 80%;
+        max-width: 100;
+        height: auto;
+        max-height: 40;
+        background: $surface;
+        border: solid $surface-lighten-2;
+        border-top: solid $primary;
+        padding: 1 2;
+    }
+
+    ManualWaypointModal .modal-title {
+        text-style: bold;
+        color: $text;
+        text-align: center;
+        padding: 1 0;
+    }
+
+    ManualWaypointModal .field-label {
+        color: $text-muted;
+        padding: 1 0 0 0;
+    }
+
+    ManualWaypointModal Input {
+        margin-bottom: 0;
+    }
+
+    ManualWaypointModal TextArea#objective-input {
+        height: 4;
+    }
+
+    ManualWaypointModal TextArea#criteria-input {
+        height: 6;
+    }
+
+    ManualWaypointModal .modal-actions {
+        dock: bottom;
+        height: auto;
+        padding: 1 0 0 0;
+        margin-top: 1;
+        border-top: solid $surface-lighten-1;
+        align: center middle;
+    }
+
+    ManualWaypointModal Button {
+        margin: 0 1;
+        min-width: 10;
+    }
+
+    ManualWaypointModal Button#btn-save {
+        background: $success-darken-2;
+    }
+    """
+
+    def __init__(self, next_id: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.next_id = next_id
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Add Waypoint Manually", classes="modal-title")
+            yield Static(f"ID: {self.next_id}", classes="field-label")
+            yield Static("Title:", classes="field-label")
+            yield Input(id="title-input", placeholder="Brief descriptive title")
+            yield Static("Objective:", classes="field-label")
+            yield TextArea(id="objective-input")
+            yield Static("Acceptance Criteria (one per line):", classes="field-label")
+            yield TextArea(id="criteria-input")
+            with Horizontal(classes="modal-actions"):
+                yield Button("Save", id="btn-save", variant="primary")
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_mount(self) -> None:
+        """Focus the title input."""
+        self.query_one("#title-input", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "btn-save":
+            self._save()
+        else:
+            self.dismiss(None)
+
+    def _save(self) -> None:
+        """Validate and save the waypoint."""
+        title = self.query_one("#title-input", Input).value.strip()
+        objective = self.query_one("#objective-input", TextArea).text.strip()
+        criteria_text = self.query_one("#criteria-input", TextArea).text.strip()
+
+        # Validate
+        if not title:
+            self.notify("Title is required", severity="warning")
+            return
+        if not objective:
+            self.notify("Objective is required", severity="warning")
+            return
+        if not criteria_text:
+            self.notify(
+                "At least one acceptance criterion is required", severity="warning"
+            )
+            return
+
+        # Parse criteria (one per line)
+        criteria = [c.strip() for c in criteria_text.split("\n") if c.strip()]
+
+        waypoint = Waypoint(
+            id=self.next_id,
+            title=title,
+            objective=objective,
+            acceptance_criteria=criteria,
+        )
+        self.dismiss(waypoint)
+
+    def action_save(self) -> None:
+        """Save the waypoint."""
+        self._save()
+
+    def action_cancel(self) -> None:
+        """Cancel."""
+        self.dismiss(None)
+
+
+class AddWaypointPreviewModal(ModalScreen[bool]):
+    """Preview modal for AI-generated waypoint before adding."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("enter", "confirm", "Confirm", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    AddWaypointPreviewModal {
+        align: center middle;
+        background: $surface 60%;
+    }
+
+    AddWaypointPreviewModal > Vertical {
+        width: 80%;
+        max-width: 100;
+        height: auto;
+        max-height: 35;
+        background: $surface;
+        border: solid $surface-lighten-2;
+        border-top: solid $success;
+        padding: 1 2;
+    }
+
+    AddWaypointPreviewModal .modal-title {
+        text-style: bold;
+        color: $text;
+        text-align: center;
+        padding: 1 0;
+    }
+
+    AddWaypointPreviewModal .modal-content {
+        height: auto;
+        max-height: 20;
+        padding: 1;
+    }
+
+    AddWaypointPreviewModal .waypoint-id {
+        text-style: bold;
+        color: $primary;
+    }
+
+    AddWaypointPreviewModal .waypoint-title {
+        text-style: bold;
+        color: $text;
+        margin-top: 1;
+    }
+
+    AddWaypointPreviewModal .waypoint-objective {
+        color: $text-muted;
+        margin-top: 1;
+    }
+
+    AddWaypointPreviewModal .section-label {
+        color: $text;
+        text-style: bold;
+        margin-top: 1;
+    }
+
+    AddWaypointPreviewModal .criteria-item {
+        color: $text-muted;
+        padding-left: 2;
+    }
+
+    AddWaypointPreviewModal .insert-info {
+        color: $text-disabled;
+        text-style: italic;
+        margin-top: 1;
+    }
+
+    AddWaypointPreviewModal .modal-actions {
+        dock: bottom;
+        height: auto;
+        padding: 1 0 0 0;
+        border-top: solid $surface-lighten-1;
+        align: center middle;
+    }
+
+    AddWaypointPreviewModal Button {
+        margin: 0 1;
+        min-width: 10;
+    }
+
+    AddWaypointPreviewModal Button#btn-confirm {
+        background: $success-darken-2;
+    }
+    """
+
+    def __init__(
+        self,
+        waypoint: Waypoint,
+        insert_after: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.waypoint = waypoint
+        self.insert_after = insert_after
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Add This Waypoint?", classes="modal-title")
+            with VerticalScroll(classes="modal-content"):
+                yield Static(self.waypoint.id, classes="waypoint-id")
+                yield Static(self.waypoint.title, classes="waypoint-title")
+                yield Static(self.waypoint.objective, classes="waypoint-objective")
+                yield Static("Acceptance Criteria:", classes="section-label")
+                for criterion in self.waypoint.acceptance_criteria[:5]:
+                    yield Static(f"• {criterion}", classes="criteria-item")
+                if len(self.waypoint.acceptance_criteria) > 5:
+                    yield Static(
+                        f"  +{len(self.waypoint.acceptance_criteria) - 5} more",
+                        classes="criteria-item",
+                    )
+                if self.waypoint.dependencies:
+                    deps = ", ".join(self.waypoint.dependencies)
+                    yield Static(f"Dependencies: {deps}", classes="insert-info")
+                if self.insert_after:
+                    yield Static(
+                        f"Will be inserted after: {self.insert_after}",
+                        classes="insert-info",
+                    )
+                else:
+                    yield Static("Will be appended to end", classes="insert-info")
+            with Horizontal(classes="modal-actions"):
+                yield Button("Add Waypoint", id="btn-confirm", variant="primary")
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "btn-confirm":
+            self.dismiss(True)
+        else:
+            self.dismiss(False)
+
+    def action_confirm(self) -> None:
+        """Confirm adding the waypoint."""
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        """Cancel."""
+        self.dismiss(False)

@@ -604,6 +604,24 @@ class JourneyCoordinator:
 
         logger.info("Added %d sub-waypoints to %s", len(sub_waypoints), parent_id)
 
+    def add_waypoint(self, waypoint: Waypoint, after_id: str | None = None) -> None:
+        """Add a new waypoint to the flight plan.
+
+        Args:
+            waypoint: The waypoint to add
+            after_id: Insert after this waypoint ID. If None, append to end.
+        """
+        if self.flight_plan is None:
+            return
+
+        if after_id:
+            self.flight_plan.insert_waypoint_at(waypoint, after_id)
+        else:
+            self.flight_plan.add_waypoint(waypoint)
+
+        self._save_flight_plan()
+        logger.info("Added waypoint %s (after %s)", waypoint.id, after_id or "end")
+
     # ─── IDEATION Phase: Q&A Dialogue ────────────────────────────────────
 
     async def start_qa_dialogue(self, idea: str) -> "TextStream":
