@@ -249,16 +249,11 @@ class WaypointsApp(App[None]):
     def _resume_chart_review(
         self, project: Project, spec: str, brief: str | None
     ) -> None:
-        """Resume at chart review - load existing flight plan if any."""
-        flight_plan = FlightPlanReader.load(project)
-        if flight_plan:
-            # Have a flight plan, go directly to fly
-            self.push_screen(
-                FlyScreen(project=project, flight_plan=flight_plan, spec=spec)
-            )
-        else:
-            # No flight plan yet, go to chart screen
-            self.push_screen(ChartScreen(project=project, spec=spec, brief=brief))
+        """Resume at chart review - show chart screen to review/edit plan."""
+        # Always show ChartScreen when in CHART_REVIEW state.
+        # Even if a flight plan exists, the user should review it before flying.
+        # ChartScreen will load and display any existing flight plan.
+        self.push_screen(ChartScreen(project=project, spec=spec, brief=brief))
 
     def watch_theme(self, new_theme: str) -> None:
         """Save theme whenever it changes (from any source)."""
