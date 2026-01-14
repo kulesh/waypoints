@@ -572,6 +572,8 @@ class LandScreen(Screen[None]):
         Binding("c", "close_project", "Close", show=True),
         Binding("g", "generate_release", "Generate", show=False),
         Binding("t", "create_tag", "Tag", show=False),
+        Binding("v", "view_genspec", "View Spec", show=True),
+        Binding("r", "regenerate", "Regenerate", show=True),
     ]
 
     DEFAULT_CSS = """
@@ -734,3 +736,21 @@ class LandScreen(Screen[None]):
         """Create git tag (placeholder)."""
         if self.current_activity == LandActivity.SHIP:
             self.notify("Git tagging not yet implemented")
+
+    def action_view_genspec(self) -> None:
+        """View the generative specification for this project."""
+        from waypoints.genspec import export_project
+        from waypoints.tui.widgets.genspec import GenSpecViewerModal
+
+        try:
+            spec = export_project(self.project)
+            self.app.push_screen(GenSpecViewerModal(spec, self.project))
+        except Exception as e:
+            self.notify(f"Error loading spec: {e}", severity="error")
+            logger.exception("Failed to export genspec: %s", e)
+
+    def action_regenerate(self) -> None:
+        """Start regeneration from the generative specification."""
+        from waypoints.tui.widgets.genspec import RegenerateModal
+
+        self.app.push_screen(RegenerateModal(self.project))
