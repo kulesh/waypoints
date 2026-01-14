@@ -149,10 +149,12 @@ Each phase can have multiple internal states (idle, generating, review, etc.). T
 | `chart:generating` | `chart:review` | Waypoints generated | `chart.py:379` |
 | `chart:review` | `fly:ready` | User accepts plan (Ctrl+Enter or Ctrl+F) | `chart.py:869, 905` |
 | `fly:ready` | `fly:executing` | Start execution (Space or Ctrl+Enter) | `fly.py:1431-1436` |
+| `fly:ready` | `land:review` | Skip to land (Ctrl+F when all waypoints complete) | `fly.py:2118` |
 | `fly:executing` | `fly:paused` | User pauses (Space) | `fly.py:1742` |
 | `fly:executing` | `fly:intervention` | Error occurs | `fly.py:1749, 1758, 1773, 1795` |
 | `fly:executing` | `land:review` | All waypoints complete | `fly.py:1737` |
 | `fly:paused` | `fly:executing` | Resume (Space or Ctrl+Enter) | `fly.py:1463` |
+| `fly:paused` | `land:review` | Skip to land (Ctrl+F when all waypoints complete) | `fly.py:2118` |
 
 ### Regeneration Loops
 
