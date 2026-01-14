@@ -74,6 +74,7 @@ VALID_TRANSITIONS: dict[JourneyState, set[JourneyState]] = {
     JourneyState.FLY_READY: {
         JourneyState.FLY_EXECUTING,
         JourneyState.CHART_REVIEW,  # Back to edit plan
+        JourneyState.LAND_REVIEW,  # Skip to land if all waypoints already complete
     },
     JourneyState.FLY_EXECUTING: {
         JourneyState.FLY_PAUSED,
@@ -84,6 +85,7 @@ VALID_TRANSITIONS: dict[JourneyState, set[JourneyState]] = {
         JourneyState.FLY_EXECUTING,  # Resume
         JourneyState.FLY_READY,  # Back to ready
         JourneyState.CHART_REVIEW,  # Edit plan
+        JourneyState.LAND_REVIEW,  # Skip to land if all waypoints already complete
     },
     JourneyState.FLY_INTERVENTION: {
         JourneyState.FLY_EXECUTING,  # Retry
