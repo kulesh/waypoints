@@ -1,0 +1,502 @@
+"""Export a waypoints project to a Generative Specification.
+
+Collects all prompts, dialogues, and artifacts from a project
+and bundles them into a structured genspec.jsonl file.
+"""
+
+import json
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from waypoints.genspec.spec import (
+    Artifact,
+    ArtifactType,
+    GenerativeSpec,
+    GenerativeStep,
+    OutputType,
+    Phase,
+    StepInput,
+    StepOutput,
+)
+from waypoints.models.dialogue import DialogueHistory, MessageRole
+from waypoints.models.flight_plan import FlightPlanReader
+from waypoints.models.session import SessionReader
+
+if TYPE_CHECKING:
+    from waypoints.models.project import Project
+
+logger = logging.getLogger(__name__)
+
+# Mapping from session phase names to genspec Phase enum
+PHASE_MAP = {
+    "ideation": Phase.SHAPE_QA,
+    "ideation-qa": Phase.SHAPE_QA,
+    "idea-brief": Phase.SHAPE_BRIEF,
+    "product-spec": Phase.SHAPE_SPEC,
+    "chart": Phase.CHART,
+}
+
+# Known prompts by phase - these are the prompts used in the TUI screens
+# We store them here so we can include them in the exported spec
+KNOWN_PROMPTS = {
+    Phase.SHAPE_QA: {
+        "system_prompt": """\
+You are a product design assistant helping crystallize an idea through dialogue.
+
+Your role is to ask ONE clarifying question at a time to help the user refine
+their idea. After each answer, briefly acknowledge what you learned, then ask
+the next most important question.
+
+Focus on understanding:
+1. The core problem being solved and why it matters
+2. Who the target users are and their pain points
+3. Key features and capabilities needed
+4. Technical constraints or preferences
+5. What success looks like
+
+Guidelines:
+- Ask only ONE question per response
+- Keep questions focused and specific
+- Build on previous answers
+- Be curious and dig deeper when answers are vague
+- Don't summarize or conclude - the user will tell you when they're done
+
+The user will press Ctrl+D when they feel the idea is sufficiently refined.
+Until then, keep asking questions to deepen understanding."""
+    },
+    Phase.SHAPE_BRIEF: {
+        "system_prompt": (
+            "You are a technical writer creating concise product documentation."
+        ),
+        "prompt_template": """\
+Based on the ideation conversation below, generate a concise Idea Brief document.
+
+The brief should be in Markdown format and include:
+
+# Idea Brief: [Catchy Title]
+
+## Problem Statement
+What problem are we solving and why does it matter?
+
+## Target Users
+Who are the primary users and what are their pain points?
+
+## Proposed Solution
+High-level description of what we're building.
+
+## Key Features
+- Bullet points of core capabilities
+
+## Success Criteria
+How will we know if this succeeds?
+
+## Open Questions
+Any unresolved items that need further exploration.
+
+---
+
+Keep it concise (under 500 words). Focus on clarity over completeness.
+The goal is to capture the essence of the idea so others can quickly understand it.
+
+Here is the ideation conversation:
+
+{conversation}
+
+Generate the Idea Brief now:""",
+    },
+    Phase.SHAPE_SPEC: {
+        "system_prompt": (
+            "You are a senior product manager creating detailed "
+            "product specifications. Be thorough but practical."
+        ),
+        "prompt_template": """\
+Based on the Idea Brief below, generate a comprehensive Product Specification.
+
+The specification should be detailed enough for engineers and product managers
+to understand exactly what needs to be built. Use Markdown format.
+
+# Product Specification: [Product Name]
+
+## 1. Executive Summary
+Brief overview of the product and its value proposition.
+
+## 2. Problem Statement
+### 2.1 Current Pain Points
+### 2.2 Impact of the Problem
+### 2.3 Why Now?
+
+## 3. Target Users
+### 3.1 Primary Persona
+### 3.2 Secondary Personas
+### 3.3 User Journey
+
+## 4. Product Overview
+### 4.1 Vision Statement
+### 4.2 Core Value Proposition
+### 4.3 Key Differentiators
+
+## 5. Features & Requirements
+### 5.1 MVP Features (Must Have)
+### 5.2 Phase 2 Features (Should Have)
+### 5.3 Future Considerations (Nice to Have)
+
+## 6. Technical Considerations
+### 6.1 Architecture Overview
+### 6.2 Technology Stack Recommendations
+### 6.3 Integration Requirements
+### 6.4 Security & Privacy
+
+## 7. Success Metrics
+### 7.1 Key Performance Indicators
+### 7.2 Success Criteria for MVP
+
+## 8. Risks & Mitigations
+### 8.1 Technical Risks
+### 8.2 Market Risks
+### 8.3 Mitigation Strategies
+
+## 9. FAQ
+Common questions and answers for the development team.
+
+## 10. Appendix
+### 10.1 Glossary
+### 10.2 References
+
+---
+
+Here is the Idea Brief to expand:
+
+{brief}
+
+Generate the complete Product Specification now:""",
+    },
+    Phase.CHART: {
+        "system_prompt": (
+            "You are a technical project planner. Create clear, testable "
+            "waypoints for software development. Output valid JSON only."
+        ),
+        "prompt_template": """\
+Based on the Product Specification below, generate a flight plan of waypoints
+for building this product incrementally.
+
+Each waypoint should:
+1. Be independently testable
+2. Have clear acceptance criteria
+3. Be appropriately sized (1-3 hours of focused work for single-hop)
+4. Use parent_id for multi-hop waypoints (epics that contain sub-tasks)
+
+Output as a JSON array of waypoints. Each waypoint has:
+- id: String like "WP-001" (use "WP-001a", "WP-001b" for children)
+- title: Brief descriptive title
+- objective: What this waypoint accomplishes
+- acceptance_criteria: Array of testable criteria
+- parent_id: ID of parent waypoint (null for top-level)
+- dependencies: Array of waypoint IDs this depends on
+
+Generate 8-15 waypoints for MVP scope. Group related work into epics where appropriate.
+
+Output ONLY the JSON array, no markdown code blocks or other text.
+
+Product Specification:
+{spec}
+
+Generate the waypoints JSON now:""",
+    },
+}
+
+
+def export_project(project: "Project") -> GenerativeSpec:
+    """Export a project to a GenerativeSpec.
+
+    Args:
+        project: The project to export
+
+    Returns:
+        GenerativeSpec containing all steps and artifacts
+    """
+    logger.info("Exporting project: %s", project.slug)
+
+    # Get waypoints version from package
+    try:
+        from waypoints import __version__
+
+        waypoints_version = __version__
+    except ImportError:
+        waypoints_version = "unknown"
+
+    # Create the spec
+    spec = GenerativeSpec(
+        version="1.0",
+        waypoints_version=waypoints_version,
+        source_project=project.slug,
+        created_at=datetime.now(),
+        initial_idea=project.initial_idea or "",
+    )
+
+    # Collect steps from session files
+    _collect_session_steps(project, spec)
+
+    # Collect artifacts
+    _collect_artifacts(project, spec)
+
+    # Get model info from any step
+    for step in spec.steps:
+        if step.metadata.model:
+            spec.model = step.metadata.model
+            break
+
+    logger.info(
+        "Exported %d steps, %d artifacts",
+        len(spec.steps),
+        len(spec.artifacts),
+    )
+
+    return spec
+
+
+def _collect_session_steps(project: "Project", spec: GenerativeSpec) -> None:
+    """Collect generative steps from session files."""
+    sessions_path = project.get_sessions_path()
+    if not sessions_path.exists():
+        logger.warning("No sessions directory found")
+        return
+
+    # Find all session files (sorted by time)
+    session_files = sorted(sessions_path.glob("*.jsonl"))
+    step_counter = 0
+
+    for session_file in session_files:
+        # Skip fly/ subdirectory files
+        if session_file.parent.name == "fly":
+            continue
+
+        try:
+            history = SessionReader.load(session_file)
+            phase_name = history.phase or _infer_phase_from_filename(session_file.name)
+            phase = PHASE_MAP.get(phase_name)
+
+            if not phase:
+                logger.debug("Skipping unknown phase: %s", phase_name)
+                continue
+
+            # Get the known prompt for this phase
+            known = KNOWN_PROMPTS.get(phase, {})
+            system_prompt = known.get("system_prompt", "")
+
+            # For QA phases, we create steps for each Q&A pair
+            if phase == Phase.SHAPE_QA:
+                _collect_qa_steps(history, phase, system_prompt, spec, step_counter)
+                assistant_count = len(
+                    [m for m in history.messages if m.role == MessageRole.ASSISTANT]
+                )
+                step_counter += assistant_count
+            else:
+                # For generation phases, create a single step
+                step_counter += 1
+                step = _create_generation_step(
+                    step_id=f"step-{step_counter:03d}",
+                    phase=phase,
+                    history=history,
+                    system_prompt=system_prompt,
+                    session_file=session_file,
+                )
+                if step:
+                    spec.steps.append(step)
+
+        except Exception as e:
+            logger.warning("Error processing session %s: %s", session_file, e)
+
+
+def _collect_qa_steps(
+    history: DialogueHistory,
+    phase: Phase,
+    system_prompt: str,
+    spec: GenerativeSpec,
+    start_counter: int,
+) -> None:
+    """Collect Q&A conversation steps."""
+    messages = history.messages
+    step_num = start_counter
+
+    # Group messages into user-assistant pairs
+    for i, msg in enumerate(messages):
+        if msg.role == MessageRole.USER:
+            # Find the next assistant message
+            assistant_content = ""
+            assistant_timestamp = msg.timestamp
+            for j in range(i + 1, len(messages)):
+                if messages[j].role == MessageRole.ASSISTANT:
+                    assistant_content = messages[j].content
+                    assistant_timestamp = messages[j].timestamp
+                    break
+
+            if assistant_content:
+                step_num += 1
+                step = GenerativeStep(
+                    step_id=f"step-{step_num:03d}",
+                    phase=phase,
+                    timestamp=assistant_timestamp,
+                    input=StepInput(
+                        system_prompt=system_prompt,
+                        user_prompt=msg.content,
+                        messages=[
+                            {"role": m.role.value, "content": m.content}
+                            for m in messages[: i + 1]
+                        ],
+                    ),
+                    output=StepOutput(
+                        content=assistant_content,
+                        output_type=OutputType.TEXT,
+                    ),
+                )
+                spec.steps.append(step)
+
+
+def _create_generation_step(
+    step_id: str,
+    phase: Phase,
+    history: DialogueHistory,
+    system_prompt: str,
+    session_file: Path,
+) -> GenerativeStep | None:
+    """Create a generation step from a session."""
+    messages = history.messages
+    if not messages:
+        return None
+
+    # Find the last assistant message as the output
+    output_content = ""
+    output_timestamp = datetime.now()
+    for msg in reversed(messages):
+        if msg.role == MessageRole.ASSISTANT:
+            output_content = msg.content
+            output_timestamp = msg.timestamp
+            break
+
+    if not output_content:
+        return None
+
+    # Find the user prompt that triggered generation
+    user_prompt = ""
+    for msg in messages:
+        if msg.role == MessageRole.USER:
+            user_prompt = msg.content
+            break
+
+    # Determine output type
+    output_type = OutputType.TEXT
+    if output_content.strip().startswith("{") or output_content.strip().startswith("["):
+        output_type = OutputType.JSON
+    elif output_content.strip().startswith("#"):
+        output_type = OutputType.MARKDOWN
+
+    return GenerativeStep(
+        step_id=step_id,
+        phase=phase,
+        timestamp=output_timestamp,
+        input=StepInput(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            messages=[{"role": m.role.value, "content": m.content} for m in messages],
+        ),
+        output=StepOutput(
+            content=output_content,
+            output_type=output_type,
+        ),
+    )
+
+
+def _infer_phase_from_filename(filename: str) -> str:
+    """Infer phase name from session filename."""
+    # Format: {phase}-{timestamp}.jsonl
+    parts = filename.rsplit("-", 2)
+    if len(parts) >= 2:
+        return parts[0]
+    return ""
+
+
+def _collect_artifacts(project: "Project", spec: GenerativeSpec) -> None:
+    """Collect generated artifacts (brief, spec, flight plan)."""
+    docs_path = project.get_docs_path()
+
+    # Collect idea brief
+    brief_files = sorted(docs_path.glob("idea-brief-*.md"), reverse=True)
+    if brief_files:
+        content = brief_files[0].read_text()
+        spec.artifacts.append(
+            Artifact(
+                artifact_type=ArtifactType.IDEA_BRIEF,
+                content=content,
+                file_path=str(brief_files[0].relative_to(project.get_path())),
+            )
+        )
+
+    # Collect product spec
+    spec_files = sorted(docs_path.glob("product-spec-*.md"), reverse=True)
+    if spec_files:
+        content = spec_files[0].read_text()
+        spec.artifacts.append(
+            Artifact(
+                artifact_type=ArtifactType.PRODUCT_SPEC,
+                content=content,
+                file_path=str(spec_files[0].relative_to(project.get_path())),
+            )
+        )
+
+    # Collect flight plan
+    flight_plan = FlightPlanReader.load(project)
+    if flight_plan and flight_plan.waypoints:
+        # Serialize waypoints to JSON
+        waypoints_json = json.dumps(
+            [
+                {
+                    "id": wp.id,
+                    "title": wp.title,
+                    "objective": wp.objective,
+                    "acceptance_criteria": wp.acceptance_criteria,
+                    "parent_id": wp.parent_id,
+                    "dependencies": wp.dependencies,
+                    "status": wp.status.value,
+                }
+                for wp in flight_plan.waypoints
+            ],
+            indent=2,
+        )
+        spec.artifacts.append(
+            Artifact(
+                artifact_type=ArtifactType.FLIGHT_PLAN,
+                content=waypoints_json,
+                file_path="flight-plan.jsonl",
+            )
+        )
+
+
+def export_to_file(spec: GenerativeSpec, path: Path) -> None:
+    """Export a GenerativeSpec to a JSONL file.
+
+    Args:
+        spec: The spec to export
+        path: Path to write the file
+    """
+    logger.info("Writing genspec to %s", path)
+
+    with open(path, "w") as f:
+        # Write header
+        f.write(json.dumps(spec.to_header_dict()) + "\n")
+
+        # Write steps
+        for step in spec.steps:
+            f.write(json.dumps(step.to_dict()) + "\n")
+
+        # Write decisions
+        for decision in spec.decisions:
+            f.write(json.dumps(decision.to_dict()) + "\n")
+
+        # Write artifacts
+        for artifact in spec.artifacts:
+            f.write(json.dumps(artifact.to_dict()) + "\n")
+
+    total_lines = 1 + len(spec.steps) + len(spec.decisions) + len(spec.artifacts)
+    logger.info("Wrote %d lines to genspec", total_lines)

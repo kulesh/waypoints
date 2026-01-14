@@ -10,6 +10,7 @@ Schema Types:
 - session: Dialogue session history
 - execution_log: Waypoint execution logs
 - metrics: LLM call metrics
+- genspec: Generative specification (prompt sequences)
 """
 
 import json
@@ -28,6 +29,7 @@ CURRENT_VERSIONS: dict[str, str] = {
     "session": "1.0",
     "execution_log": "1.0",
     "metrics": "1.0",
+    "genspec": "1.0",
 }
 
 
