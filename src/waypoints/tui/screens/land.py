@@ -566,6 +566,18 @@ PHASE_ICONS = {
     "fly": "🚀",
 }
 
+# Human-readable phase display names
+PHASE_DISPLAY_NAMES = {
+    "spark": "Spark",
+    "shape_qa": "Shape Q&A",
+    "shape_brief": "Shape Brief",
+    "shape_spec": "Shape Spec",
+    "chart": "Chart",
+    "chart_breakdown": "Chart Breakdown",
+    "chart_add": "Chart Add",
+    "fly": "Fly",
+}
+
 
 class GenSpecTree(Tree[Any]):
     """Tree widget for browsing generative spec phases, steps, and artifacts."""
@@ -654,7 +666,9 @@ class GenSpecTree(Tree[Any]):
 
             # Format phase label
             icon = PHASE_ICONS.get(phase_name, "○")
-            display_name = phase_name.replace("_", " ").title()
+            display_name = PHASE_DISPLAY_NAMES.get(
+                phase_name, phase_name.replace("_", " ").title()
+            )
             label = Text()
             label.append(f"{icon} ")
             label.append(display_name)
@@ -890,7 +904,9 @@ class GenSpecPreviewPanel(VerticalScroll):
         content.remove_children()
         placeholder.display = False
 
-        display_name = phase_name.replace("_", " ").title()
+        display_name = PHASE_DISPLAY_NAMES.get(
+            phase_name, phase_name.replace("_", " ").title()
+        )
         content.mount(Static(f"Phase: {display_name}", classes="section-header"))
 
         try:
