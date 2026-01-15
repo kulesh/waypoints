@@ -21,38 +21,39 @@ logger = logging.getLogger(__name__)
 
 
 class GenSpecViewerModal(ModalScreen[None]):
-    """Modal for viewing a generative specification summary.
-
-    Shows:
-    - Summary statistics (steps, phases, cost)
-    - Timeline of generative steps by phase
-    - Export button to save to file
-    """
+    """Modal for viewing a generative specification summary."""
 
     BINDINGS = [
-        Binding("escape", "cancel", "Close", show=True),
+        Binding("escape", "cancel", "Cancel", show=True),
         Binding("e", "export", "Export", show=True),
     ]
 
     DEFAULT_CSS = """
     GenSpecViewerModal {
         align: center middle;
+        background: $surface 60%;
     }
 
     GenSpecViewerModal > Vertical {
-        width: 80;
+        width: 60;
         height: auto;
         max-height: 80%;
         background: $surface;
-        border: round $primary;
+        border: solid $surface-lighten-2;
         padding: 1 2;
     }
 
-    GenSpecViewerModal .title {
+    GenSpecViewerModal .modal-title {
         text-style: bold;
+        color: $text;
         text-align: center;
-        width: 100%;
+        padding: 1 0;
         margin-bottom: 1;
+        border-bottom: solid $surface-lighten-1;
+    }
+
+    GenSpecViewerModal .modal-content {
+        padding: 0 1;
     }
 
     GenSpecViewerModal .section-title {
@@ -61,24 +62,25 @@ class GenSpecViewerModal(ModalScreen[None]):
         margin-top: 1;
     }
 
-    GenSpecViewerModal .stat-line {
+    GenSpecViewerModal .stat-row {
         color: $text-muted;
         padding-left: 2;
     }
 
-    GenSpecViewerModal .phase-line {
-        color: $secondary;
-        padding-left: 2;
-    }
-
-    GenSpecViewerModal .buttons {
-        margin-top: 2;
-        align: center middle;
+    GenSpecViewerModal .modal-actions {
+        dock: bottom;
         height: auto;
+        padding: 1 0 0 0;
+        margin-top: 1;
+        border-top: solid $surface-lighten-1;
+        align: center middle;
     }
 
     GenSpecViewerModal Button {
         margin: 0 1;
+        min-width: 10;
+        height: 3;
+        background: $surface-lighten-1;
     }
     """
 
@@ -94,23 +96,23 @@ class GenSpecViewerModal(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("Generative Specification", classes="title")
+            yield Static("Generative Specification", classes="modal-title")
 
-            # Summary section
-            yield Static("Summary", classes="section-title")
-            yield Static("", id="summary-content", classes="stat-line")
+            with Vertical(classes="modal-content"):
+                # Summary section
+                yield Static("Summary", classes="section-title")
+                yield Static("", id="summary-content", classes="stat-row")
 
-            # Phases section
-            yield Static("Phases", classes="section-title")
-            yield Static("", id="phases-content", classes="phase-line")
+                # Phases section
+                yield Static("Phases", classes="section-title")
+                yield Static("", id="phases-content", classes="stat-row")
 
-            # Artifacts section
-            yield Static("Artifacts", classes="section-title")
-            yield Static("", id="artifacts-content", classes="stat-line")
+                # Artifacts section
+                yield Static("Artifacts", classes="section-title")
+                yield Static("", id="artifacts-content", classes="stat-row")
 
-            # Buttons
-            with Horizontal(classes="buttons"):
-                yield Button("Export", id="export-btn", variant="primary")
+            with Horizontal(classes="modal-actions"):
+                yield Button("Export", id="export-btn")
                 yield Button("Close", id="close-btn")
 
     def on_mount(self) -> None:
@@ -134,7 +136,9 @@ class GenSpecViewerModal(ModalScreen[None]):
         # Phases content
         phases = summary.get("phases", {})
         if phases:
-            phase_lines = [f"{phase}: {count} steps" for phase, count in phases.items()]
+            phase_lines = [
+                f"{phase}: {count} steps" for phase, count in phases.items()
+            ]
             self.query_one("#phases-content", Static).update("\n".join(phase_lines))
         else:
             self.query_one("#phases-content", Static).update("No phases recorded")
@@ -144,7 +148,7 @@ class GenSpecViewerModal(ModalScreen[None]):
         for artifact in self.spec.artifacts:
             atype = artifact.artifact_type.value
             chars = len(artifact.content)
-            artifact_lines.append(f"{atype}: {chars} chars")
+            artifact_lines.append(f"{atype}: {chars:,} chars")
         self.query_one("#artifacts-content", Static).update(
             "\n".join(artifact_lines) if artifact_lines else "No artifacts"
         )
@@ -180,71 +184,89 @@ class GenSpecViewerModal(ModalScreen[None]):
 
 
 class RegenerateModal(ModalScreen[str | None]):
-    """Modal for configuring and launching project regeneration.
-
-    Allows user to:
-    - Set name for regenerated project
-    - Choose execution mode (replay/regenerate)
-    - Start the regeneration process
-    """
+    """Modal for configuring and launching project regeneration."""
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+enter", "submit", "Submit", show=True),
     ]
 
     DEFAULT_CSS = """
     RegenerateModal {
         align: center middle;
+        background: $surface 60%;
     }
 
     RegenerateModal > Vertical {
         width: 60;
         height: auto;
+        max-height: 80%;
         background: $surface;
-        border: round $primary;
+        border: solid $surface-lighten-2;
         padding: 1 2;
     }
 
-    RegenerateModal .title {
+    RegenerateModal .modal-title {
         text-style: bold;
+        color: $text;
         text-align: center;
-        width: 100%;
+        padding: 1 0;
         margin-bottom: 1;
+        border-bottom: solid $surface-lighten-1;
     }
 
-    RegenerateModal .label {
-        margin-top: 1;
-        margin-bottom: 0;
+    RegenerateModal .modal-content {
+        padding: 0 1;
+    }
+
+    RegenerateModal .modal-label {
+        color: $text-muted;
+        padding: 0 0 1 0;
     }
 
     RegenerateModal Input {
         margin-bottom: 1;
+        background: $surface-lighten-1;
+        border: none;
     }
 
-    RegenerateModal .hint {
-        color: $text-muted;
-        text-style: italic;
-        margin-bottom: 1;
-    }
-
-    RegenerateModal .buttons {
-        margin-top: 2;
-        align: center middle;
-        height: auto;
-    }
-
-    RegenerateModal Button {
-        margin: 0 1;
+    RegenerateModal Input:focus {
+        background: $surface-lighten-2;
+        border: none;
     }
 
     RegenerateModal RadioSet {
         margin-bottom: 1;
         height: auto;
+        background: transparent;
+        border: none;
     }
 
     RegenerateModal RadioButton {
         margin: 0;
-        padding: 0;
+        padding: 0 0 0 1;
+        background: transparent;
+    }
+
+    RegenerateModal .hint {
+        color: $text-muted;
+        text-style: italic;
+    }
+
+    RegenerateModal .modal-actions {
+        dock: bottom;
+        height: auto;
+        padding: 1 0 0 0;
+        margin-top: 1;
+        border-top: solid $surface-lighten-1;
+        align: center middle;
+    }
+
+    RegenerateModal Button {
+        margin: 0 1;
+        min-width: 10;
+        height: 3;
+        background: $surface-lighten-1;
     }
     """
 
@@ -259,53 +281,67 @@ class RegenerateModal(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("Regenerate Project", classes="title")
+            yield Static("Regenerate Project", classes="modal-title")
 
-            yield Label("New Project Name:", classes="label")
-            yield Input(
-                value=f"{self.project.name} V2",
-                placeholder="Enter project name",
-                id="project-name",
-            )
+            with Vertical(classes="modal-content"):
+                yield Label("New Project Name:", classes="modal-label")
+                yield Input(
+                    value=f"{self.project.name} V2",
+                    placeholder="Enter project name",
+                    id="project-name",
+                )
 
-            yield Label("Mode:", classes="label")
-            with RadioSet(id="mode-select"):
-                yield RadioButton("Replay (use cached outputs)", id="mode-replay")
-                yield RadioButton("Regenerate (call LLM fresh)", id="mode-regenerate")
-                yield RadioButton("Compare (replay vs regenerate)", id="mode-compare")
+                yield Label("Mode:", classes="modal-label")
+                with RadioSet(id="mode-select"):
+                    yield RadioButton(
+                        "Replay (use cached outputs)", id="mode-replay"
+                    )
+                    yield RadioButton(
+                        "Regenerate (call LLM fresh)", id="mode-regenerate"
+                    )
+                    yield RadioButton(
+                        "Compare (replay vs regenerate)", id="mode-compare"
+                    )
 
-            yield Static(
-                "Replay: instant results using cached outputs. "
-                "Regenerate: call LLM for fresh outputs. "
-                "Compare: create both and show differences.",
-                classes="hint",
-            )
+                yield Static(
+                    "Replay: instant. Regenerate: fresh LLM outputs. "
+                    "Compare: diff both.",
+                    classes="hint",
+                )
 
-            with Horizontal(classes="buttons"):
-                yield Button("Regenerate", id="regenerate-btn", variant="primary")
+            with Horizontal(classes="modal-actions"):
+                yield Button("Regenerate", id="regenerate-btn")
                 yield Button("Cancel", id="cancel-btn")
 
     def on_mount(self) -> None:
-        """Set default selection on mount."""
-        # Default to replay mode
+        """Set default selection and focus."""
         replay_button = self.query_one("#mode-replay", RadioButton)
         replay_button.value = True
+        self.query_one("#project-name", Input).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "cancel-btn":
             self.dismiss(None)
         elif event.button.id == "regenerate-btn":
-            name_input = self.query_one("#project-name", Input)
-            new_name = name_input.value.strip()
-            if new_name:
-                self._start_regeneration(new_name)
-            else:
-                self.app.notify("Please enter a project name", severity="warning")
+            self._submit()
 
     def action_cancel(self) -> None:
         """Cancel and close the modal."""
         self.dismiss(None)
+
+    def action_submit(self) -> None:
+        """Submit the form."""
+        self._submit()
+
+    def _submit(self) -> None:
+        """Validate and start regeneration."""
+        name_input = self.query_one("#project-name", Input)
+        new_name = name_input.value.strip()
+        if new_name:
+            self._start_regeneration(new_name)
+        else:
+            self.app.notify("Please enter a project name", severity="warning")
 
     def _start_regeneration(self, new_name: str) -> None:
         """Start the regeneration process."""
@@ -332,7 +368,9 @@ class RegenerateModal(ModalScreen[str | None]):
                 ExecutionMode.COMPARE: "Comparing",
             }
             mode_name = mode_names.get(mode, "Processing")
-            self.app.notify(f"{mode_name} project from spec...", severity="information")
+            self.app.notify(
+                f"{mode_name} project from spec...", severity="information"
+            )
 
             def on_progress(message: str, current: int, total: int) -> None:
                 logger.info("Progress: %s (%d/%d)", message, current, total)
@@ -357,7 +395,9 @@ class RegenerateModal(ModalScreen[str | None]):
                 self.waypoints_app._resume_project(result.project)
             else:
                 error_msg = result.error or "Unknown error"
-                self.app.notify(f"Regeneration failed: {error_msg}", severity="error")
+                self.app.notify(
+                    f"Regeneration failed: {error_msg}", severity="error"
+                )
                 logger.error("Regeneration failed: %s", error_msg)
 
         except Exception as e:
