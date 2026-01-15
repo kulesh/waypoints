@@ -256,8 +256,24 @@ def export_project(project: "Project") -> GenerativeSpec:
         initial_idea=project.initial_idea or "",
     )
 
-    # Collect steps from session files (SPARK through CHART phases)
-    step_counter = _collect_session_steps(project, spec)
+    # Add SPARK step for initial idea (no LLM call, just user input)
+    step_counter = 0
+    if project.initial_idea:
+        step_counter = 1
+        spark_step = GenerativeStep(
+            step_id="step-001",
+            phase=Phase.SPARK,
+            timestamp=project.created_at or datetime.now(),
+            input=StepInput(
+                system_prompt=None,
+                user_prompt=project.initial_idea,
+            ),
+            output=StepOutput(content="", output_type=OutputType.TEXT),
+        )
+        spec.steps.append(spark_step)
+
+    # Collect steps from session files (SHAPE through CHART phases)
+    step_counter = _collect_session_steps(project, spec, step_counter)
 
     # Collect FLY phase steps from execution logs
     _collect_fly_steps(project, spec, step_counter)
@@ -280,8 +296,15 @@ def export_project(project: "Project") -> GenerativeSpec:
     return spec
 
 
-def _collect_session_steps(project: "Project", spec: GenerativeSpec) -> int:
+def _collect_session_steps(
+    project: "Project", spec: GenerativeSpec, start_counter: int = 0
+) -> int:
     """Collect generative steps from session files.
+
+    Args:
+        project: The project to collect from
+        spec: The spec to add steps to
+        start_counter: Starting step counter (default 0)
 
     Returns:
         The step counter after collecting all session steps.
@@ -289,11 +312,11 @@ def _collect_session_steps(project: "Project", spec: GenerativeSpec) -> int:
     sessions_path = project.get_sessions_path()
     if not sessions_path.exists():
         logger.warning("No sessions directory found")
-        return 0
+        return start_counter
 
     # Find all session files (sorted by time)
     session_files = sorted(sessions_path.glob("*.jsonl"))
-    step_counter = 0
+    step_counter = start_counter
 
     for session_file in session_files:
         # Skip fly/ subdirectory files
