@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from waypoints.fly.execution_log import ExecutionLogReader
 from waypoints.genspec.spec import (
     Artifact,
     ArtifactType,
@@ -18,6 +19,7 @@ from waypoints.genspec.spec import (
     OutputType,
     Phase,
     StepInput,
+    StepMetadata,
     StepOutput,
 )
 from waypoints.models.dialogue import DialogueHistory, MessageRole
@@ -204,6 +206,25 @@ Product Specification:
 
 Generate the waypoints JSON now:""",
     },
+    Phase.FLY: {
+        "system_prompt": """\
+You are implementing a software waypoint as part of a larger project.
+You have access to file and bash tools to read, write, and execute code.
+
+**CRITICAL CONSTRAINTS:**
+- Your working directory is: {project_path}
+- ONLY access files within this directory
+- NEVER use absolute paths outside the project
+- NEVER use ../ to escape the project directory
+
+Work methodically:
+1. First understand the existing codebase
+2. Make minimal, focused changes
+3. Test after each change
+4. Iterate until done
+
+When complete, output the completion marker specified in the instructions.""",
+    },
 }
 
 
@@ -235,8 +256,11 @@ def export_project(project: "Project") -> GenerativeSpec:
         initial_idea=project.initial_idea or "",
     )
 
-    # Collect steps from session files
-    _collect_session_steps(project, spec)
+    # Collect steps from session files (SPARK through CHART phases)
+    step_counter = _collect_session_steps(project, spec)
+
+    # Collect FLY phase steps from execution logs
+    _collect_fly_steps(project, spec, step_counter)
 
     # Collect artifacts
     _collect_artifacts(project, spec)
@@ -256,12 +280,16 @@ def export_project(project: "Project") -> GenerativeSpec:
     return spec
 
 
-def _collect_session_steps(project: "Project", spec: GenerativeSpec) -> None:
-    """Collect generative steps from session files."""
+def _collect_session_steps(project: "Project", spec: GenerativeSpec) -> int:
+    """Collect generative steps from session files.
+
+    Returns:
+        The step counter after collecting all session steps.
+    """
     sessions_path = project.get_sessions_path()
     if not sessions_path.exists():
         logger.warning("No sessions directory found")
-        return
+        return 0
 
     # Find all session files (sorted by time)
     session_files = sorted(sessions_path.glob("*.jsonl"))
@@ -307,6 +335,8 @@ def _collect_session_steps(project: "Project", spec: GenerativeSpec) -> None:
 
         except Exception as e:
             logger.warning("Error processing session %s: %s", session_file, e)
+
+    return step_counter
 
 
 def _collect_qa_steps(
@@ -471,6 +501,88 @@ def _collect_artifacts(project: "Project", spec: GenerativeSpec) -> None:
                 file_path="flight-plan.jsonl",
             )
         )
+
+
+def _collect_fly_steps(
+    project: "Project", spec: GenerativeSpec, step_counter: int
+) -> int:
+    """Collect FLY phase steps from execution logs.
+
+    Captures all iteration prompts for each waypoint execution.
+
+    Args:
+        project: The project to collect from
+        spec: The spec to add steps to
+        step_counter: Current step counter
+
+    Returns:
+        Updated step counter
+    """
+    fly_dir = project.get_sessions_path() / "fly"
+    if not fly_dir.exists():
+        return step_counter
+
+    # Get the FLY system prompt template
+    known = KNOWN_PROMPTS.get(Phase.FLY, {})
+    system_prompt = known.get("system_prompt", "")
+
+    for log_file in sorted(fly_dir.glob("*.jsonl")):
+        try:
+            log = ExecutionLogReader.load(log_file)
+            last_iteration_reason = "initial"
+
+            # Collect ALL iteration_start entries
+            for entry in log.entries:
+                entry_type = entry.metadata.get("type")
+
+                # Track reason from previous events
+                if entry_type == "error":
+                    last_iteration_reason = "error"
+                elif entry_type == "intervention_needed":
+                    last_iteration_reason = entry.metadata.get(
+                        "intervention_type", "intervention"
+                    )
+
+                if entry_type == "iteration_start":
+                    iteration = entry.metadata.get("iteration", 1)
+                    step_counter += 1
+
+                    # Calculate per-iteration cost estimate
+                    total_iterations = sum(
+                        1
+                        for e in log.entries
+                        if e.metadata.get("type") == "iteration_start"
+                    )
+                    per_iter_cost = (
+                        log.total_cost_usd / total_iterations
+                        if total_iterations > 0
+                        else 0.0
+                    )
+
+                    step = GenerativeStep(
+                        step_id=f"step-{step_counter:03d}",
+                        phase=Phase.FLY,
+                        timestamp=entry.timestamp,
+                        input=StepInput(
+                            system_prompt=system_prompt,
+                            user_prompt=entry.metadata.get("prompt", ""),
+                            context={
+                                "waypoint_id": log.waypoint_id,
+                                "waypoint_title": log.waypoint_title,
+                                "iteration": iteration,
+                                "iteration_reason": last_iteration_reason,
+                            },
+                        ),
+                        output=StepOutput(content="", output_type=OutputType.TEXT),
+                        metadata=StepMetadata(cost_usd=per_iter_cost),
+                    )
+                    spec.steps.append(step)
+                    last_iteration_reason = "continue"
+
+        except Exception as e:
+            logger.warning("Error processing fly log %s: %s", log_file, e)
+
+    return step_counter
 
 
 def export_to_file(spec: GenerativeSpec, path: Path) -> None:

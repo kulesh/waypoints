@@ -670,7 +670,20 @@ class GenSpecTree(Tree[Any]):
             for step in steps:
                 step_label = Text()
                 timestamp = step.timestamp.strftime("%H:%M:%S")
-                step_label.append(f"  {timestamp}")
+
+                # For FLY steps, show waypoint ID and iteration
+                if phase_name == "fly" and step.input.context:
+                    ctx = step.input.context
+                    wp_id = ctx.get("waypoint_id", "")
+                    iteration = ctx.get("iteration", 1)
+                    reason = ctx.get("iteration_reason", "")
+                    step_label.append(f"  {wp_id} ")
+                    step_label.append(f"iter {iteration}", style="cyan")
+                    if reason and reason not in ("initial", "continue"):
+                        step_label.append(f" ({reason})", style="yellow")
+                else:
+                    step_label.append(f"  {timestamp}")
+
                 if step.metadata.cost_usd:
                     step_label.append(f" ${step.metadata.cost_usd:.3f}", style="green")
                 phase_node.add_leaf(step_label, data={"type": "step", "step": step})
@@ -782,6 +795,23 @@ class GenSpecPreviewPanel(VerticalScroll):
                    classes="meta-line")
         )
 
+        # For FLY steps, show iteration context
+        if step.phase.value == "fly" and step.input.context:
+            ctx = step.input.context
+            if ctx.get("waypoint_id"):
+                content.mount(
+                    Static(f"Waypoint: {ctx['waypoint_id']}", classes="meta-line")
+                )
+            if ctx.get("waypoint_title"):
+                content.mount(
+                    Static(f"Title: {ctx['waypoint_title']}", classes="meta-line")
+                )
+            if ctx.get("iteration"):
+                iter_info = f"Iteration: {ctx['iteration']}"
+                if ctx.get("iteration_reason"):
+                    iter_info += f" ({ctx['iteration_reason']})"
+                content.mount(Static(iter_info, classes="meta-line"))
+
         if step.metadata.cost_usd:
             content.mount(
                 Static(f"Cost: ${step.metadata.cost_usd:.4f}", classes="meta-line")
@@ -809,10 +839,16 @@ class GenSpecPreviewPanel(VerticalScroll):
 
         # Output preview
         content.mount(Static("Output", classes="section-header"))
-        output_preview = step.output.content[:300]
-        if len(step.output.content) > 300:
-            output_preview += "..."
-        content.mount(Static(output_preview, classes="content-preview"))
+        if step.output.content:
+            output_preview = step.output.content[:300]
+            if len(step.output.content) > 300:
+                output_preview += "..."
+            content.mount(Static(output_preview, classes="content-preview"))
+        else:
+            # FLY steps have no output captured (only inputs)
+            content.mount(
+                Static("[Generated during execution]", classes="content-preview dim")
+            )
 
         content.mount(Static("Press Enter for full detail", classes="hint"))
 
