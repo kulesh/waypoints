@@ -1,9 +1,10 @@
 """Land screen for project completion (LAND phase).
 
-Hub screen with three activities:
+Hub screen with four activities:
 - Debrief: Completion stats, issues, lessons learned
 - Ship: Changelog, release notes, git tagging
 - Iterate: Next steps, V2 planning, project close
+- Gen Spec: View generative spec details and export to file
 """
 
 import logging
@@ -38,6 +39,7 @@ class LandActivity(Enum):
     DEBRIEF = "debrief"
     SHIP = "ship"
     ITERATE = "iterate"
+    GENSPEC = "genspec"
 
 
 class ActivityListPanel(Vertical):
@@ -70,6 +72,7 @@ class ActivityListPanel(Vertical):
             Option("Debrief", id="debrief"),
             Option("Ship", id="ship"),
             Option("Iterate", id="iterate"),
+            Option("Gen Spec", id="genspec"),
             id="activity-list",
         )
 
@@ -551,14 +554,224 @@ class IteratePanel(VerticalScroll):
         )
 
 
+class GenSpecPanel(VerticalScroll):
+    """Gen Spec content panel - shows generative specification details and export."""
+
+    DEFAULT_CSS = """
+    GenSpecPanel {
+        width: 1fr;
+        height: 100%;
+        padding: 1 2;
+    }
+
+    GenSpecPanel .section-title {
+        text-style: bold;
+        color: $text;
+        margin-top: 1;
+        margin-bottom: 0;
+    }
+
+    GenSpecPanel .stat-line {
+        color: $text-muted;
+        padding-left: 2;
+    }
+
+    GenSpecPanel .step-line {
+        color: $text-muted;
+        padding-left: 4;
+    }
+
+    GenSpecPanel .phase-header {
+        color: $text;
+        text-style: bold;
+        padding-left: 2;
+        margin-top: 1;
+    }
+
+    GenSpecPanel .export-hint {
+        color: $text-disabled;
+        text-style: italic;
+        margin-top: 2;
+    }
+
+    GenSpecPanel Button {
+        margin-top: 1;
+        margin-left: 2;
+        width: auto;
+        min-width: 16;
+        height: 3;
+        background: $surface-lighten-1;
+    }
+    """
+
+    def __init__(self, project: Project, **kwargs: Any):
+        super().__init__(**kwargs)
+        self.project = project
+        self._spec: Any = None  # GenerativeSpec, loaded on mount
+
+    def compose(self) -> ComposeResult:
+        from textual.widgets import Button
+
+        yield Static("GENERATIVE SPEC", classes="section-title")
+        yield Static("", id="genspec-summary", classes="stat-line")
+        yield Static("Steps by Phase", classes="section-title")
+        yield Static("", id="genspec-phases")
+        yield Static("Artifacts", classes="section-title")
+        yield Static("", id="genspec-artifacts", classes="stat-line")
+        yield Static("", classes="export-hint", id="export-hint")
+        yield Button("Export to File", id="export-genspec-btn")
+
+    def on_mount(self) -> None:
+        """Load and display the generative spec."""
+        self._load_spec()
+
+    def _load_spec(self) -> None:
+        """Load the generative spec for the project."""
+        from waypoints.genspec import export_project
+
+        try:
+            self._spec = export_project(self.project)
+            self._update_summary()
+            self._update_phases()
+            self._update_artifacts()
+            self.query_one("#export-hint", Static).update(
+                "Press 'e' or click Export to save as .genspec.jsonl"
+            )
+        except Exception as e:
+            logger.exception("Failed to load genspec: %s", e)
+            self.query_one("#genspec-summary", Static).update(f"Error: {e}")
+
+    def _update_summary(self) -> None:
+        """Update the summary section."""
+        if not self._spec:
+            return
+
+        summary = self._spec.summary()
+        lines = [
+            f"├─ Project: {summary['source_project']}",
+            f"├─ Steps: {summary['total_steps']}",
+            f"├─ Decisions: {summary['total_decisions']}",
+            f"├─ Artifacts: {summary['total_artifacts']}",
+        ]
+        if summary.get("total_cost_usd"):
+            lines.append(f"├─ Cost: ${summary['total_cost_usd']:.2f}")
+        if summary.get("model"):
+            lines.append(f"└─ Model: {summary['model']}")
+
+        self.query_one("#genspec-summary", Static).update("\n".join(lines))
+
+    def _update_phases(self) -> None:
+        """Update the phases breakdown."""
+        if not self._spec:
+            return
+
+        lines: list[str] = []
+        summary = self._spec.summary()
+        phases = summary.get("phases", {})
+
+        if phases:
+            phase_order = [
+                "spark",
+                "shape_qa",
+                "shape_brief",
+                "shape_spec",
+                "chart",
+                "chart_breakdown",
+                "chart_add",
+                "fly",
+            ]
+            for phase_name in phase_order:
+                if phase_name in phases:
+                    count = phases[phase_name]
+                    display_name = phase_name.replace("_", " ").title()
+                    lines.append(f"  {display_name}")
+
+                    # Show individual steps for this phase
+                    from waypoints.genspec.spec import Phase
+
+                    try:
+                        phase_enum = Phase(phase_name)
+                        steps = self._spec.get_steps_by_phase(phase_enum)
+                        for i, step in enumerate(steps):
+                            prefix = "└─" if i == len(steps) - 1 else "├─"
+                            # Truncate long outputs for display
+                            output_preview = step.output.content[:60]
+                            if len(step.output.content) > 60:
+                                output_preview += "..."
+                            # Show step info
+                            timestamp = step.timestamp.strftime("%H:%M:%S")
+                            cost_str = ""
+                            if step.metadata.cost_usd:
+                                cost_str = f" (${step.metadata.cost_usd:.3f})"
+                            lines.append(f"    {prefix} {timestamp}{cost_str}")
+                    except Exception:
+                        lines.append(f"    └─ {count} steps")
+        else:
+            lines.append("  No steps recorded")
+
+        content = self.query_one("#genspec-phases", Static)
+        content.update("\n".join(lines))
+        content.add_class("stat-line")
+
+    def _update_artifacts(self) -> None:
+        """Update the artifacts section."""
+        if not self._spec:
+            return
+
+        lines: list[str] = []
+        for i, artifact in enumerate(self._spec.artifacts):
+            prefix = "└─" if i == len(self._spec.artifacts) - 1 else "├─"
+            atype = artifact.artifact_type.value.replace("_", " ").title()
+            chars = len(artifact.content)
+            lines.append(f"{prefix} {atype}: {chars:,} chars")
+
+        content = self.query_one("#genspec-artifacts", Static)
+        if lines:
+            content.update("\n".join(lines))
+        else:
+            content.update("└─ No artifacts")
+
+    def on_button_pressed(self, event: Any) -> None:
+        """Handle export button press."""
+        from textual.widgets import Button
+
+        if isinstance(event, Button.Pressed):
+            if event.button.id == "export-genspec-btn":
+                self._export_spec()
+
+    def _export_spec(self) -> None:
+        """Export the generative spec to a file."""
+        from datetime import datetime as dt
+        from pathlib import Path
+
+        from waypoints.genspec import export_to_file
+
+        if not self._spec:
+            self.app.notify("No spec to export", severity="warning")
+            return
+
+        timestamp = dt.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"{self.project.slug}-{timestamp}.genspec.jsonl"
+        output_path = Path.cwd() / filename
+
+        try:
+            export_to_file(self._spec, output_path)
+            self.app.notify(f"Exported to {filename}")
+            logger.info("Exported genspec to %s", output_path)
+        except Exception as e:
+            self.app.notify(f"Export failed: {e}", severity="error")
+            logger.exception("Failed to export genspec: %s", e)
+
+
 class LandScreen(Screen[None]):
     """
     Land screen - Project completion hub.
 
-    Three activities accessible via left panel:
+    Four activities accessible via left panel:
     - Debrief: Stats, issues, lessons
     - Ship: Changelog, release notes, git tag
     - Iterate: V2 planning, close project
+    - Gen Spec: View generative spec details and export
     """
 
     BINDINGS = [
@@ -567,12 +780,13 @@ class LandScreen(Screen[None]):
         Binding("d", "show_debrief", "Debrief", show=True),
         Binding("s", "show_ship", "Ship", show=True),
         Binding("i", "show_iterate", "Iterate", show=True),
+        Binding("v", "show_genspec", "Gen Spec", show=True),
         Binding("f", "fix_issues", "Fix Issues", show=True),
         Binding("n", "new_iteration", "New V2", show=True),
         Binding("c", "close_project", "Close", show=True),
         Binding("g", "generate_release", "Generate", show=False),
         Binding("t", "create_tag", "Tag", show=False),
-        Binding("v", "view_genspec", "View Spec", show=True),
+        Binding("e", "export_genspec", "Export", show=False),
         Binding("r", "regenerate", "Regenerate", show=True),
     ]
 
@@ -619,6 +833,7 @@ class LandScreen(Screen[None]):
                 yield DebriefPanel(self.project, self.flight_plan, id="debrief-panel")
                 yield ShipPanel(self.project, self.flight_plan, id="ship-panel")
                 yield IteratePanel(self.project, id="iterate-panel")
+                yield GenSpecPanel(self.project, id="genspec-panel")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -644,10 +859,12 @@ class LandScreen(Screen[None]):
         debrief = self.query_one("#debrief-panel", DebriefPanel)
         ship = self.query_one("#ship-panel", ShipPanel)
         iterate = self.query_one("#iterate-panel", IteratePanel)
+        genspec = self.query_one("#genspec-panel", GenSpecPanel)
 
         debrief.display = activity == LandActivity.DEBRIEF
         ship.display = activity == LandActivity.SHIP
         iterate.display = activity == LandActivity.ITERATE
+        genspec.display = activity == LandActivity.GENSPEC
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """Handle activity selection from the list."""
@@ -657,6 +874,8 @@ class LandScreen(Screen[None]):
             self._show_activity(LandActivity.SHIP)
         elif event.option.id == "iterate":
             self._show_activity(LandActivity.ITERATE)
+        elif event.option.id == "genspec":
+            self._show_activity(LandActivity.GENSPEC)
 
     def action_show_debrief(self) -> None:
         """Show the Debrief panel."""
@@ -672,6 +891,11 @@ class LandScreen(Screen[None]):
         """Show the Iterate panel."""
         self._show_activity(LandActivity.ITERATE)
         self._select_activity_option("iterate")
+
+    def action_show_genspec(self) -> None:
+        """Show the Gen Spec panel."""
+        self._show_activity(LandActivity.GENSPEC)
+        self._select_activity_option("genspec")
 
     def _select_activity_option(self, option_id: str) -> None:
         """Select the specified option in the activity list."""
@@ -737,17 +961,11 @@ class LandScreen(Screen[None]):
         if self.current_activity == LandActivity.SHIP:
             self.notify("Git tagging not yet implemented")
 
-    def action_view_genspec(self) -> None:
-        """View the generative specification for this project."""
-        from waypoints.genspec import export_project
-        from waypoints.tui.widgets.genspec import GenSpecViewerModal
-
-        try:
-            spec = export_project(self.project)
-            self.app.push_screen(GenSpecViewerModal(spec, self.project))
-        except Exception as e:
-            self.notify(f"Error loading spec: {e}", severity="error")
-            logger.exception("Failed to export genspec: %s", e)
+    def action_export_genspec(self) -> None:
+        """Export the generative spec when in Gen Spec panel."""
+        if self.current_activity == LandActivity.GENSPEC:
+            genspec_panel = self.query_one("#genspec-panel", GenSpecPanel)
+            genspec_panel._export_spec()
 
     def action_regenerate(self) -> None:
         """Start regeneration from the generative specification."""

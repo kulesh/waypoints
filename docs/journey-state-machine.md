@@ -238,9 +238,15 @@ When a project is selected from the project list, the app resumes based on the j
 - `Ctrl+B` - Back to CHART (edit plan)
 
 ### LAND Phase
+- `d` - Show Debrief panel
+- `s` - Show Ship panel
+- `i` - Show Iterate panel
+- `v` - Show Gen Spec panel
+- `e` - Export generative spec (when in Gen Spec panel)
 - `f` - Fix issues (return to FLY)
-- `v` - View generative spec
-- `r` - Regenerate from spec
+- `n` - New V2 iteration
+- `c` - Close project
+- `r` - Regenerate from spec (opens modal)
 
 ## Implementation Notes
 
