@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
 from waypoints.llm.validation import (
     WaypointValidationError,
+    validate_reprioritization,
     validate_single_waypoint,
     validate_waypoints,
 )
@@ -34,6 +35,7 @@ from waypoints.tui.widgets.flight_plan import (
     BreakDownPreviewModal,
     ConfirmDeleteModal,
     FlightPlanPanel,
+    ReprioritizePreviewModal,
     WaypointDetailModal,
     WaypointOpenDetail,
     WaypointPreviewPanel,
@@ -130,6 +132,32 @@ Output ONLY the JSON object, no markdown code blocks or other text.
 
 Generate the waypoint JSON now:"""
 
+REPRIORITIZE_PROMPT = """\
+Analyze the following waypoints and suggest an optimal execution order.
+
+Current waypoints (in current order):
+{waypoints_json}
+
+Product Specification:
+{spec_summary}
+
+Consider:
+1. Dependencies - waypoints that depend on others must come after
+2. Logical flow - foundational work before features that use it
+3. Risk reduction - validate core assumptions early
+4. Incremental value - deliver testable increments
+
+Output a JSON object with:
+- rationale: Brief explanation of the recommended order (1-2 sentences)
+- order: Array of waypoint IDs in recommended order (root-level only)
+- changes: Array of objects with "id" and "reason" for each moved waypoint
+
+If current order is already optimal, return the same order with rationale explaining.
+
+Output ONLY the JSON object, no markdown code blocks.
+
+Generate the reprioritization JSON now:"""
+
 
 class ChartScreen(Screen[None]):
     """
@@ -146,6 +174,7 @@ class ChartScreen(Screen[None]):
         Binding("ctrl+enter", "proceed", "Takeoff", show=True),
         Binding("escape", "back", "Back", show=False),
         Binding("a", "add_waypoint", "Add", show=True),
+        Binding("R", "reprioritize", "Reprioritize", show=True),
         Binding("e", "edit_waypoint", "Edit", show=False),
         Binding("b", "break_down", "Break Down", show=False),
         Binding("d", "delete_waypoint", "Delete", show=False),
@@ -322,6 +351,12 @@ class ChartScreen(Screen[None]):
             # Save to disk
             writer = FlightPlanWriter(self.project)
             writer.save(self.flight_plan)
+
+            # Log initial generation to audit trail
+            from waypoints.models.waypoint_history import WaypointHistoryWriter
+
+            history_writer = WaypointHistoryWriter(self.project)
+            history_writer.log_generated([wp.to_dict() for wp in waypoints])
 
             self.app.call_from_thread(self._finalize_generation)
 
@@ -847,6 +882,153 @@ class ChartScreen(Screen[None]):
         # Refresh the tree
         self._update_panels()
         self.notify(f"Added waypoint: {waypoint.id}")
+
+    # ─── Reprioritize Waypoints ───────────────────────────────────────────
+
+    def action_reprioritize(self) -> None:
+        """Trigger AI reprioritization of waypoints."""
+        if not self.flight_plan:
+            self.notify("No flight plan loaded", severity="error")
+            return
+
+        root_waypoints = self.flight_plan.get_root_waypoints()
+        if len(root_waypoints) < 2:
+            self.notify("Need at least 2 waypoints to reprioritize", severity="warning")
+            return
+
+        self._set_thinking(True)
+        self._generate_reprioritization()
+
+    @work(thread=True)
+    def _generate_reprioritization(self) -> None:
+        """Generate reprioritization suggestion via LLM."""
+        import json
+
+        assert self.llm_client is not None
+        assert self.flight_plan is not None
+
+        root_waypoints = self.flight_plan.get_root_waypoints()
+
+        # Format waypoints for context
+        waypoints_json = json.dumps(
+            [
+                {"id": wp.id, "title": wp.title, "dependencies": wp.dependencies}
+                for wp in root_waypoints
+            ],
+            indent=2,
+        )
+
+        # Truncate spec for prompt
+        spec_summary = self.spec[:2000] if self.spec else "No product spec available"
+
+        prompt = REPRIORITIZE_PROMPT.format(
+            waypoints_json=waypoints_json,
+            spec_summary=spec_summary,
+        )
+
+        full_response = ""
+        try:
+            system_prompt = (
+                "You are a technical project planner. "
+                "Optimize waypoint ordering. Output valid JSON only."
+            )
+            for result in self.llm_client.stream_message(
+                messages=[{"role": "user", "content": prompt}],
+                system=system_prompt,
+            ):
+                if isinstance(result, StreamChunk):
+                    full_response += result.text
+                elif isinstance(result, StreamComplete):
+                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
+        except Exception as e:
+            logger.exception("Error generating reprioritization: %s", e)
+            self.app.call_from_thread(self._set_thinking, False)
+            self.app.call_from_thread(
+                self.notify, f"Error analyzing order: {e}", severity="error"
+            )
+            return
+
+        # Hide thinking indicator
+        self.app.call_from_thread(self._set_thinking, False)
+
+        # Validate response
+        root_ids = {wp.id for wp in root_waypoints}
+        validation = validate_reprioritization(full_response, root_ids)
+        if not validation.valid:
+            logger.error("Reprioritization validation failed: %s", validation.errors)
+            self.app.call_from_thread(
+                self.notify,
+                f"Invalid response: {validation.errors[0]}",
+                severity="error",
+            )
+            return
+
+        # Check if order actually changed
+        current_order = [wp.id for wp in root_waypoints]
+        if validation.new_order == current_order:
+            self.app.call_from_thread(
+                self.notify,
+                f"Order is already optimal: {validation.rationale}",
+                severity="information",
+            )
+            return
+
+        # Show preview modal
+        self.app.call_from_thread(
+            self._show_reprioritize_preview,
+            current_order,
+            validation.new_order,
+            validation.rationale,
+            validation.changes,
+        )
+
+    def _show_reprioritize_preview(
+        self,
+        current_order: list[str],
+        new_order: list[str],
+        rationale: str,
+        changes: list[dict[str, str]],
+    ) -> None:
+        """Show preview modal for reprioritization."""
+        if not self.flight_plan:
+            return
+
+        # Build waypoint titles map
+        waypoint_titles = {
+            wp.id: wp.title for wp in self.flight_plan.get_root_waypoints()
+        }
+
+        def handle_confirm(confirmed: bool | None) -> None:
+            if confirmed:
+                self._apply_new_order(new_order, rationale, changes)
+
+        self.app.push_screen(
+            ReprioritizePreviewModal(
+                current_order=current_order,
+                new_order=new_order,
+                rationale=rationale,
+                waypoint_titles=waypoint_titles,
+                changes=changes,
+            ),
+            handle_confirm,
+        )
+
+    def _apply_new_order(
+        self,
+        new_order: list[str],
+        rationale: str,
+        changes: list[dict[str, str]],
+    ) -> None:
+        """Apply the new waypoint order."""
+        if not self.flight_plan:
+            return
+
+        # Delegate to coordinator (handles logging)
+        self.coordinator.reorder_waypoints(new_order, rationale, changes)
+
+        # Refresh the tree
+        self._update_panels()
+        self.notify("Waypoints reprioritized")
 
     def action_help(self) -> None:
         """Show help overlay."""
