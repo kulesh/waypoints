@@ -1,10 +1,18 @@
 # Waypoints
 
 ```
-                                        ✈
-                                      ╱
-    ◇───────◇───────◇───────◆───────╯
-   SPARK   SHAPE   CHART    FLY
+        ╔═══════════════════════════════════════════════╗
+        ║                                               ║
+        ║            W  A  Y  P  O  I  N  T  S          ║
+        ║                                               ║
+        ║       ☁               ☁               ✈       ║
+        ║                                     ,'        ║
+        ║      ◇──────────◇──────────◇──────────◆'      ║
+        ║     SPARK      SHAPE      CHART       FLY     ║
+        ║                                               ║
+        ║            idea  ═════►  software             ║
+        ║                                               ║
+        ╚═══════════════════════════════════════════════╝
 ```
 
 **An AI-native software development environment that turns ideas into working software.**
