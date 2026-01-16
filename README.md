@@ -1,16 +1,21 @@
 # Waypoints
 
+```
+    ◇───────◇───────◇───────◆
+   SPARK   SHAPE   CHART    FLY
+```
+
 **An AI-native software development environment that turns ideas into working software.**
 
 Waypoints transforms software development from a task-management exercise into a guided journey. Like an aircraft's flight management system, Waypoints takes your destination (a product idea), collaborates with you to chart waypoints, then engages autopilot for the journey—with you always able to take control.
 
 > **Status**: Work in progress. All four phases (SPARK, SHAPE, CHART, FLY) are functional.
 
-## Vision: Software as JIT Compilation
+## Vision: Generative Specification as Distribution
 
-Waypoints is an implementation of [Generative Software](https://github.com/kulesh/generative-software)—a paradigm where software is generated on-demand from specifications rather than distributed as compiled code.
+Waypoints is an implementation of [Generative Software](https://github.com/kulesh/generative-software)—a paradigm where the **generative specification (genspec)** becomes the distribution medium, not code.
 
-**The core insight**: Just as JIT compilation transforms bytecode into machine code at runtime, generative software transforms *specifications* into working software on demand. The distribution medium isn't code—it's the **generative specification (genspec)**.
+Think of it like JIT compilation: just as JIT transforms bytecode into machine code at runtime, generative software transforms *specifications* into working software on demand. You don't ship the compiled binary—you ship the spec.
 
 A genspec captures:
 - **What** the software should do (product spec)
