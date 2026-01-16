@@ -13,7 +13,7 @@ Benefits:
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from waypoints.fly.executor import (
     ExecutionContext,
@@ -546,8 +546,23 @@ class JourneyCoordinator:
         """Update a waypoint and persist changes."""
         if self.flight_plan is None:
             return
+
+        # Capture before state for audit log
+        existing = self.flight_plan.get_waypoint(waypoint.id)
+        before_data = existing.to_dict() if existing else {}
+
         self.flight_plan.update_waypoint(waypoint)
         self._save_flight_plan()
+
+        # Log to audit trail
+        self._log_waypoint_event(
+            "updated",
+            {
+                "waypoint_id": waypoint.id,
+                "before": before_data,
+                "after": waypoint.to_dict(),
+            },
+        )
 
     def delete_waypoint(self, waypoint_id: str) -> list[str]:
         """Delete a waypoint and return IDs of orphaned dependents.
@@ -563,6 +578,10 @@ class JourneyCoordinator:
         if self.flight_plan is None:
             return []
 
+        # Capture waypoint data before deletion for audit log
+        waypoint = self.flight_plan.get_waypoint(waypoint_id)
+        waypoint_data = waypoint.to_dict() if waypoint else {}
+
         # Get dependents before deletion
         dependents = self.flight_plan.get_dependents(waypoint_id)
         dependent_ids = [wp.id for wp in dependents]
@@ -572,6 +591,15 @@ class JourneyCoordinator:
 
         # Save to disk
         self._save_flight_plan()
+
+        # Log to audit trail
+        self._log_waypoint_event(
+            "deleted",
+            {
+                "waypoint_id": waypoint_id,
+                "waypoint": waypoint_data,
+            },
+        )
 
         logger.info(
             "Deleted waypoint %s (orphaned %d dependents)",
@@ -602,6 +630,15 @@ class JourneyCoordinator:
         # Save to disk
         self._save_flight_plan()
 
+        # Log to audit trail
+        self._log_waypoint_event(
+            "broken_down",
+            {
+                "parent_id": parent_id,
+                "sub_waypoints": [wp.to_dict() for wp in sub_waypoints],
+            },
+        )
+
         logger.info("Added %d sub-waypoints to %s", len(sub_waypoints), parent_id)
 
     def add_waypoint(self, waypoint: Waypoint, after_id: str | None = None) -> None:
@@ -620,7 +657,59 @@ class JourneyCoordinator:
             self.flight_plan.add_waypoint(waypoint)
 
         self._save_flight_plan()
+
+        # Log to audit trail
+        self._log_waypoint_event(
+            "added",
+            {
+                "waypoint": waypoint.to_dict(),
+                "insert_after": after_id,
+            },
+        )
+
         logger.info("Added waypoint %s (after %s)", waypoint.id, after_id or "end")
+
+    def reorder_waypoints(
+        self,
+        new_order: list[str],
+        rationale: str = "",
+        changes: list[dict[str, str]] | None = None,
+    ) -> None:
+        """Reorder root waypoints and log the change.
+
+        Args:
+            new_order: List of root waypoint IDs in the new order
+            rationale: AI's explanation for the new order
+            changes: Optional list of per-waypoint change reasons
+        """
+        if self.flight_plan is None:
+            return
+
+        # Capture previous order for audit log
+        previous_order = [wp.id for wp in self.flight_plan.get_root_waypoints()]
+
+        # Reorder
+        self.flight_plan.reorder_waypoints(new_order)
+        self._save_flight_plan()
+
+        # Log to audit trail
+        self._log_waypoint_event(
+            "reprioritized",
+            {
+                "previous_order": previous_order,
+                "new_order": new_order,
+                "rationale": rationale,
+                "changes": changes or [],
+            },
+        )
+
+        prev_summary = " -> ".join(previous_order[:3])
+        new_summary = " -> ".join(new_order[:3])
+        if len(previous_order) > 3:
+            prev_summary += "..."
+        if len(new_order) > 3:
+            new_summary += "..."
+        logger.info("Reordered waypoints: %s -> %s", prev_summary, new_summary)
 
     # ─── IDEATION Phase: Q&A Dialogue ────────────────────────────────────
 
@@ -671,6 +760,54 @@ class JourneyCoordinator:
             writer.save(self.flight_plan)
         except Exception as e:
             logger.error("Failed to save flight plan: %s", e)
+
+    def _log_waypoint_event(self, event_type: str, data: dict[str, Any]) -> None:
+        """Log a waypoint change event to the audit trail.
+
+        Args:
+            event_type: Type of event (generated, added, deleted, etc.)
+            data: Event-specific data payload
+        """
+        try:
+            from waypoints.models.waypoint_history import WaypointHistoryWriter
+
+            writer = WaypointHistoryWriter(self.project)
+
+            # Dispatch to appropriate logging method
+            if event_type == "generated":
+                writer.log_generated(data.get("waypoints", []))
+            elif event_type == "added":
+                writer.log_added(
+                    data.get("waypoint", {}),
+                    data.get("insert_after"),
+                )
+            elif event_type == "deleted":
+                writer.log_deleted(
+                    data.get("waypoint_id", ""),
+                    data.get("waypoint", {}),
+                )
+            elif event_type == "updated":
+                writer.log_updated(
+                    data.get("waypoint_id", ""),
+                    data.get("before", {}),
+                    data.get("after", {}),
+                )
+            elif event_type == "broken_down":
+                writer.log_broken_down(
+                    data.get("parent_id", ""),
+                    data.get("sub_waypoints", []),
+                )
+            elif event_type == "reprioritized":
+                writer.log_reprioritized(
+                    data.get("previous_order", []),
+                    data.get("new_order", []),
+                    data.get("rationale", ""),
+                    data.get("changes"),
+                )
+            else:
+                logger.warning("Unknown waypoint event type: %s", event_type)
+        except Exception as e:
+            logger.error("Failed to log waypoint event: %s", e)
 
     def _load_product_spec(self) -> str:
         """Load product specification from project."""

@@ -126,6 +126,57 @@ class FlightPlan:
             wp.dependencies = [d for d in wp.dependencies if d != waypoint_id]
         self.updated_at = datetime.now()
 
+    def reorder_waypoints(self, new_order: list[str]) -> None:
+        """Reorder root waypoints to match new_order, preserving children.
+
+        Children stay with their parents in tree order.
+
+        Args:
+            new_order: List of root waypoint IDs in the desired order.
+        """
+        # Build map of root waypoint ID -> [waypoint, children...]
+        root_map: dict[str, list[Waypoint]] = {}
+        for wp_id in new_order:
+            wp = self.get_waypoint(wp_id)
+            if wp:
+                children = self._get_all_descendants(wp_id)
+                root_map[wp_id] = [wp] + children
+
+        # Rebuild waypoints list in new order
+        new_waypoints: list[Waypoint] = []
+        for wp_id in new_order:
+            if wp_id in root_map:
+                new_waypoints.extend(root_map[wp_id])
+
+        # Add any waypoints not in new_order (shouldn't happen, but safe)
+        existing_ids = {wp.id for wp in new_waypoints}
+        for wp in self.waypoints:
+            if wp.id not in existing_ids:
+                new_waypoints.append(wp)
+
+        self.waypoints = new_waypoints
+        self.updated_at = datetime.now()
+
+    def _get_all_descendants(self, waypoint_id: str) -> list[Waypoint]:
+        """Get all descendants of a waypoint in tree order.
+
+        Args:
+            waypoint_id: The parent waypoint ID.
+
+        Returns:
+            List of all descendants (children, grandchildren, etc.) in tree order.
+        """
+        descendants: list[Waypoint] = []
+
+        def collect(parent_id: str) -> None:
+            children = self.get_children(parent_id)
+            for child in children:
+                descendants.append(child)
+                collect(child.id)
+
+        collect(waypoint_id)
+        return descendants
+
     def iterate_in_order(self) -> Iterator[tuple[Waypoint, int]]:
         """Iterate waypoints in display order with depth level.
 

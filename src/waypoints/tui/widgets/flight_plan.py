@@ -1382,3 +1382,179 @@ class AddWaypointPreviewModal(ModalScreen[bool]):
     def action_cancel(self) -> None:
         """Cancel."""
         self.dismiss(False)
+
+
+class ReprioritizePreviewModal(ModalScreen[bool]):
+    """Modal showing before/after waypoint order comparison."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("enter", "confirm", "Apply", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    ReprioritizePreviewModal {
+        align: center middle;
+        background: $surface 60%;
+    }
+
+    ReprioritizePreviewModal > Vertical {
+        width: 90%;
+        max-width: 100;
+        height: auto;
+        max-height: 85%;
+        background: $surface;
+        border: solid $surface-lighten-2;
+        padding: 1 2;
+    }
+
+    ReprioritizePreviewModal .modal-title {
+        text-style: bold;
+        color: $text;
+        text-align: center;
+        padding: 1 0;
+        margin-bottom: 1;
+        border-bottom: solid $surface-lighten-1;
+    }
+
+    ReprioritizePreviewModal .rationale {
+        color: $text-muted;
+        text-style: italic;
+        padding: 1;
+        margin-bottom: 1;
+        background: $surface-lighten-1;
+    }
+
+    ReprioritizePreviewModal .columns-container {
+        height: auto;
+        max-height: 30;
+    }
+
+    ReprioritizePreviewModal .order-column {
+        width: 1fr;
+        height: auto;
+        padding: 0 1;
+    }
+
+    ReprioritizePreviewModal .column-title {
+        text-style: bold;
+        color: $text;
+        padding-bottom: 1;
+        border-bottom: dashed $surface-lighten-1;
+        margin-bottom: 1;
+    }
+
+    ReprioritizePreviewModal .waypoint-item {
+        padding: 0;
+        height: auto;
+    }
+
+    ReprioritizePreviewModal .waypoint-moved {
+        color: $warning;
+        text-style: bold;
+    }
+
+    ReprioritizePreviewModal .arrow-column {
+        width: 5;
+        text-align: center;
+        padding-top: 3;
+        color: $text-muted;
+    }
+
+    ReprioritizePreviewModal .modal-actions {
+        dock: bottom;
+        height: auto;
+        padding: 1 0 0 0;
+        margin-top: 1;
+        border-top: solid $surface-lighten-1;
+        align: center middle;
+    }
+
+    ReprioritizePreviewModal Button {
+        margin: 0 1;
+        min-width: 12;
+        height: 3;
+    }
+
+    ReprioritizePreviewModal Button#btn-confirm {
+        background: $success-darken-2;
+    }
+
+    ReprioritizePreviewModal Button#btn-cancel {
+        background: $surface-lighten-1;
+    }
+    """
+
+    def __init__(
+        self,
+        current_order: list[str],
+        new_order: list[str],
+        rationale: str,
+        waypoint_titles: dict[str, str],
+        changes: list[dict[str, str]] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.current_order = current_order
+        self.new_order = new_order
+        self.rationale = rationale
+        self.waypoint_titles = waypoint_titles
+        self.changes = changes or []
+
+    def compose(self) -> ComposeResult:
+        # Determine which waypoints moved
+        moved_ids = set()
+        for i, wp_id in enumerate(self.new_order):
+            if i >= len(self.current_order) or wp_id != self.current_order[i]:
+                moved_ids.add(wp_id)
+
+        with Vertical():
+            yield Static("Reprioritize Waypoints?", classes="modal-title")
+            yield Static(self.rationale, classes="rationale")
+
+            with Horizontal(classes="columns-container"):
+                # Current order column
+                with Vertical(classes="order-column"):
+                    yield Static("Current Order", classes="column-title")
+                    for i, wp_id in enumerate(self.current_order, 1):
+                        title = self.waypoint_titles.get(wp_id, "")
+                        if len(title) > 30:
+                            title = title[:27] + "..."
+                        yield Static(
+                            f"{i}. {wp_id}: {title}",
+                            classes="waypoint-item",
+                        )
+
+                # Arrow
+                yield Static("→", classes="arrow-column")
+
+                # New order column
+                with Vertical(classes="order-column"):
+                    yield Static("Proposed Order", classes="column-title")
+                    for i, wp_id in enumerate(self.new_order, 1):
+                        title = self.waypoint_titles.get(wp_id, "")
+                        if len(title) > 30:
+                            title = title[:27] + "..."
+                        classes = "waypoint-item"
+                        if wp_id in moved_ids:
+                            classes += " waypoint-moved"
+                        yield Static(f"{i}. {wp_id}: {title}", classes=classes)
+
+            with Horizontal(classes="modal-actions"):
+                yield Button("Apply New Order", id="btn-confirm", variant="primary")
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "btn-confirm":
+            self.dismiss(True)
+        else:
+            self.dismiss(False)
+
+    def action_confirm(self) -> None:
+        """Confirm applying the new order."""
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        """Cancel."""
+        self.dismiss(False)

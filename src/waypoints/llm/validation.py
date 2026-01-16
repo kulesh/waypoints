@@ -304,3 +304,90 @@ def validate_single_waypoint(
         return SingleWaypointResult(valid=False, errors=errors)
 
     return SingleWaypointResult(valid=True, data=data, insert_after=insert_after)
+
+
+# JSON Schema for reprioritization response
+REPRIORITIZE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["rationale", "order"],
+    "properties": {
+        "rationale": {"type": "string", "minLength": 10},
+        "order": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+        },
+        "changes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+            },
+        },
+    },
+    "additionalProperties": False,
+}
+
+
+@dataclass
+class ReprioritizeResult:
+    """Result of reprioritization validation."""
+
+    valid: bool
+    new_order: list[str] = field(default_factory=list)
+    rationale: str = ""
+    changes: list[dict[str, str]] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+def validate_reprioritization(
+    response: str, root_waypoint_ids: set[str]
+) -> ReprioritizeResult:
+    """Validate reprioritization response from LLM.
+
+    Args:
+        response: Raw LLM response containing reprioritization JSON.
+        root_waypoint_ids: Set of root waypoint IDs that must all be present.
+
+    Returns:
+        ReprioritizeResult with valid flag, new order, rationale, and errors.
+    """
+    # Extract JSON object
+    try:
+        data = extract_json_object(response)
+    except ValueError as e:
+        return ReprioritizeResult(valid=False, errors=[str(e)])
+    except json.JSONDecodeError as e:
+        return ReprioritizeResult(valid=False, errors=[f"Invalid JSON: {e}"])
+
+    # Schema validation
+    errors: list[str] = []
+    validator = jsonschema.Draft7Validator(REPRIORITIZE_SCHEMA)
+    for error in validator.iter_errors(data):
+        path = error.json_path if error.json_path != "$" else "root"
+        errors.append(f"{path}: {error.message}")
+
+    if errors:
+        return ReprioritizeResult(valid=False, errors=errors)
+
+    # Validate all root waypoint IDs are present (no more, no less)
+    order_ids = set(data.get("order", []))
+
+    if order_ids != root_waypoint_ids:
+        missing = root_waypoint_ids - order_ids
+        extra = order_ids - root_waypoint_ids
+        if missing:
+            errors.append(f"Missing waypoints: {sorted(missing)}")
+        if extra:
+            errors.append(f"Unknown waypoints: {sorted(extra)}")
+        return ReprioritizeResult(valid=False, errors=errors)
+
+    return ReprioritizeResult(
+        valid=True,
+        new_order=data["order"],
+        rationale=data.get("rationale", ""),
+        changes=data.get("changes", []),
+    )
