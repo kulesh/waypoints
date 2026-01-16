@@ -115,9 +115,13 @@ class Checklist:
 
     Stored as a project artifact at {project_dir}/checklist.yaml
     The model interprets these conceptually and produces receipts.
+
+    Supports optional validation command overrides for stack-specific tools.
     """
 
     items: list[str] = field(default_factory=lambda: list(DEFAULT_CHECKLIST))
+    # Override commands by category: {"lint": "uv run ruff check .", "test": "..."}
+    validation_overrides: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, project: "Project") -> "Checklist":
@@ -137,10 +141,18 @@ class Checklist:
         try:
             data = yaml.safe_load(checklist_path.read_text())
             items = data.get("checklist", DEFAULT_CHECKLIST)
+
+            # Parse validation command overrides
+            validation = data.get("validation", {})
+            overrides = validation.get("commands", {})
+
             logger.debug(
-                "Loaded checklist from %s: %d items", checklist_path, len(items)
+                "Loaded checklist from %s: %d items, %d overrides",
+                checklist_path,
+                len(items),
+                len(overrides),
             )
-            return cls(items=items)
+            return cls(items=items, validation_overrides=overrides)
         except (yaml.YAMLError, OSError) as e:
             logger.warning("Failed to load checklist from %s: %s", checklist_path, e)
             return cls()
@@ -150,11 +162,13 @@ class Checklist:
         checklist_path = project.get_path() / "checklist.yaml"
         checklist_path.parent.mkdir(parents=True, exist_ok=True)
 
-        content = yaml.dump(
-            {"checklist": self.items},
-            default_flow_style=False,
-            sort_keys=False,
-        )
+        data: dict[str, object] = {"checklist": self.items}
+
+        # Include validation overrides if present
+        if self.validation_overrides:
+            data["validation"] = {"commands": self.validation_overrides}
+
+        content = yaml.dump(data, default_flow_style=False, sort_keys=False)
         checklist_path.write_text(content)
         logger.info("Saved checklist to %s", checklist_path)
 

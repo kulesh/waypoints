@@ -32,6 +32,13 @@ from waypoints.fly.intervention import (
     InterventionNeededError,
     InterventionType,
 )
+from waypoints.fly.stack import (
+    STACK_COMMANDS,
+    StackConfig,
+    build_validation_section,
+    detect_stack,
+    detect_stack_from_spec,
+)
 from waypoints.git.config import Checklist
 from waypoints.llm.client import (
     APIErrorType,
@@ -145,6 +152,7 @@ def _build_prompt(
     spec: str,
     project_path: Path,
     checklist: Checklist,
+    stack_configs: list[StackConfig],
 ) -> str:
     """Build the execution prompt for a waypoint."""
     # Format criteria with indices for tracking
@@ -155,6 +163,11 @@ def _build_prompt(
     checklist_items = "\n".join(f"- {item}" for item in checklist.items)
     # Normalize waypoint ID for receipt filename
     safe_wp_id = waypoint.id.lower().replace("-", "")
+
+    # Build stack-specific validation section
+    validation_section = build_validation_section(
+        stack_configs, checklist.validation_overrides
+    )
 
     return f"""## Current Waypoint: {waypoint.id}
 {waypoint.title}
@@ -204,8 +217,14 @@ You are implementing a software waypoint. Your task is to:
 Before marking this waypoint complete, verify the following:
 {checklist_items}
 
-For each item, interpret it conceptually based on this project's technology stack.
-For example, "Code passes linting" might mean running `ruff check .` for Python.
+## Validation Commands
+{validation_section}
+
+Run each validation command. If any fails:
+1. Analyze the error output
+2. Fix the underlying issue
+3. Re-run the validation
+4. Only mark complete when all validations pass
 
 ## Checklist Receipt
 After verifying the checklist, produce a receipt file at:
@@ -319,7 +338,24 @@ class WaypointExecutor:
         # Load checklist from project (creates default if not exists)
         checklist = Checklist.load(self.project)
 
-        prompt = _build_prompt(self.waypoint, self.spec, project_path, checklist)
+        # Detect technology stack from project files
+        stack_configs = detect_stack(project_path)
+
+        # Fallback to spec-based detection for greenfield projects
+        if not stack_configs and self.spec:
+            stack_types = detect_stack_from_spec(self.spec)
+            stack_configs = [
+                StackConfig(st, list(STACK_COMMANDS.get(st, [])))
+                for st in stack_types
+            ]
+
+        if stack_configs:
+            stack_names = [c.stack_type.value for c in stack_configs]
+            logger.info("Detected stacks: %s", ", ".join(stack_names))
+
+        prompt = _build_prompt(
+            self.waypoint, self.spec, project_path, checklist, stack_configs
+        )
 
         logger.info(
             "Starting execution of %s: %s", self.waypoint.id, self.waypoint.title
