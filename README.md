@@ -6,6 +6,19 @@ Waypoints transforms software development from a task-management exercise into a
 
 > **Status**: Work in progress. All four phases (SPARK, SHAPE, CHART, FLY) are functional.
 
+## Vision: Software as JIT Compilation
+
+Waypoints is an implementation of [Generative Software](https://github.com/kulesh/generative-software)—a paradigm where software is generated on-demand from specifications rather than distributed as compiled code.
+
+**The core insight**: Just as JIT compilation transforms bytecode into machine code at runtime, generative software transforms *specifications* into working software on demand. The distribution medium isn't code—it's the **generative specification (genspec)**.
+
+A genspec captures:
+- **What** the software should do (product spec)
+- **How** to build it (waypoints with acceptance criteria)
+- **Context** for AI execution (enough detail for reliable regeneration)
+
+This makes code *disposable*. Lost your codebase? Regenerate it from the genspec. Want to port to a new framework? Regenerate with different constraints. The specification becomes the source of truth, not the code.
+
 ## The Journey
 
 Waypoints guides you through four phases:
@@ -24,14 +37,17 @@ Waypoints guides you through four phases:
 3. **CHART**: AI generates waypoints (development tasks) from your spec
 4. **FLY**: Autopilot executes each waypoint using AI agents (writes tests, implements code, commits)
 
+The output of phases 1-3 is the **generative specification**—a complete, reproducible blueprint for your software.
+
 ## Features
 
 - **Conversational ideation**: Talk through your idea with AI that asks clarifying questions
 - **Live brief generation**: Watch your idea crystallize into a structured document
 - **Automatic waypoint planning**: AI decomposes your product spec into executable tasks
-- **Waypoint management**: Add, edit, break down, or delete waypoints with AI assistance
-- **Agentic execution**: AI implements each waypoint using test-driven development
+- **Waypoint management**: Add, edit, break down, reprioritize, or delete waypoints with AI assistance
+- **Agentic execution**: AI implements each waypoint with stack-aware validation (linting, tests, type checking)
 - **Inline AI editing**: Leave `@waypoints:` instructions in documents for AI to process
+- **Genspec export**: Export your complete specification for sharing or regeneration
 - **Document versioning**: All document changes create new timestamped versions
 - **Crash-safe persistence**: Resume exactly where you left off
 - **Terminal-native TUI**: Fast, keyboard-driven interface built with [Textual](https://textual.textualize.io/)
@@ -97,6 +113,7 @@ uv run waypoints
 | `e` | Edit selected waypoint |
 | `b` | Break down into sub-waypoints |
 | `d` | Delete waypoint |
+| `R` | AI-assisted reprioritization |
 | `Ctrl+Enter` | Proceed to FLY phase |
 
 **Execution (FLY phase):**
@@ -114,12 +131,14 @@ src/waypoints/
 │   ├── screens/         # Phase screens (SPARK, SHAPE, CHART, FLY)
 │   └── widgets/         # Reusable UI components
 ├── models/              # Data models (Project, Waypoint, FlightPlan)
-├── fly/                 # Execution engine
+├── fly/                 # Execution engine with stack detection
+├── genspec/             # Generative specification export/import
 └── llm/                 # AI client (Claude Agent SDK)
 
 docs/
 ├── idea.md              # Original idea document
-└── product-spec.md      # Full product specification
+├── product-spec.md      # Full product specification
+└── testing-strategy.md  # AI system testing approach
 ```
 
 ## How It Works
@@ -129,17 +148,19 @@ docs/
 Each project creates a `.waypoints/` directory containing:
 - `project.json` - Project metadata
 - `dialogue.jsonl` - Conversation history
-- `flight-plan.jsonl` - Waypoint definitions and status
+- `flight-plan.json` - Waypoint definitions and status
 - `docs/` - Generated documents (idea brief, product spec)
+- `sessions/` - Execution logs and history
 
 ### Waypoint Execution
 
 In the FLY phase, for each waypoint the AI:
 1. Analyzes the objective and acceptance criteria
-2. Generates test code based on criteria
-3. Implements code to pass the tests
-4. Runs tests and iterates if needed
-5. Commits with waypoint reference
+2. Detects project stack (Python, TypeScript, Go, Rust, etc.)
+3. Implements code to achieve the objective
+4. Runs stack-appropriate validation (linting, tests, type checking)
+5. Produces a checklist receipt as proof of work
+6. Commits with waypoint reference
 
 Waypoints use a state machine:
 - `PENDING` → waiting for dependencies
@@ -162,9 +183,8 @@ This section describes the problem.
 Press `Ctrl+R` to process all `@waypoints:` mentions. The AI:
 1. Reads the full document for context
 2. Updates each section based on its instruction
-3. Marks mentions as resolved (hidden in rendered markdown)
+3. Marks mentions as resolved
 4. Saves a new timestamped version of the document
-5. Logs instructions to `{document}-comments.jsonl` for history
 
 ## Development
 
@@ -188,6 +208,10 @@ uv run mypy src/
 - **[Textual](https://textual.textualize.io/)** - Modern TUI framework for Python
 - **[Claude Agent SDK](https://docs.anthropic.com/en/docs/claude-agent-sdk)** - AI agent execution
 - **[uv](https://github.com/astral-sh/uv)** - Fast Python package manager
+
+## Related
+
+- **[Generative Software](https://github.com/kulesh/generative-software)** - The paradigm behind Waypoints
 
 ## License
 
