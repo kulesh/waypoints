@@ -17,7 +17,7 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.timer import Timer
 from textual.widgets import Footer, RichLog, Static, Tree
-from textual.worker import Worker
+from textual.worker import Worker, WorkerFailed
 
 if TYPE_CHECKING:
     from waypoints.tui.app import WaypointsApp
@@ -1675,13 +1675,20 @@ class FlyScreen(Screen[None]):
             if event.worker.state.name == "ERROR":
                 # Worker raised an exception - check if it's an intervention
                 try:
-                    # Accessing result will re-raise the exception
+                    # Accessing result will re-raise WorkerFailed wrapping original
                     _ = event.worker.result
-                except InterventionNeededError as e:
-                    self._handle_intervention(e.intervention)
+                except WorkerFailed as wf:
+                    # Extract the original exception from WorkerFailed wrapper
+                    original = wf.error
+                    if isinstance(original, InterventionNeededError):
+                        self._handle_intervention(original.intervention)
+                        return
+                    # Other exception - treat as failure
+                    logger.exception("Worker failed with exception: %s", original)
+                    self._handle_execution_result(ExecutionResult.FAILED)
                     return
                 except Exception as e:
-                    # Other exception - treat as failure
+                    # Fallback for any other exception type
                     logger.exception("Worker failed with exception: %s", e)
                     self._handle_execution_result(ExecutionResult.FAILED)
                     return
