@@ -1,7 +1,9 @@
 """Project selection screen - first screen shown on app startup."""
 
 import logging
+from collections.abc import Iterable
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from textual.app import ComposeResult
@@ -10,6 +12,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
+    DirectoryTree,
     Footer,
     Input,
     Label,
@@ -129,6 +132,18 @@ class ConfirmDeleteProjectModal(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class GenSpecDirectoryTree(DirectoryTree):
+    """DirectoryTree that filters for .genspec.jsonl files."""
+
+    def filter_paths(self, paths: Iterable[Path]) -> Iterable[Path]:
+        """Show directories and .genspec.jsonl files only."""
+        return [
+            path
+            for path in paths
+            if path.is_dir() or path.name.endswith(".genspec.jsonl")
+        ]
+
+
 class ImportProjectModal(ModalScreen[tuple[str, str] | None]):
     """Modal for importing a genspec file.
 
@@ -147,12 +162,19 @@ class ImportProjectModal(ModalScreen[tuple[str, str] | None]):
     }
 
     ImportProjectModal > Vertical {
-        width: 70;
+        width: 80;
         height: auto;
-        max-height: 40;
+        max-height: 50;
         background: $surface;
         border: solid $surface-lighten-2;
         padding: 1 2;
+    }
+
+    ImportProjectModal DirectoryTree {
+        height: 12;
+        margin-bottom: 1;
+        border: solid $surface-lighten-1;
+        background: $surface-darken-1;
     }
 
     ImportProjectModal .modal-title {
@@ -230,8 +252,10 @@ class ImportProjectModal(ModalScreen[tuple[str, str] | None]):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Static("Import GenSpec", classes="modal-title")
-            yield Label("File path:", classes="field-label")
-            yield Input(placeholder="/path/to/project.genspec.jsonl", id="file-path")
+            yield Label("Browse for file:", classes="field-label")
+            yield GenSpecDirectoryTree(Path.home(), id="file-tree")
+            yield Label("Selected file:", classes="field-label")
+            yield Input(placeholder="Select a file or type path...", id="file-path")
             yield Static("", id="validation-status", classes="hint")
             yield GenSpecPreview(id="spec-preview")
             yield Label("After import:", classes="field-label")
@@ -247,8 +271,16 @@ class ImportProjectModal(ModalScreen[tuple[str, str] | None]):
                 yield Button("Cancel", id="btn-cancel")
 
     def on_mount(self) -> None:
-        """Focus the file path input."""
-        self.query_one("#file-path", Input).focus()
+        """Focus the directory tree."""
+        self.query_one("#file-tree", GenSpecDirectoryTree).focus()
+
+    def on_directory_tree_file_selected(
+        self, event: DirectoryTree.FileSelected
+    ) -> None:
+        """Populate input when file is selected from tree."""
+        file_input = self.query_one("#file-path", Input)
+        file_input.value = str(event.path)
+        # Validation triggers automatically via on_input_changed
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Validate file when path changes."""
