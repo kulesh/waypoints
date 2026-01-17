@@ -183,10 +183,10 @@ class Project:
         self._commit_milestone_if_needed(target)
 
     def _generate_release_notes(self) -> None:
-        """Generate release notes from completed waypoints.
+        """Generate release notes from product spec and completed waypoints.
 
         Creates a docs/release-notes.md file with project summary
-        and list of completed features from the flight plan.
+        and key features extracted from the product specification.
         """
         import logging
         from datetime import UTC, datetime
@@ -222,24 +222,19 @@ class Project:
         summary = self.summary or self.initial_idea or ""
         if summary:
             # Truncate long summaries
-            if len(summary) > 500:
-                summary = summary[:500] + "..."
+            if len(summary) > 800:
+                summary = summary[:800] + "..."
             lines.extend([summary, ""])
 
-        lines.extend(["## Features", ""])
-
-        for wp in completed:
-            lines.append(f"- **{wp.title}**")
-            if wp.objective:
-                # Indent first 2 lines of objective
-                obj_lines = wp.objective.strip().split("\n")
-                for line in obj_lines[:2]:
-                    if line.strip():
-                        lines.append(f"  {line.strip()}")
+        # Extract features from product spec
+        features = self._extract_features_from_spec()
+        if features:
+            lines.extend(["## Key Features", ""])
+            lines.extend(features)
+            lines.append("")
 
         lines.extend(
             [
-                "",
                 "## Build Info",
                 "",
                 f"- Waypoints completed: {len(completed)}",
@@ -253,6 +248,57 @@ class Project:
         release_notes_path = docs_dir / "release-notes.md"
         release_notes_path.write_text("\n".join(lines))
         logger.info("Generated release notes: %s", release_notes_path)
+
+    def _extract_features_from_spec(self) -> list[str]:
+        """Extract key features from the product specification.
+
+        Looks for the Features section in product-spec.md and extracts
+        feature titles and descriptions.
+
+        Returns:
+            List of markdown-formatted feature lines.
+        """
+        import re
+
+        docs_dir = self.get_docs_path()
+
+        # Find the latest product spec file
+        spec_files = sorted(docs_dir.glob("product-spec*.md"), reverse=True)
+        if not spec_files:
+            return []
+
+        spec_content = spec_files[0].read_text()
+
+        # Look for Features section (various heading formats)
+        # Match: ## Features, ## 5. Features, ## Key Features, etc.
+        features_match = re.search(
+            r"^##\s+(?:\d+\.\s+)?(?:Key\s+)?Features.*?$\n(.*?)(?=^##\s|\Z)",
+            spec_content,
+            re.MULTILINE | re.DOTALL | re.IGNORECASE,
+        )
+
+        if not features_match:
+            return []
+
+        features_section = features_match.group(1)
+
+        # Extract feature titles from ### or #### headings
+        # Match: ### 5.1 MVP Features, #### 5.1.1 Feature Name, etc.
+        feature_titles = re.findall(
+            r"^#{3,4}\s+(?:\d+(?:\.\d+)*\s+)?(.+?)$",
+            features_section,
+            re.MULTILINE,
+        )
+
+        # Format as bullet points, skip generic headings
+        result = []
+        skip_patterns = ["mvp", "must have", "nice to have", "requirements", "future"]
+        for title in feature_titles:
+            title_lower = title.lower()
+            if not any(skip in title_lower for skip in skip_patterns):
+                result.append(f"- **{title.strip()}**")
+
+        return result[:10]  # Limit to top 10 features
 
     def _commit_milestone_if_needed(self, state: JourneyState) -> None:
         """Commit project artifacts when reaching a milestone state.

@@ -15,7 +15,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Footer, OptionList, Static, Tree
+from textual.widgets import Footer, Markdown, OptionList, Static, Tree
 from textual.widgets.option_list import Option
 
 if TYPE_CHECKING:
@@ -473,7 +473,7 @@ class ShipPanel(VerticalScroll):
 
     def compose(self) -> ComposeResult:
         yield Static("SHIP", classes="section-title")
-        yield Static("", id="changelog-content", classes="content")
+        yield Markdown("", id="changelog-content", classes="content")
         yield Static("", classes="hint", id="ship-hint")
 
     def on_mount(self) -> None:
@@ -482,7 +482,7 @@ class ShipPanel(VerticalScroll):
 
     def _update_changelog(self) -> None:
         """Show release notes if available, otherwise show changelog preview."""
-        content = self.query_one("#changelog-content", Static)
+        content = self.query_one("#changelog-content", Markdown)
 
         # Check for generated release notes
         release_notes_path = self.project.get_docs_path() / "release-notes.md"
