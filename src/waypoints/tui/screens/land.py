@@ -28,6 +28,7 @@ from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader
 from waypoints.models.waypoint import WaypointStatus
 from waypoints.tui.utils import format_duration
+from waypoints.tui.widgets.content_viewer import ContentViewer
 from waypoints.tui.widgets.header import StatusHeader
 
 logger = logging.getLogger(__name__)
@@ -889,7 +890,11 @@ class GenSpecPreviewPanel(VerticalScroll):
         preview = artifact.content[:500]
         if len(artifact.content) > 500:
             preview += "\n..."
-        content.mount(Static(preview, classes="content-preview"))
+        content.mount(
+            ContentViewer(
+                preview, file_path=artifact.file_path, classes="content-preview"
+            )
+        )
 
         content.mount(Static("Press Enter for full content", classes="hint"))
 
@@ -1144,7 +1149,10 @@ class GenSpecPanel(Horizontal):
                     atype = self.artifact.artifact_type.value.replace("_", " ").title()
                     yield Static(f"Artifact - {atype}", classes="modal-title")
                     with VerticalScroll(classes="scroll-content"):
-                        yield Static(self.artifact.content)
+                        yield ContentViewer(
+                            self.artifact.content,
+                            file_path=self.artifact.file_path,
+                        )
 
             def action_close(self) -> None:
                 self.dismiss()
