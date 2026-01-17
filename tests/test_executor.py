@@ -15,7 +15,6 @@ from waypoints.fly.executor import (
     _build_prompt,
     _extract_file_operation,
 )
-from waypoints.fly.stack import StackConfig
 from waypoints.git.config import Checklist
 from waypoints.models.waypoint import Waypoint
 
@@ -168,57 +167,40 @@ class TestBuildPrompt:
         """Create test checklist."""
         return Checklist(items=["Code passes linting", "All tests pass"])
 
-    @pytest.fixture
-    def stack_configs(self) -> list[StackConfig]:
-        """Create empty stack configs (fallback mode)."""
-        return []
-
     def test_includes_waypoint_id(
         self,
         waypoint: Waypoint,
         checklist: Checklist,
-        stack_configs: list[StackConfig],
     ) -> None:
         """Prompt includes waypoint ID."""
-        prompt = _build_prompt(
-            waypoint, "spec", Path("/project"), checklist, stack_configs
-        )
+        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "WP-1" in prompt
 
     def test_includes_waypoint_title(
         self,
         waypoint: Waypoint,
         checklist: Checklist,
-        stack_configs: list[StackConfig],
     ) -> None:
         """Prompt includes waypoint title."""
-        prompt = _build_prompt(
-            waypoint, "spec", Path("/project"), checklist, stack_configs
-        )
+        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "Implement feature X" in prompt
 
     def test_includes_objective(
         self,
         waypoint: Waypoint,
         checklist: Checklist,
-        stack_configs: list[StackConfig],
     ) -> None:
         """Prompt includes objective."""
-        prompt = _build_prompt(
-            waypoint, "spec", Path("/project"), checklist, stack_configs
-        )
+        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "Build feature X with full test coverage" in prompt
 
     def test_includes_indexed_criteria(
         self,
         waypoint: Waypoint,
         checklist: Checklist,
-        stack_configs: list[StackConfig],
     ) -> None:
         """Prompt includes indexed acceptance criteria."""
-        prompt = _build_prompt(
-            waypoint, "spec", Path("/project"), checklist, stack_configs
-        )
+        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "[0] Code works" in prompt
         assert "[1] Tests pass" in prompt
         assert "[2] Documentation updated" in prompt
@@ -227,26 +209,20 @@ class TestBuildPrompt:
         self,
         waypoint: Waypoint,
         checklist: Checklist,
-        stack_configs: list[StackConfig],
     ) -> None:
         """Prompt includes product spec."""
         spec = "This is the product specification."
-        prompt = _build_prompt(
-            waypoint, spec, Path("/project"), checklist, stack_configs
-        )
+        prompt = _build_prompt(waypoint, spec, Path("/project"), checklist)
         assert "This is the product specification" in prompt
 
     def test_truncates_long_spec(
         self,
         waypoint: Waypoint,
         checklist: Checklist,
-        stack_configs: list[StackConfig],
     ) -> None:
         """Long spec is truncated with ellipsis."""
         long_spec = "x" * 3000
-        prompt = _build_prompt(
-            waypoint, long_spec, Path("/project"), checklist, stack_configs
-        )
+        prompt = _build_prompt(waypoint, long_spec, Path("/project"), checklist)
         assert "..." in prompt
         # Should truncate to 2000 chars + ...
         assert long_spec[:2000] in prompt
@@ -255,24 +231,18 @@ class TestBuildPrompt:
         self,
         waypoint: Waypoint,
         checklist: Checklist,
-        stack_configs: list[StackConfig],
     ) -> None:
         """Prompt includes project path."""
-        prompt = _build_prompt(
-            waypoint, "spec", Path("/my/project"), checklist, stack_configs
-        )
+        prompt = _build_prompt(waypoint, "spec", Path("/my/project"), checklist)
         assert "/my/project" in prompt
 
     def test_includes_safety_rules(
         self,
         waypoint: Waypoint,
         checklist: Checklist,
-        stack_configs: list[StackConfig],
     ) -> None:
         """Prompt includes safety rules."""
-        prompt = _build_prompt(
-            waypoint, "spec", Path("/project"), checklist, stack_configs
-        )
+        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "STAY IN THE PROJECT" in prompt
         assert "NEVER" in prompt
 
@@ -280,12 +250,9 @@ class TestBuildPrompt:
         self,
         waypoint: Waypoint,
         checklist: Checklist,
-        stack_configs: list[StackConfig],
     ) -> None:
         """Prompt includes checklist items."""
-        prompt = _build_prompt(
-            waypoint, "spec", Path("/project"), checklist, stack_configs
-        )
+        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "Code passes linting" in prompt
         assert "All tests pass" in prompt
 
@@ -293,24 +260,18 @@ class TestBuildPrompt:
         self,
         waypoint: Waypoint,
         checklist: Checklist,
-        stack_configs: list[StackConfig],
     ) -> None:
         """Prompt includes completion marker."""
-        prompt = _build_prompt(
-            waypoint, "spec", Path("/project"), checklist, stack_configs
-        )
+        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "<waypoint-complete>WP-1</waypoint-complete>" in prompt
 
     def test_includes_criterion_marker_format(
         self,
         waypoint: Waypoint,
         checklist: Checklist,
-        stack_configs: list[StackConfig],
     ) -> None:
         """Prompt explains criterion marker format."""
-        prompt = _build_prompt(
-            waypoint, "spec", Path("/project"), checklist, stack_configs
-        )
+        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "criterion-verified" in prompt
 
 
