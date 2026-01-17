@@ -24,54 +24,80 @@ class TestCriterionPattern:
 
     def test_matches_single_criterion(self) -> None:
         """Match single criterion marker."""
-        text = '<criterion-verified index="0">Feature implemented</criterion-verified>'
+        text = '''<criterion index="0" status="verified">
+<text>Feature implemented</text>
+<evidence>Code review shows implementation is complete.</evidence>
+</criterion>'''
         matches = CRITERION_PATTERN.findall(text)
         assert len(matches) == 1
-        assert matches[0] == ("0", "Feature implemented")
+        assert matches[0][0] == "0"  # index
+        assert matches[0][1] == "verified"  # status
+        assert matches[0][2] == "Feature implemented"  # text
+        assert "Code review" in matches[0][3]  # evidence
 
     def test_matches_multiple_criteria(self) -> None:
         """Match multiple criterion markers."""
-        text = """Some output text
-<criterion-verified index="0">First criterion done</criterion-verified>
+        text = '''Some output text
+<criterion index="0" status="verified">
+<text>First criterion done</text>
+<evidence>First evidence.</evidence>
+</criterion>
 More output
-<criterion-verified index="1">Second criterion done</criterion-verified>
-<criterion-verified index="2">Third criterion done</criterion-verified>"""
+<criterion index="1" status="verified">
+<text>Second criterion done</text>
+<evidence>Second evidence.</evidence>
+</criterion>
+<criterion index="2" status="failed">
+<text>Third criterion done</text>
+<evidence>Missing implementation.</evidence>
+</criterion>'''
         matches = CRITERION_PATTERN.findall(text)
         assert len(matches) == 3
-        assert matches[0] == ("0", "First criterion done")
-        assert matches[1] == ("1", "Second criterion done")
-        assert matches[2] == ("2", "Third criterion done")
+        assert matches[0][0] == "0"
+        assert matches[0][1] == "verified"
+        assert matches[1][0] == "1"
+        assert matches[1][1] == "verified"
+        assert matches[2][0] == "2"
+        assert matches[2][1] == "failed"
 
-    def test_extracts_index_and_text(self) -> None:
-        """Correctly extract index number and criterion text."""
-        text = (
-            '<criterion-verified index="5">'
-            "Tests pass with 100% coverage"
-            "</criterion-verified>"
-        )
+    def test_extracts_index_status_text_evidence(self) -> None:
+        """Correctly extract index, status, text, and evidence."""
+        text = '''<criterion index="5" status="verified">
+<text>Tests pass with 100% coverage</text>
+<evidence>Ran pytest with --cov flag showing 100% coverage.</evidence>
+</criterion>'''
         matches = CRITERION_PATTERN.findall(text)
-        assert matches[0][0] == "5"
-        assert matches[0][1] == "Tests pass with 100% coverage"
+        assert matches[0][0] == "5"  # index
+        assert matches[0][1] == "verified"  # status
+        assert matches[0][2] == "Tests pass with 100% coverage"  # text
+        assert "pytest" in matches[0][3]  # evidence
 
     def test_no_match_on_invalid_format(self) -> None:
         """No match when format is wrong."""
         invalid_texts = [
-            "<criterion-verified>Missing index</criterion-verified>",
-            '<criterion-verified index="0">Unclosed',
-            'criterion-verified index="0">No opening tag</criterion-verified>',
-            '<criterion-verified index="abc">Non-numeric index</criterion-verified>',
+            '<criterion index="0">Missing status</criterion>',
+            '<criterion status="verified">Missing index</criterion>',
+            '<criterion index="0" status="verified"><text>Missing evidence</text></criterion>',
+            '<criterion index="abc" status="verified"><text>Non-numeric index</text><evidence>E</evidence></criterion>',
         ]
         for text in invalid_texts:
             matches = CRITERION_PATTERN.findall(text)
             assert matches == [], f"Should not match: {text}"
 
-    def test_multiline_content_not_matched(self) -> None:
-        """Criterion text should be single line (no newlines)."""
-        text = """<criterion-verified index="0">First line
-Second line</criterion-verified>"""
+    def test_multiline_evidence_matched(self) -> None:
+        """Evidence can span multiple lines."""
+        text = '''<criterion index="0" status="verified">
+<text>Tests pass</text>
+<evidence>
+Line 1 of evidence.
+Line 2 of evidence.
+Line 3 of evidence.
+</evidence>
+</criterion>'''
         matches = CRITERION_PATTERN.findall(text)
-        # The pattern uses .+? which doesn't match newlines by default
-        assert len(matches) == 0
+        assert len(matches) == 1
+        assert "Line 1" in matches[0][3]
+        assert "Line 3" in matches[0][3]
 
 
 class TestExtractFileOperation:
@@ -272,7 +298,10 @@ class TestBuildPrompt:
     ) -> None:
         """Prompt explains criterion marker format."""
         prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
-        assert "criterion-verified" in prompt
+        # Check for new criterion format with status and evidence
+        assert '<criterion index="N" status="verified">' in prompt
+        assert "<text>" in prompt
+        assert "<evidence>" in prompt
 
 
 class TestWaypointExecutor:

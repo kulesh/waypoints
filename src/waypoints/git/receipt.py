@@ -45,6 +45,38 @@ class WaypointContext:
 
 
 @dataclass
+class CriterionVerification:
+    """Verification result for a single acceptance criterion."""
+
+    index: int
+    criterion: str
+    status: Literal["verified", "failed"]
+    evidence: str
+    verified_at: datetime
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "index": self.index,
+            "criterion": self.criterion,
+            "status": self.status,
+            "evidence": self.evidence,
+            "verified_at": self.verified_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "CriterionVerification":
+        """Create from dictionary."""
+        return cls(
+            index=data["index"],
+            criterion=data["criterion"],
+            status=data["status"],
+            evidence=data["evidence"],
+            verified_at=datetime.fromisoformat(data["verified_at"]),
+        )
+
+
+@dataclass
 class ChecklistItem:
     """A single checklist item with captured evidence."""
 
@@ -107,6 +139,7 @@ class ChecklistReceipt:
     completed_at: datetime
     context: WaypointContext | None = None  # Waypoint context for traceability
     checklist: list[ChecklistItem] = field(default_factory=list)
+    criteria_verification: list[CriterionVerification] = field(default_factory=list)
 
     def is_valid(self) -> bool:
         """Check if all non-skipped items passed."""
@@ -120,6 +153,10 @@ class ChecklistReceipt:
         """Check if receipt has real captured evidence (not just model prose)."""
         return any(item.exit_code is not None for item in self.checklist)
 
+    def failed_criteria(self) -> list[CriterionVerification]:
+        """Get list of failed acceptance criteria."""
+        return [c for c in self.criteria_verification if c.status == "failed"]
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         result: dict[str, Any] = {
@@ -129,6 +166,10 @@ class ChecklistReceipt:
         }
         if self.context:
             result["context"] = self.context.to_dict()
+        if self.criteria_verification:
+            result["criteria_verification"] = [
+                c.to_dict() for c in self.criteria_verification
+            ]
         return result
 
     @classmethod
@@ -137,6 +178,10 @@ class ChecklistReceipt:
         context = None
         if data.get("context"):
             context = WaypointContext.from_dict(data["context"])
+        criteria_verification = [
+            CriterionVerification.from_dict(c)
+            for c in data.get("criteria_verification", [])
+        ]
         return cls(
             waypoint_id=data["waypoint_id"],
             completed_at=datetime.fromisoformat(data["completed_at"]),
@@ -144,6 +189,7 @@ class ChecklistReceipt:
             checklist=[
                 ChecklistItem.from_dict(item) for item in data.get("checklist", [])
             ],
+            criteria_verification=criteria_verification,
         )
 
     def save(self, path: Path) -> None:
@@ -274,6 +320,7 @@ class ReceiptBuilder:
             acceptance_criteria=acceptance_criteria or [],
         )
         self.evidence: dict[str, CapturedEvidence] = {}
+        self.criteria: dict[int, CriterionVerification] = {}
 
     def capture(self, category: str, evidence: CapturedEvidence) -> None:
         """Capture evidence for a checklist category.
@@ -285,6 +332,19 @@ class ReceiptBuilder:
         self.evidence[category] = evidence
         logger.debug(
             "Captured evidence for %s: exit_code=%d", category, evidence.exit_code
+        )
+
+    def capture_criterion(self, verification: CriterionVerification) -> None:
+        """Capture verification for an acceptance criterion.
+
+        Args:
+            verification: The criterion verification result
+        """
+        self.criteria[verification.index] = verification
+        logger.debug(
+            "Captured criterion %d verification: %s",
+            verification.index,
+            verification.status,
         )
 
     def build(self) -> ChecklistReceipt:
@@ -307,11 +367,15 @@ class ReceiptBuilder:
                 )
             )
 
+        # Sort criteria by index for consistent output
+        criteria_list = sorted(self.criteria.values(), key=lambda c: c.index)
+
         return ChecklistReceipt(
             waypoint_id=self.waypoint_id,
             completed_at=datetime.now(),
             context=self.context,
             checklist=checklist_items,
+            criteria_verification=criteria_list,
         )
 
     def has_evidence(self) -> bool:

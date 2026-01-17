@@ -33,7 +33,11 @@ from waypoints.fly.intervention import (
     InterventionType,
 )
 from waypoints.git.config import Checklist
-from waypoints.git.receipt import CapturedEvidence, ReceiptBuilder
+from waypoints.git.receipt import (
+    CapturedEvidence,
+    CriterionVerification,
+    ReceiptBuilder,
+)
 from waypoints.llm.client import (
     APIErrorType,
     StreamChunk,
@@ -53,9 +57,15 @@ logger = logging.getLogger(__name__)
 # Max iterations before giving up
 MAX_ITERATIONS = 10
 
-# Pattern to detect criterion completion markers in agent output
+# Pattern to detect criterion verification markers in agent output
+# Model outputs: <criterion index="N" status="verified|failed">
+#   <text>...</text><evidence>...</evidence></criterion>
 CRITERION_PATTERN = re.compile(
-    r'<criterion-verified index="(\d+)">(.+?)</criterion-verified>'
+    r'<criterion index="(\d+)" status="(verified|failed)">\s*'
+    r"<text>(.*?)</text>\s*"
+    r"<evidence>(.*?)</evidence>\s*"
+    r"</criterion>",
+    re.DOTALL,
 )
 
 # Pattern to detect validation evidence markers in agent output
@@ -214,9 +224,6 @@ def _build_prompt(
 ## Acceptance Criteria (must all pass)
 {criteria_list}
 
-**Progress Tracking:** When you verify each criterion, output a marker:
-<criterion-verified index="N">criterion text</criterion-verified>
-
 ## Product Spec Summary
 {spec[:2000]}{"..." if len(spec) > 2000 else ""}
 
@@ -276,6 +283,26 @@ The relevant output (test results, errors, etc.)
 
 Output a `<validation>` block for each validation command you run.
 This allows the system to capture evidence of your validation work.
+
+## Acceptance Criteria Verification
+
+When you verify each acceptance criterion, report using this format:
+
+```xml
+<criterion index="N" status="verified">
+<text>The criterion text (copy from list above)</text>
+<evidence>
+Explain how you verified this criterion:
+- What code/tests you checked
+- What behavior you observed
+- Why it passes
+</evidence>
+</criterion>
+```
+
+Use `status="verified"` if the criterion passes, `status="failed"` if it fails.
+Output a `<criterion>` block for each acceptance criterion.
+This allows the system to capture your verification work.
 
 If any validation fails:
 1. Analyze the error output
@@ -369,9 +396,7 @@ class WaypointExecutor:
         # Load checklist from project (creates default if not exists)
         checklist = Checklist.load(self.project)
 
-        prompt = _build_prompt(
-            self.waypoint, self.spec, project_path, checklist
-        )
+        prompt = _build_prompt(self.waypoint, self.spec, project_path, checklist)
 
         logger.info(
             "Starting execution of %s: %s", self.waypoint.id, self.waypoint.title
@@ -384,6 +409,8 @@ class WaypointExecutor:
         iteration = 0
         full_output = ""
         captured_evidence: dict[str, CapturedEvidence] = {}  # Validation evidence
+        # Criteria verification evidence
+        captured_criteria: dict[int, CriterionVerification] = {}
         completion_marker = f"<waypoint-complete>{self.waypoint.id}</waypoint-complete>"
 
         while iteration < self.max_iterations:
@@ -440,6 +467,24 @@ class WaypointExecutor:
                                     exit_code,
                                 )
 
+                        # Parse criterion verification markers
+                        for match in CRITERION_PATTERN.findall(full_output):
+                            index, status, text, evidence = match
+                            idx = int(index)
+                            if idx not in captured_criteria:
+                                captured_criteria[idx] = CriterionVerification(
+                                    index=idx,
+                                    criterion=text.strip(),
+                                    status=status,  # type: ignore[arg-type]
+                                    evidence=evidence.strip(),
+                                    verified_at=datetime.now(),
+                                )
+                                logger.info(
+                                    "Captured criterion verification: [%d] %s",
+                                    idx,
+                                    status,
+                                )
+
                         # Check for completion marker
                         if completion_marker in full_output:
                             logger.info("Completion marker found!")
@@ -463,7 +508,7 @@ class WaypointExecutor:
 
                             # Run finalize step to verify receipt
                             receipt_valid = await self._finalize_and_verify_receipt(
-                                project_path, captured_evidence
+                                project_path, captured_evidence, captured_criteria
                             )
 
                             if receipt_valid:
@@ -809,6 +854,7 @@ Brief reasoning here
         self,
         project_path: Path,
         captured_evidence: dict[str, CapturedEvidence],
+        captured_criteria: dict[int, CriterionVerification],
     ) -> bool:
         """Build receipt from captured evidence and verify with LLM.
 
@@ -819,6 +865,8 @@ Brief reasoning here
             project_path: Project working directory
             captured_evidence: Validation evidence captured from model output,
                 keyed by category (tests, linting, formatting, etc.)
+            captured_criteria: Criterion verification evidence captured from
+                model output, keyed by criterion index.
 
         Returns True if receipt is valid, False otherwise.
         """
@@ -840,7 +888,7 @@ Brief reasoning here
             acceptance_criteria=self.waypoint.acceptance_criteria,
         )
 
-        # Add captured evidence from model output
+        # Add captured validation evidence from model output
         for category, evidence in captured_evidence.items():
             logger.info(
                 "Adding captured evidence: %s (exit_code=%d)",
@@ -854,6 +902,22 @@ Brief reasoning here
                 "CapturedValidation",
                 {"command": evidence.command, "category": category},
                 f"exit_code={evidence.exit_code}",
+            )
+
+        # Add captured criteria verification from model output
+        for idx, criterion in captured_criteria.items():
+            logger.info(
+                "Adding criterion verification: [%d] %s",
+                idx,
+                criterion.status,
+            )
+            receipt_builder.capture_criterion(criterion)
+
+            # Log the captured criterion
+            self._log_writer.log_finalize_tool_call(
+                "CapturedCriterion",
+                {"index": idx, "criterion": criterion.criterion},
+                criterion.status,
             )
 
         # Build and save receipt
