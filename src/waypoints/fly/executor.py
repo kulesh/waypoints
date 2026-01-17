@@ -32,13 +32,6 @@ from waypoints.fly.intervention import (
     InterventionNeededError,
     InterventionType,
 )
-from waypoints.fly.stack import (
-    STACK_COMMANDS,
-    StackConfig,
-    build_validation_section,
-    detect_stack,
-    detect_stack_from_spec,
-)
 from waypoints.git.config import Checklist
 from waypoints.git.receipt import CapturedEvidence, ReceiptBuilder
 from waypoints.llm.client import (
@@ -63,6 +56,17 @@ MAX_ITERATIONS = 10
 # Pattern to detect criterion completion markers in agent output
 CRITERION_PATTERN = re.compile(
     r'<criterion-verified index="(\d+)">(.+?)</criterion-verified>'
+)
+
+# Pattern to detect validation evidence markers in agent output
+# Model outputs these when running tests, linting, formatting
+VALIDATION_PATTERN = re.compile(
+    r"<validation>\s*"
+    r"<command>(.*?)</command>\s*"
+    r"<exit-code>(\d+)</exit-code>\s*"
+    r"<output>(.*?)</output>\s*"
+    r"</validation>",
+    re.DOTALL,
 )
 
 
@@ -148,12 +152,50 @@ def _extract_file_operation(
     return None
 
 
+def _detect_validation_category(command: str) -> str | None:
+    """Detect validation category from command string.
+
+    Args:
+        command: The shell command that was run
+
+    Returns:
+        Category name (tests, linting, formatting) or None if not recognized
+    """
+    cmd_lower = command.lower()
+
+    # Test commands
+    if any(
+        pattern in cmd_lower
+        for pattern in ["test", "pytest", "jest", "mocha", "go test", "cargo test"]
+    ):
+        return "tests"
+
+    # Linting commands
+    if any(
+        pattern in cmd_lower
+        for pattern in ["clippy", "ruff", "eslint", "lint", "pylint", "flake8"]
+    ):
+        return "linting"
+
+    # Formatting commands
+    if any(
+        pattern in cmd_lower
+        for pattern in ["fmt", "format", "prettier", "black", "rustfmt"]
+    ):
+        return "formatting"
+
+    # Type checking commands
+    if any(pattern in cmd_lower for pattern in ["mypy", "tsc", "typecheck", "pyright"]):
+        return "type checking"
+
+    return None
+
+
 def _build_prompt(
     waypoint: Waypoint,
     spec: str,
     project_path: Path,
     checklist: Checklist,
-    stack_configs: list[StackConfig],
 ) -> str:
     """Build the execution prompt for a waypoint."""
     # Format criteria with indices for tracking
@@ -162,13 +204,6 @@ def _build_prompt(
     )
 
     checklist_items = "\n".join(f"- {item}" for item in checklist.items)
-    # Normalize waypoint ID for receipt filename
-    safe_wp_id = waypoint.id.lower().replace("-", "")
-
-    # Build stack-specific validation section
-    validation_section = build_validation_section(
-        stack_configs, checklist.validation_overrides
-    )
 
     return f"""## Current Waypoint: {waypoint.id}
 {waypoint.title}
@@ -219,42 +254,37 @@ Before marking this waypoint complete, verify the following:
 {checklist_items}
 
 ## Validation Commands
-{validation_section}
 
-Run each validation command. If any fails:
+Run the appropriate validation commands for the project's stack:
+- **Tests**: Run the test suite (e.g., `pytest`, `cargo test`, `npm test`, `go test`)
+- **Linting**: Run the linter (e.g., `ruff check`, `cargo clippy`, `eslint`)
+- **Formatting**: Check code formatting (e.g., `black --check`, `cargo fmt --check`)
+
+Use the correct tool paths (e.g., `/Users/kulesh/.cargo/bin/cargo` if cargo is there).
+
+**IMPORTANT: Report validation results using this format:**
+
+```xml
+<validation>
+<command>the exact command you ran</command>
+<exit-code>0 or non-zero</exit-code>
+<output>
+The relevant output (test results, errors, etc.)
+</output>
+</validation>
+```
+
+Output a `<validation>` block for each validation command you run.
+This allows the system to capture evidence of your validation work.
+
+If any validation fails:
 1. Analyze the error output
 2. Fix the underlying issue
 3. Re-run the validation
 4. Only mark complete when all validations pass
 
-## Checklist Receipt
-After verifying the checklist, produce a receipt file at:
-`.waypoints/projects/[project-slug]/receipts/{safe_wp_id}-[timestamp].json`
-
-The receipt must contain:
-```json
-{{
-  "waypoint_id": "{waypoint.id}",
-  "completed_at": "[ISO timestamp]",
-  "checklist": [
-    {{
-      "item": "Code passes linting",
-      "status": "passed",
-      "evidence": "Ran ruff check . - 0 errors"
-    }},
-    {{
-      "item": "All tests pass",
-      "status": "passed",
-      "evidence": "Ran pytest - 10 passed"
-    }}
-  ]
-}}
-```
-
-Status options: "passed", "failed", "skipped" (with "reason" field if skipped).
-
 **COMPLETION SIGNAL:**
-When ALL acceptance criteria are met, checklist verified, and receipt produced, output:
+When ALL acceptance criteria are met and validation checks pass, output:
 <waypoint-complete>{waypoint.id}</waypoint-complete>
 
 Only output the completion marker when you are confident the waypoint is done.
@@ -339,23 +369,8 @@ class WaypointExecutor:
         # Load checklist from project (creates default if not exists)
         checklist = Checklist.load(self.project)
 
-        # Detect technology stack from project files
-        stack_configs = detect_stack(project_path)
-
-        # Fallback to spec-based detection for greenfield projects
-        if not stack_configs and self.spec:
-            stack_types = detect_stack_from_spec(self.spec)
-            stack_configs = [
-                StackConfig(st, list(STACK_COMMANDS.get(st, [])))
-                for st in stack_types
-            ]
-
-        if stack_configs:
-            stack_names = [c.stack_type.value for c in stack_configs]
-            logger.info("Detected stacks: %s", ", ".join(stack_names))
-
         prompt = _build_prompt(
-            self.waypoint, self.spec, project_path, checklist, stack_configs
+            self.waypoint, self.spec, project_path, checklist
         )
 
         logger.info(
@@ -368,6 +383,7 @@ class WaypointExecutor:
 
         iteration = 0
         full_output = ""
+        captured_evidence: dict[str, CapturedEvidence] = {}  # Validation evidence
         completion_marker = f"<waypoint-complete>{self.waypoint.id}</waypoint-complete>"
 
         while iteration < self.max_iterations:
@@ -428,7 +444,7 @@ class WaypointExecutor:
 
                             # Run finalize step to verify receipt
                             receipt_valid = await self._finalize_and_verify_receipt(
-                                project_path, stack_configs, checklist
+                                project_path, captured_evidence
                             )
 
                             if receipt_valid:
@@ -463,6 +479,25 @@ class WaypointExecutor:
                         # Parse criterion completion markers from full output
                         criterion_matches = CRITERION_PATTERN.findall(full_output)
                         completed_indices = {int(m[0]) for m in criterion_matches}
+
+                        # Parse validation evidence markers from full output
+                        for match in VALIDATION_PATTERN.findall(full_output):
+                            command, exit_code, output = match
+                            # Detect category from command
+                            category = _detect_validation_category(command)
+                            if category and category not in captured_evidence:
+                                captured_evidence[category] = CapturedEvidence(
+                                    command=command.strip(),
+                                    exit_code=int(exit_code),
+                                    stdout=output.strip(),
+                                    stderr="",
+                                    captured_at=datetime.now(),
+                                )
+                                logger.info(
+                                    "Captured validation evidence: %s (exit=%s)",
+                                    category,
+                                    exit_code,
+                                )
 
                         # Report streaming progress with criteria status
                         self._report_progress(
@@ -702,53 +737,6 @@ When complete, output the completion marker specified in the instructions."""
 
         return "Agent requested human intervention"
 
-    def _run_validation_command(
-        self,
-        command: str,
-        project_path: Path,
-    ) -> CapturedEvidence:
-        """Run a validation command and capture its output.
-
-        Args:
-            command: The shell command to run
-            project_path: Working directory for the command
-
-        Returns:
-            CapturedEvidence with command results
-        """
-        try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                cwd=project_path,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            return CapturedEvidence(
-                command=command,
-                exit_code=result.returncode,
-                stdout=result.stdout,
-                stderr=result.stderr,
-                captured_at=datetime.now(),
-            )
-        except subprocess.TimeoutExpired:
-            return CapturedEvidence(
-                command=command,
-                exit_code=-1,
-                stdout="",
-                stderr="Command timed out after 120s",
-                captured_at=datetime.now(),
-            )
-        except Exception as e:
-            return CapturedEvidence(
-                command=command,
-                exit_code=-1,
-                stdout="",
-                stderr=str(e),
-                captured_at=datetime.now(),
-            )
-
     def _build_verification_prompt(self, receipt_path: Path) -> str:
         """Build the LLM verification prompt for a receipt.
 
@@ -820,18 +808,17 @@ Brief reasoning here
     async def _finalize_and_verify_receipt(
         self,
         project_path: Path,
-        stack_configs: list[StackConfig],
-        checklist: Checklist,
+        captured_evidence: dict[str, CapturedEvidence],
     ) -> bool:
-        """Run validation commands, build receipt, and verify with LLM.
+        """Build receipt from captured evidence and verify with LLM.
 
-        This captures real evidence by running validation commands ourselves,
-        then asks the model to verify the receipt.
+        Uses evidence captured from the model's validation output during
+        execution, rather than running validation commands ourselves.
 
         Args:
             project_path: Project working directory
-            stack_configs: Detected technology stacks
-            checklist: Checklist configuration with overrides
+            captured_evidence: Validation evidence captured from model output,
+                keyed by category (tests, linting, formatting, etc.)
 
         Returns True if receipt is valid, False otherwise.
         """
@@ -842,7 +829,7 @@ Brief reasoning here
             self.max_iterations,
             self.max_iterations,
             "finalizing",
-            "Running validation commands...",
+            "Building receipt from captured evidence...",
         )
 
         # Build receipt with waypoint context
@@ -853,31 +840,21 @@ Brief reasoning here
             acceptance_criteria=self.waypoint.acceptance_criteria,
         )
 
-        # Run validation commands for each detected stack
-        for config in stack_configs:
-            for cmd in config.commands:
-                # Apply user overrides if present
-                actual_command = checklist.validation_overrides.get(
-                    cmd.category, cmd.command
-                )
-                logger.info("Running validation: %s (%s)", cmd.name, actual_command)
+        # Add captured evidence from model output
+        for category, evidence in captured_evidence.items():
+            logger.info(
+                "Adding captured evidence: %s (exit_code=%d)",
+                category,
+                evidence.exit_code,
+            )
+            receipt_builder.capture(category, evidence)
 
-                self._report_progress(
-                    self.max_iterations,
-                    self.max_iterations,
-                    "finalizing",
-                    f"Running {cmd.name}...",
-                )
-
-                evidence = self._run_validation_command(actual_command, project_path)
-                receipt_builder.capture(cmd.name, evidence)
-
-                # Log the captured evidence
-                self._log_writer.log_finalize_tool_call(
-                    "Bash",
-                    {"command": actual_command},
-                    f"exit_code={evidence.exit_code}",
-                )
+            # Log the captured evidence
+            self._log_writer.log_finalize_tool_call(
+                "CapturedValidation",
+                {"command": evidence.command, "category": category},
+                f"exit_code={evidence.exit_code}",
+            )
 
         # Build and save receipt
         if not receipt_builder.has_evidence():
