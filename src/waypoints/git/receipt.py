@@ -1,8 +1,8 @@
 """Checklist receipt dataclass and validator.
 
-The receipt pattern implements "trust but verify" - the model runs conceptual
-checklist items and produces a receipt as proof of work. Code validates the
-receipt exists and is well-formed before allowing commits.
+The receipt pattern implements "trust but verify" - the model runs checklist
+commands and code captures actual outputs as evidence. The receipt is then
+verified by an LLM to ensure the evidence indicates success.
 """
 
 import json
@@ -19,13 +19,44 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class WaypointContext:
+    """Context about the waypoint this receipt is for."""
+
+    title: str
+    objective: str
+    acceptance_criteria: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "title": self.title,
+            "objective": self.objective,
+            "acceptance_criteria": self.acceptance_criteria,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "WaypointContext":
+        """Create from dictionary."""
+        return cls(
+            title=data["title"],
+            objective=data["objective"],
+            acceptance_criteria=data.get("acceptance_criteria", []),
+        )
+
+
+@dataclass
 class ChecklistItem:
-    """A single checklist item result."""
+    """A single checklist item with captured evidence."""
 
     item: str
     status: Literal["passed", "failed", "skipped"]
-    evidence: str = ""  # How the check was verified (for passed/failed)
-    reason: str = ""  # Why it was skipped (for skipped)
+    command: str = ""  # The actual command that was run
+    exit_code: int | None = None  # Command exit code
+    stdout: str = ""  # Captured stdout
+    stderr: str = ""  # Captured stderr
+    captured_at: datetime | None = None  # When evidence was captured
+    evidence: str = ""  # Legacy: model-written prose (for backwards compat)
+    reason: str = ""  # Why it was skipped (for skipped items)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -33,6 +64,16 @@ class ChecklistItem:
             "item": self.item,
             "status": self.status,
         }
+        if self.command:
+            result["command"] = self.command
+        if self.exit_code is not None:
+            result["exit_code"] = self.exit_code
+        if self.stdout:
+            result["stdout"] = self.stdout
+        if self.stderr:
+            result["stderr"] = self.stderr
+        if self.captured_at:
+            result["captured_at"] = self.captured_at.isoformat()
         if self.evidence:
             result["evidence"] = self.evidence
         if self.reason:
@@ -42,9 +83,17 @@ class ChecklistItem:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ChecklistItem":
         """Create from dictionary."""
+        captured_at = None
+        if data.get("captured_at"):
+            captured_at = datetime.fromisoformat(data["captured_at"])
         return cls(
             item=data["item"],
             status=data["status"],
+            command=data.get("command", ""),
+            exit_code=data.get("exit_code"),
+            stdout=data.get("stdout", ""),
+            stderr=data.get("stderr", ""),
+            captured_at=captured_at,
             evidence=data.get("evidence", ""),
             reason=data.get("reason", ""),
         )
@@ -52,10 +101,11 @@ class ChecklistItem:
 
 @dataclass
 class ChecklistReceipt:
-    """Proof that the model ran the checklist for a waypoint."""
+    """Proof of work with captured evidence for a waypoint."""
 
     waypoint_id: str
     completed_at: datetime
+    context: WaypointContext | None = None  # Waypoint context for traceability
     checklist: list[ChecklistItem] = field(default_factory=list)
 
     def is_valid(self) -> bool:
@@ -66,20 +116,31 @@ class ChecklistReceipt:
         """Get list of failed checklist items."""
         return [item for item in self.checklist if item.status == "failed"]
 
+    def has_captured_evidence(self) -> bool:
+        """Check if receipt has real captured evidence (not just model prose)."""
+        return any(item.exit_code is not None for item in self.checklist)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
-        return {
+        result: dict[str, Any] = {
             "waypoint_id": self.waypoint_id,
             "completed_at": self.completed_at.isoformat(),
             "checklist": [item.to_dict() for item in self.checklist],
         }
+        if self.context:
+            result["context"] = self.context.to_dict()
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ChecklistReceipt":
         """Create from dictionary."""
+        context = None
+        if data.get("context"):
+            context = WaypointContext.from_dict(data["context"])
         return cls(
             waypoint_id=data["waypoint_id"],
             completed_at=datetime.fromisoformat(data["completed_at"]),
+            context=context,
             checklist=[
                 ChecklistItem.from_dict(item) for item in data.get("checklist", [])
             ],
@@ -179,3 +240,80 @@ class ReceiptValidator:
             reverse=True,
         )
         return matching[0] if matching else None
+
+
+@dataclass
+class CapturedEvidence:
+    """Evidence captured from running a command."""
+
+    command: str
+    exit_code: int
+    stdout: str
+    stderr: str
+    captured_at: datetime
+
+
+class ReceiptBuilder:
+    """Builds receipts from captured evidence during waypoint execution.
+
+    Instead of relying on model-written prose, this captures actual command
+    outputs and builds a verifiable receipt.
+    """
+
+    def __init__(
+        self,
+        waypoint_id: str,
+        title: str,
+        objective: str,
+        acceptance_criteria: list[str] | None = None,
+    ):
+        self.waypoint_id = waypoint_id
+        self.context = WaypointContext(
+            title=title,
+            objective=objective,
+            acceptance_criteria=acceptance_criteria or [],
+        )
+        self.evidence: dict[str, CapturedEvidence] = {}
+
+    def capture(self, category: str, evidence: CapturedEvidence) -> None:
+        """Capture evidence for a checklist category.
+
+        Args:
+            category: The checklist category (lint, test, type, format)
+            evidence: The captured command output
+        """
+        self.evidence[category] = evidence
+        logger.debug(
+            "Captured evidence for %s: exit_code=%d", category, evidence.exit_code
+        )
+
+    def build(self) -> ChecklistReceipt:
+        """Build receipt from captured evidence.
+
+        Returns:
+            ChecklistReceipt with waypoint context and captured evidence.
+        """
+        checklist_items = []
+        for category, ev in self.evidence.items():
+            checklist_items.append(
+                ChecklistItem(
+                    item=category,
+                    status="passed" if ev.exit_code == 0 else "failed",
+                    command=ev.command,
+                    exit_code=ev.exit_code,
+                    stdout=ev.stdout[:2000] if ev.stdout else "",  # Truncate
+                    stderr=ev.stderr[:2000] if ev.stderr else "",  # Truncate
+                    captured_at=ev.captured_at,
+                )
+            )
+
+        return ChecklistReceipt(
+            waypoint_id=self.waypoint_id,
+            completed_at=datetime.now(),
+            context=self.context,
+            checklist=checklist_items,
+        )
+
+    def has_evidence(self) -> bool:
+        """Check if any evidence has been captured."""
+        return len(self.evidence) > 0

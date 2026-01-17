@@ -40,6 +40,7 @@ from waypoints.fly.stack import (
     detect_stack_from_spec,
 )
 from waypoints.git.config import Checklist
+from waypoints.git.receipt import CapturedEvidence, ReceiptBuilder
 from waypoints.llm.client import (
     APIErrorType,
     StreamChunk,
@@ -427,7 +428,7 @@ class WaypointExecutor:
 
                             # Run finalize step to verify receipt
                             receipt_valid = await self._finalize_and_verify_receipt(
-                                project_path
+                                project_path, stack_configs, checklist
                             )
 
                             if receipt_valid:
@@ -701,127 +702,279 @@ When complete, output the completion marker specified in the instructions."""
 
         return "Agent requested human intervention"
 
-    async def _finalize_and_verify_receipt(self, project_path: Path) -> bool:
-        """Run finalize step to ensure receipt is produced.
+    def _run_validation_command(
+        self,
+        command: str,
+        project_path: Path,
+    ) -> CapturedEvidence:
+        """Run a validation command and capture its output.
 
-        This is Step 2 of the model guidance - after completion marker,
-        we remind the model about the receipt and verify it exists.
+        Args:
+            command: The shell command to run
+            project_path: Working directory for the command
+
+        Returns:
+            CapturedEvidence with command results
+        """
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            return CapturedEvidence(
+                command=command,
+                exit_code=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                captured_at=datetime.now(),
+            )
+        except subprocess.TimeoutExpired:
+            return CapturedEvidence(
+                command=command,
+                exit_code=-1,
+                stdout="",
+                stderr="Command timed out after 120s",
+                captured_at=datetime.now(),
+            )
+        except Exception as e:
+            return CapturedEvidence(
+                command=command,
+                exit_code=-1,
+                stdout="",
+                stderr=str(e),
+                captured_at=datetime.now(),
+            )
+
+    def _build_verification_prompt(self, receipt_path: Path) -> str:
+        """Build the LLM verification prompt for a receipt.
+
+        Args:
+            receipt_path: Path to the receipt file
+
+        Returns:
+            Verification prompt string
+        """
+        from waypoints.git.receipt import ChecklistReceipt
+
+        receipt = ChecklistReceipt.load(receipt_path)
+
+        # Build context section
+        context_section = ""
+        if receipt.context:
+            criteria_list = "\n".join(
+                f"  - {c}" for c in receipt.context.acceptance_criteria
+            )
+            context_section = f"""### Waypoint Context
+- **Title**: {receipt.context.title}
+- **Objective**: {receipt.context.objective}
+- **Acceptance Criteria**:
+{criteria_list}
+
+"""
+
+        # Build evidence section
+        evidence_sections = []
+        for item in receipt.checklist:
+            status_emoji = "✅" if item.status == "passed" else "❌"
+            output = item.stdout or item.stderr or "(no output)"
+            # Truncate long outputs
+            if len(output) > 500:
+                output = output[:500] + "\n... (truncated)"
+            evidence_sections.append(
+                f"""**{item.item}** {status_emoji}
+- Command: `{item.command}`
+- Exit code: {item.exit_code}
+- Output:
+```
+{output}
+```"""
+            )
+
+        evidence_text = "\n\n".join(evidence_sections)
+
+        return f"""## Receipt Verification
+
+A receipt was generated for waypoint {receipt.waypoint_id}. Please verify it.
+
+{context_section}### Captured Evidence
+
+{evidence_text}
+
+### Verification Task
+
+Review the captured evidence and answer:
+1. Did all checklist commands succeed (exit code 0)?
+2. Does the output indicate genuine success (not empty, no hidden errors)?
+3. Based on the evidence, is this waypoint complete?
+
+Output your verdict:
+<receipt-verdict status="valid|invalid">
+Brief reasoning here
+</receipt-verdict>
+"""
+
+    async def _finalize_and_verify_receipt(
+        self,
+        project_path: Path,
+        stack_configs: list[StackConfig],
+        checklist: Checklist,
+    ) -> bool:
+        """Run validation commands, build receipt, and verify with LLM.
+
+        This captures real evidence by running validation commands ourselves,
+        then asks the model to verify the receipt.
+
+        Args:
+            project_path: Project working directory
+            stack_configs: Detected technology stacks
+            checklist: Checklist configuration with overrides
 
         Returns True if receipt is valid, False otherwise.
         """
-        from waypoints.git.receipt import ReceiptValidator
-
-        validator = ReceiptValidator()
-        receipt_path = validator.find_latest_receipt(self.project, self.waypoint.id)
-
-        if receipt_path:
-            result = validator.validate(receipt_path)
-            if result.valid:
-                logger.info("Receipt already exists and is valid: %s", receipt_path)
-                return True
-            else:
-                logger.warning("Receipt exists but invalid: %s", result.message)
-
-        # Receipt missing or invalid - send finalize prompt
-        logger.info("Sending finalize prompt to ensure receipt is produced")
-
-        # Normalize waypoint ID for receipt filename
-        safe_wp_id = self.waypoint.id.lower().replace("-", "")
-
-        finalize_prompt = f"""Waypoint complete. Produce the checklist receipt.
-
-**Required:** Create a JSON receipt at:
-`.waypoints/projects/{self.project.slug}/receipts/{safe_wp_id}-{{timestamp}}.json`
-
-Run the pre-completion checklist and record results:
-1. Linting (e.g., `ruff check .`)
-2. Tests (e.g., `pytest`)
-3. Type checking (e.g., `mypy src/`)
-4. Formatting (e.g., `black --check .`)
-
-Receipt structure:
-```json
-{{
-  "waypoint_id": "{self.waypoint.id}",
-  "completed_at": "[ISO timestamp]",
-  "checklist": [
-    {{
-      "item": "Code passes linting",
-      "status": "passed|failed|skipped",
-      "evidence": "..."
-    }}
-  ]
-}}
-```
-
-Use "skipped" with "reason" if a check is not applicable.
-Create the receipt now.
-"""
+        assert self._log_writer is not None  # Guaranteed by _execute_impl
+        self._log_writer.log_finalize_start()
 
         self._report_progress(
             self.max_iterations,
             self.max_iterations,
             "finalizing",
-            "Verifying checklist...",
+            "Running validation commands...",
         )
 
-        # Log finalize phase start
-        assert self._log_writer is not None  # Guaranteed by _execute_impl
-        self._log_writer.log_finalize_start()
+        # Build receipt with waypoint context
+        receipt_builder = ReceiptBuilder(
+            waypoint_id=self.waypoint.id,
+            title=self.waypoint.title,
+            objective=self.waypoint.objective,
+            acceptance_criteria=self.waypoint.acceptance_criteria,
+        )
 
-        finalize_output = ""
+        # Run validation commands for each detected stack
+        for config in stack_configs:
+            for cmd in config.commands:
+                # Apply user overrides if present
+                actual_command = checklist.validation_overrides.get(
+                    cmd.category, cmd.command
+                )
+                logger.info("Running validation: %s (%s)", cmd.name, actual_command)
+
+                self._report_progress(
+                    self.max_iterations,
+                    self.max_iterations,
+                    "finalizing",
+                    f"Running {cmd.name}...",
+                )
+
+                evidence = self._run_validation_command(actual_command, project_path)
+                receipt_builder.capture(cmd.name, evidence)
+
+                # Log the captured evidence
+                self._log_writer.log_finalize_tool_call(
+                    "Bash",
+                    {"command": actual_command},
+                    f"exit_code={evidence.exit_code}",
+                )
+
+        # Build and save receipt
+        if not receipt_builder.has_evidence():
+            logger.warning("No validation evidence captured")
+            self._log_writer.log_finalize_end()
+            self._log_writer.log_receipt_validated("", False, "No evidence captured")
+            return False
+
+        receipt = receipt_builder.build()
+        receipts_dir = self.project.get_path() / "receipts"
+        receipts_dir.mkdir(parents=True, exist_ok=True)
+        safe_wp_id = self.waypoint.id.lower().replace("-", "")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        receipt_path = receipts_dir / f"{safe_wp_id}-{timestamp}.json"
+        receipt.save(receipt_path)
+
+        logger.info("Receipt saved: %s", receipt_path)
+
+        # Quick check: if any commands failed, receipt is invalid
+        if not receipt.is_valid():
+            failed = receipt.failed_items()
+            failed_names = ", ".join(item.item for item in failed)
+            logger.warning("Validation commands failed: %s", failed_names)
+            self._log_writer.log_finalize_end()
+            self._log_writer.log_receipt_validated(
+                str(receipt_path), False, f"Failed: {failed_names}"
+            )
+            return False
+
+        # LLM verification: ask model to review the evidence
+        self._report_progress(
+            self.max_iterations,
+            self.max_iterations,
+            "finalizing",
+            "Verifying receipt with LLM...",
+        )
+
+        verification_prompt = self._build_verification_prompt(receipt_path)
+        verification_output = ""
+
         try:
             async for chunk in agent_query(
-                prompt=finalize_prompt,
-                system_prompt="Finalize waypoint. Produce the checklist receipt.",
-                allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+                prompt=verification_prompt,
+                system_prompt="Verify the checklist receipt. Output your verdict.",
+                allowed_tools=[],  # No tools needed for verification
                 cwd=str(project_path),
                 metrics_collector=self.metrics_collector,
                 phase="fly",
                 waypoint_id=self.waypoint.id,
             ):
                 if isinstance(chunk, StreamChunk):
-                    finalize_output += chunk.text
-                    self._report_progress(
-                        self.max_iterations,
-                        self.max_iterations,
-                        "finalizing",
-                        chunk.text,
-                    )
-                elif isinstance(chunk, StreamToolUse):
-                    # Log finalize phase tool calls
-                    self._log_writer.log_finalize_tool_call(
-                        chunk.tool_name,
-                        chunk.tool_input,
-                        None,
-                    )
+                    verification_output += chunk.text
         except Exception as e:
-            logger.error("Error during finalize: %s", e)
-            self._log_writer.log_error(0, f"Finalize error: {e}")
-            return False
-
-        # Log finalize output
-        if finalize_output:
-            self._log_writer.log_finalize_output(finalize_output)
-        self._log_writer.log_finalize_end()
-
-        # Check for receipt again
-        receipt_path = validator.find_latest_receipt(self.project, self.waypoint.id)
-        if receipt_path:
-            result = validator.validate(receipt_path)
+            logger.error("Error during receipt verification: %s", e)
+            self._log_writer.log_error(0, f"Verification error: {e}")
+            # Fall back to format-only validation
+            self._log_writer.log_finalize_end()
             self._log_writer.log_receipt_validated(
-                str(receipt_path), result.valid, result.message
+                str(receipt_path), True, "LLM verification skipped"
             )
-            if result.valid:
-                logger.info("Receipt created and validated: %s", receipt_path)
+            return True  # Trust the evidence if LLM verification fails
+
+        # Log verification output
+        if verification_output:
+            self._log_writer.log_finalize_output(verification_output)
+
+        # Parse verdict
+        verdict_match = re.search(
+            r'<receipt-verdict status="(valid|invalid)">(.*?)</receipt-verdict>',
+            verification_output,
+            re.DOTALL,
+        )
+
+        if verdict_match:
+            status = verdict_match.group(1)
+            reasoning = verdict_match.group(2).strip()
+            is_valid = status == "valid"
+
+            self._log_writer.log_finalize_end()
+            self._log_writer.log_receipt_validated(
+                str(receipt_path), is_valid, reasoning
+            )
+
+            if is_valid:
+                logger.info("Receipt verified: %s", reasoning)
                 return True
             else:
-                logger.warning("Receipt invalid after finalize: %s", result.message)
+                logger.warning("Receipt rejected: %s", reasoning)
                 return False
-
-        logger.warning("No receipt found after finalize prompt")
-        self._log_writer.log_receipt_validated("", False, "No receipt found")
-        return False
+        else:
+            # No verdict found, fall back to format validation
+            logger.warning("No verdict marker in LLM response, using format validation")
+            self._log_writer.log_finalize_end()
+            self._log_writer.log_receipt_validated(
+                str(receipt_path), True, "LLM verdict not found, using format check"
+            )
+            return True
 
     def _validate_no_external_changes(self) -> list[str]:
         """Check if any files were modified outside the project directory.
