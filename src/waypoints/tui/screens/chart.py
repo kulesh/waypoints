@@ -300,8 +300,24 @@ class ChartScreen(Screen[None]):
                 len(self.flight_plan.waypoints),
             )
         else:
-            # Generate new plan
-            # Transition journey state: SHAPE_SPEC_REVIEW -> CHART_GENERATING
+            # Generate new plan - but first verify we can transition
+            # Expected: SHAPE_SPEC_REVIEW -> CHART_GENERATING
+            journey = self.project.journey
+            if journey and not journey.can_transition(JourneyState.CHART_GENERATING):
+                # Not in expected state (e.g., after crash recovery to earlier state)
+                # Redirect to appropriate screen for current phase
+                logger.warning(
+                    "Cannot generate chart from state %s, redirecting to phase %s",
+                    journey.state.value,
+                    journey.phase,
+                )
+                self.notify(
+                    f"Redirecting to {journey.phase} (recovery state)",
+                    severity="warning",
+                )
+                self.app.call_later(self._redirect_to_current_phase)
+                return
+
             self.project.transition_journey(JourneyState.CHART_GENERATING)
             self._generate_waypoints()
 
@@ -309,6 +325,15 @@ class ChartScreen(Screen[None]):
         """Show the panels and hide the generating view."""
         self.query_one("#generating-view").display = False
         self.query_one(".main-container").display = True
+
+    def _redirect_to_current_phase(self) -> None:
+        """Redirect to the screen matching current journey phase."""
+        journey = self.project.journey
+        if not journey:
+            return
+
+        # Let the app handle routing to the correct screen
+        self.waypoints_app._resume_project(self.project)
 
     def _set_thinking(self, thinking: bool) -> None:
         """Set the header status indicator to thinking state."""
