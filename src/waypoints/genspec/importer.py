@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from waypoints.config.paths import get_paths
 from waypoints.genspec.spec import (
@@ -18,7 +19,8 @@ from waypoints.genspec.spec import (
     GenerativeStep,
     UserDecision,
 )
-from waypoints.models.flight_plan import FlightPlanWriter
+from waypoints.models.flight_plan import FlightPlan, FlightPlanWriter
+from waypoints.models.journey import Journey, JourneyState
 from waypoints.models.project import Project
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 
@@ -121,7 +123,7 @@ def validate_spec(spec: GenerativeSpec) -> ValidationResult:
 
     Checks for:
     - Required artifacts (idea_brief, product_spec, flight_plan)
-    - Valid phase sequences
+    - Valid waypoint structure (required fields, unique IDs, valid references)
     - Non-empty content
 
     Args:
@@ -150,6 +152,57 @@ def validate_spec(spec: GenerativeSpec) -> ValidationResult:
     if flight_plan and not flight_plan.content.strip():
         errors.append("Empty flight_plan artifact")
 
+    # Validate flight plan waypoints structure
+    if flight_plan and flight_plan.content.strip():
+        try:
+            waypoints_data = json.loads(flight_plan.content)
+            waypoint_ids: set[str] = set()
+
+            # First pass: collect IDs and check required fields
+            for wp in waypoints_data:
+                wp_id = wp.get("id")
+                if not wp_id:
+                    errors.append("Waypoint missing 'id' field")
+                    continue
+
+                if not wp.get("title"):
+                    errors.append(f"Waypoint {wp_id} missing 'title' field")
+
+                if not wp.get("objective"):
+                    warnings.append(f"Waypoint {wp_id} missing 'objective' field")
+
+                # Check for duplicate IDs
+                if wp_id in waypoint_ids:
+                    errors.append(f"Duplicate waypoint ID: {wp_id}")
+                waypoint_ids.add(wp_id)
+
+            # Second pass: validate references
+            for wp in waypoints_data:
+                wp_id = wp.get("id")
+                if not wp_id:
+                    continue
+
+                # Check parent reference
+                parent_id = wp.get("parent_id")
+                if parent_id and parent_id not in waypoint_ids:
+                    errors.append(
+                        f"Waypoint {wp_id} references non-existent parent: {parent_id}"
+                    )
+
+                # Check dependency references
+                for dep_id in wp.get("dependencies", []):
+                    if dep_id not in waypoint_ids:
+                        errors.append(
+                            f"Waypoint {wp_id} has invalid dependency: {dep_id}"
+                        )
+
+            # Check for circular dependencies
+            if _has_circular_dependencies(waypoints_data):
+                errors.append("Circular dependencies detected in waypoints")
+
+        except json.JSONDecodeError as e:
+            errors.append(f"Invalid flight plan JSON: {e}")
+
     # Check for steps
     if not spec.steps:
         warnings.append("No generative steps recorded")
@@ -165,19 +218,83 @@ def validate_spec(spec: GenerativeSpec) -> ValidationResult:
     )
 
 
-def create_project_from_spec(
-    spec: GenerativeSpec,
-    name: str,
-    replay_mode: bool = True,
-) -> Project:
-    """Create a new project from a generative specification.
-
-    In replay mode, uses cached outputs from the spec.
-    In regenerate mode, the caller must execute steps separately.
+def _has_circular_dependencies(waypoints: list[dict[str, Any]]) -> bool:
+    """Check for circular dependencies using DFS.
 
     Args:
-        spec: The specification to import
-        name: Name for the new project
+        waypoints: List of waypoint dictionaries
+
+    Returns:
+        True if circular dependencies exist
+    """
+    # Build adjacency list
+    deps: dict[str, list[str]] = {}
+    for wp in waypoints:
+        wp_id = wp.get("id")
+        if wp_id:
+            deps[wp_id] = wp.get("dependencies", [])
+
+    # Track visited and current path
+    visited: set[str] = set()
+    path: set[str] = set()
+
+    def has_cycle(node: str) -> bool:
+        if node in path:
+            return True
+        if node in visited:
+            return False
+
+        visited.add(node)
+        path.add(node)
+
+        for dep in deps.get(node, []):
+            if has_cycle(dep):
+                return True
+
+        path.remove(node)
+        return False
+
+    for wp_id in deps:
+        if has_cycle(wp_id):
+            return True
+
+    return False
+
+
+def validate_genspec_file(path: str | Path) -> ValidationResult:
+    """Quick validation of a genspec file without full import.
+
+    Used by import modal for real-time feedback.
+
+    Args:
+        path: Path to the genspec file
+
+    Returns:
+        ValidationResult with errors and warnings
+    """
+    try:
+        spec = import_from_file(Path(path))
+        return validate_spec(spec)
+    except FileNotFoundError:
+        return ValidationResult(valid=False, errors=["File not found"], warnings=[])
+    except ValueError as e:
+        return ValidationResult(valid=False, errors=[str(e)], warnings=[])
+
+
+def create_project_from_spec(
+    spec_path: str | Path,
+    name: str | None = None,
+    target_state: str = "chart:review",
+    replay_mode: bool = True,
+) -> Project:
+    """Create a new project from a generative specification file.
+
+    Args:
+        spec_path: Path to the .genspec.jsonl file
+        name: Name for the new project (defaults to spec's project name)
+        target_state: Journey state to set after import:
+            - "fly:ready": Ready to execute waypoints (for "Run Now" mode)
+            - "chart:review": At chart review for inspection (for "Review First" mode)
         replay_mode: If True, use cached outputs; if False, prepare for regeneration
 
     Returns:
@@ -185,7 +302,11 @@ def create_project_from_spec(
 
     Raises:
         ValueError: If spec validation fails
+        FileNotFoundError: If spec file doesn't exist
     """
+    # Load spec from file
+    spec = import_from_file(Path(spec_path))
+
     # Validate spec
     validation = validate_spec(spec)
     if validation.has_errors:
@@ -194,9 +315,12 @@ def create_project_from_spec(
     for warning in validation.warnings:
         logger.warning("Spec validation warning: %s", warning)
 
+    # Use spec's source project name if not provided
+    project_name = name or spec.source_project or "Imported Project"
+
     # Create project
     paths = get_paths()
-    slug = _slugify(name)
+    slug = _slugify(project_name)
 
     # Ensure unique slug
     project_path = paths.projects_dir / slug
@@ -205,7 +329,7 @@ def create_project_from_spec(
         slug = f"{slug}-{timestamp}"
         project_path = paths.projects_dir / slug
 
-    logger.info("Creating project: %s at %s", name, project_path)
+    logger.info("Creating project: %s at %s", project_name, project_path)
 
     # Create project directory structure
     project_path.mkdir(parents=True, exist_ok=True)
@@ -213,10 +337,12 @@ def create_project_from_spec(
     (project_path / "docs").mkdir(exist_ok=True)
 
     # Create project metadata
+    now = datetime.now()
     project = Project(
-        name=name,
+        name=project_name,
         slug=slug,
-        created_at=datetime.now(),
+        created_at=now,
+        updated_at=now,
         initial_idea=spec.initial_idea,
     )
 
@@ -224,11 +350,52 @@ def create_project_from_spec(
         # In replay mode, restore artifacts from spec
         _restore_artifacts(project, spec)
 
+    # Initialize journey with target state
+    project.journey = _create_journey_at_state(slug, target_state)
+
     # Save project
     project.save()
 
-    logger.info("Project created: %s", project.slug)
+    logger.info("Project created: %s at state %s", project.slug, target_state)
     return project
+
+
+def _create_journey_at_state(project_slug: str, target_state: str) -> Journey:
+    """Create a journey initialized to a specific state.
+
+    For imported projects, we create a journey with history showing
+    the progression through phases to reach the target state.
+
+    Args:
+        project_slug: The project's slug
+        target_state: Target state ("fly:ready" or "chart:review")
+
+    Returns:
+        Journey instance at the target state
+    """
+    # State progression for imported projects
+    # We record the history as if the phases were completed
+    state_progression = [
+        JourneyState.SPARK_IDLE,
+        JourneyState.SPARK_ENTERING,
+        JourneyState.SHAPE_QA,
+        JourneyState.SHAPE_BRIEF_GENERATING,
+        JourneyState.SHAPE_BRIEF_REVIEW,
+        JourneyState.SHAPE_SPEC_GENERATING,
+        JourneyState.SHAPE_SPEC_REVIEW,
+        JourneyState.CHART_GENERATING,
+        JourneyState.CHART_REVIEW,
+    ]
+
+    if target_state == "fly:ready":
+        state_progression.append(JourneyState.FLY_READY)
+
+    # Build journey by transitioning through states
+    journey = Journey.new(project_slug)
+    for state in state_progression[1:]:  # Skip SPARK_IDLE (initial state)
+        journey = journey.transition(state)
+
+    return journey
 
 
 def _restore_artifacts(project: Project, spec: GenerativeSpec) -> None:
@@ -270,9 +437,9 @@ def _restore_artifacts(project: Project, spec: GenerativeSpec) -> None:
             ]
 
             # Write flight plan
+            flight_plan_obj = FlightPlan(waypoints=waypoints)
             writer = FlightPlanWriter(project)
-            for wp in waypoints:
-                writer.add_waypoint(wp)
+            writer.save(flight_plan_obj)
 
             logger.info("Restored %d waypoints", len(waypoints))
         except (json.JSONDecodeError, KeyError) as e:
