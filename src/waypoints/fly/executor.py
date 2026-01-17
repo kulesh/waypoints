@@ -421,6 +421,25 @@ class WaypointExecutor:
                         iteration_output += chunk.text
                         full_output += chunk.text
 
+                        # Parse validation evidence markers BEFORE completion check
+                        # (completion check returns early, so we need to capture first)
+                        for match in VALIDATION_PATTERN.findall(full_output):
+                            command, exit_code, output = match
+                            category = _detect_validation_category(command)
+                            if category and category not in captured_evidence:
+                                captured_evidence[category] = CapturedEvidence(
+                                    command=command.strip(),
+                                    exit_code=int(exit_code),
+                                    stdout=output.strip(),
+                                    stderr="",
+                                    captured_at=datetime.now(),
+                                )
+                                logger.info(
+                                    "Captured validation evidence: %s (exit=%s)",
+                                    category,
+                                    exit_code,
+                                )
+
                         # Check for completion marker
                         if completion_marker in full_output:
                             logger.info("Completion marker found!")
@@ -479,25 +498,6 @@ class WaypointExecutor:
                         # Parse criterion completion markers from full output
                         criterion_matches = CRITERION_PATTERN.findall(full_output)
                         completed_indices = {int(m[0]) for m in criterion_matches}
-
-                        # Parse validation evidence markers from full output
-                        for match in VALIDATION_PATTERN.findall(full_output):
-                            command, exit_code, output = match
-                            # Detect category from command
-                            category = _detect_validation_category(command)
-                            if category and category not in captured_evidence:
-                                captured_evidence[category] = CapturedEvidence(
-                                    command=command.strip(),
-                                    exit_code=int(exit_code),
-                                    stdout=output.strip(),
-                                    stderr="",
-                                    captured_at=datetime.now(),
-                                )
-                                logger.info(
-                                    "Captured validation evidence: %s (exit=%s)",
-                                    category,
-                                    exit_code,
-                                )
 
                         # Report streaming progress with criteria status
                         self._report_progress(
