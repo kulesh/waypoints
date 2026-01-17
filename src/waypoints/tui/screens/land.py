@@ -661,9 +661,7 @@ class GenSpecTree(Tree[Any]):
                 steps = []
 
             # Calculate total cost for this phase
-            phase_cost = sum(
-                s.metadata.cost_usd for s in steps if s.metadata.cost_usd
-            )
+            phase_cost = sum(s.metadata.cost_usd for s in steps if s.metadata.cost_usd)
 
             # Format phase label
             icon = PHASE_ICONS.get(phase_name, "○")
@@ -806,8 +804,10 @@ class GenSpecPreviewPanel(VerticalScroll):
         phase_name = step.phase.value.replace("_", " ").title()
         content.mount(Static(f"Phase: {phase_name}", classes="meta-line"))
         content.mount(
-            Static(f"Time: {step.timestamp.strftime('%Y-%m-%d %H:%M:%S')}",
-                   classes="meta-line")
+            Static(
+                f"Time: {step.timestamp.strftime('%Y-%m-%d %H:%M:%S')}",
+                classes="meta-line",
+            )
         )
 
         # For FLY steps, show iteration context
@@ -1160,27 +1160,32 @@ class GenSpecPanel(Horizontal):
         self.app.push_screen(ArtifactDetailModal(artifact))
 
     def _export_spec(self) -> None:
-        """Export the generative spec to a file."""
-        from datetime import datetime as dt
+        """Export the generative spec to a file via modal."""
         from pathlib import Path
 
         from waypoints.genspec import export_to_file
+        from waypoints.tui.widgets.genspec import ExportModal
 
         if not self._spec:
             self.app.notify("No spec to export", severity="warning")
             return
 
-        timestamp = dt.now().strftime("%Y%m%d-%H%M%S")
-        filename = f"{self.project.slug}-{timestamp}.genspec.jsonl"
-        output_path = Path.cwd() / filename
+        def handle_export(result: tuple[str, str] | None) -> None:
+            if result is None:
+                return  # User cancelled
+            directory, filename = result
+            output_path = Path(directory) / filename
 
-        try:
-            export_to_file(self._spec, output_path)
-            self.app.notify(f"Exported to {filename}")
-            logger.info("Exported genspec to %s", output_path)
-        except Exception as e:
-            self.app.notify(f"Export failed: {e}", severity="error")
-            logger.exception("Failed to export genspec: %s", e)
+            try:
+                self.app.notify("Exporting...")
+                export_to_file(self._spec, output_path)
+                self.app.notify(f"Exported to {output_path}")
+                logger.info("Exported genspec to %s", output_path)
+            except Exception as e:
+                self.app.notify(f"Export failed: {e}", severity="error")
+                logger.exception("Failed to export genspec: %s", e)
+
+        self.app.push_screen(ExportModal(self.project.slug), handle_export)
 
 
 class LandScreen(Screen[None]):

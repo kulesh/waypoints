@@ -46,6 +46,7 @@ class StepResult:
     output: StepOutput | None = None
     error: str | None = None
     duration_ms: int = 0
+    cost_usd: float = 0.0
 
 
 @dataclass
@@ -146,9 +147,7 @@ def _execute_replay(
         if on_progress:
             on_progress(f"Error: {e}", 1, 1)
 
-    result.total_duration_ms = int(
-        (datetime.now() - start_time).total_seconds() * 1000
-    )
+    result.total_duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
     return result
 
 
@@ -183,13 +182,11 @@ def _execute_regenerate(
             step_result = _regenerate_step(step, project)
             result.step_results.append(step_result)
 
-            if step_result.success and step_result.output:
-                result.total_cost_usd += 0  # Would need to track from LLM call
+            if step_result.success:
+                result.total_cost_usd += step_result.cost_usd
 
             if not step_result.success:
-                logger.warning(
-                    "Step %s failed: %s", step.step_id, step_result.error
-                )
+                logger.warning("Step %s failed: %s", step.step_id, step_result.error)
 
         # After regenerating steps, create artifacts from final outputs
         _create_artifacts_from_steps(result, project, spec)
@@ -203,9 +200,7 @@ def _execute_regenerate(
         if on_progress:
             on_progress(f"Error: {e}", 0, 1)
 
-    result.total_duration_ms = int(
-        (datetime.now() - start_time).total_seconds() * 1000
-    )
+    result.total_duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
     return result
 
 
@@ -237,6 +232,7 @@ def _regenerate_step(step: GenerativeStep, project: "Project") -> StepResult:
         # Call LLM
         client = ChatClient(phase=f"regenerate-{step.phase.value}")
         content = ""
+        cost = 0.0
 
         for result in client.stream_message(
             messages=messages,
@@ -245,7 +241,7 @@ def _regenerate_step(step: GenerativeStep, project: "Project") -> StepResult:
             if isinstance(result, StreamChunk):
                 content += result.text
             elif isinstance(result, StreamComplete):
-                pass
+                cost = result.cost_usd or 0.0
 
         # Determine output type
         output_type = OutputType.TEXT
@@ -262,6 +258,7 @@ def _regenerate_step(step: GenerativeStep, project: "Project") -> StepResult:
             success=True,
             output=StepOutput(content=content, output_type=output_type),
             duration_ms=duration_ms,
+            cost_usd=cost,
         )
 
     except Exception as e:
@@ -383,7 +380,5 @@ def _execute_compare(
         if on_progress:
             on_progress(f"Error: {e}", 0, 2)
 
-    result.total_duration_ms = int(
-        (datetime.now() - start_time).total_seconds() * 1000
-    )
+    result.total_duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
     return result

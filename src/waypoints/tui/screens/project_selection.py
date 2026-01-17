@@ -28,6 +28,7 @@ from waypoints.models.flight_plan import FlightPlanReader
 from waypoints.models.waypoint import WaypointStatus
 from waypoints.tui.screens.ideation import IdeationScreen
 from waypoints.tui.utils import format_duration, format_relative_time
+from waypoints.tui.widgets.genspec import GenSpecPreview
 from waypoints.tui.widgets.header import StatusHeader
 
 logger = logging.getLogger(__name__)
@@ -148,7 +149,7 @@ class ImportProjectModal(ModalScreen[tuple[str, str] | None]):
     ImportProjectModal > Vertical {
         width: 70;
         height: auto;
-        max-height: 30;
+        max-height: 40;
         background: $surface;
         border: solid $surface-lighten-2;
         padding: 1 2;
@@ -213,6 +214,17 @@ class ImportProjectModal(ModalScreen[tuple[str, str] | None]):
     ImportProjectModal Button#btn-import {
         background: $primary;
     }
+
+    ImportProjectModal GenSpecPreview {
+        margin-top: 1;
+        height: auto;
+        max-height: 8;
+        display: none;
+    }
+
+    ImportProjectModal GenSpecPreview.visible {
+        display: block;
+    }
     """
 
     def compose(self) -> ComposeResult:
@@ -221,14 +233,13 @@ class ImportProjectModal(ModalScreen[tuple[str, str] | None]):
             yield Label("File path:", classes="field-label")
             yield Input(placeholder="/path/to/project.genspec.jsonl", id="file-path")
             yield Static("", id="validation-status", classes="hint")
+            yield GenSpecPreview(id="spec-preview")
             yield Label("After import:", classes="field-label")
             with RadioSet(id="mode-select"):
                 yield RadioButton(
                     "Run Now - start FLY phase immediately", id="mode-run", value=True
                 )
-                yield RadioButton(
-                    "Review First - go to CHART review", id="mode-review"
-                )
+                yield RadioButton("Review First - go to CHART review", id="mode-review")
             with Horizontal(classes="modal-actions"):
                 yield Button(
                     "Import", id="btn-import", variant="primary", disabled=True
@@ -248,6 +259,7 @@ class ImportProjectModal(ModalScreen[tuple[str, str] | None]):
         """Validate the genspec file and update UI."""
         status = self.query_one("#validation-status", Static)
         import_btn = self.query_one("#btn-import", Button)
+        preview = self.query_one("#spec-preview", GenSpecPreview)
 
         if not path:
             status.update("")
@@ -256,6 +268,8 @@ class ImportProjectModal(ModalScreen[tuple[str, str] | None]):
             )
             status.add_class("hint")
             import_btn.disabled = True
+            preview.clear_preview()
+            preview.remove_class("visible")
             return
 
         result = validate_genspec_file(path)
@@ -265,16 +279,24 @@ class ImportProjectModal(ModalScreen[tuple[str, str] | None]):
             status.set_class(False, "hint", "validation-warning", "validation-ok")
             status.add_class("validation-error")
             import_btn.disabled = True
+            preview.clear_preview()
+            preview.remove_class("visible")
         elif result.has_warnings:
             status.update("⚠ " + "; ".join(result.warnings))
             status.set_class(False, "hint", "validation-error", "validation-ok")
             status.add_class("validation-warning")
             import_btn.disabled = False
+            # Show preview on valid file (with warnings)
+            if preview.update_from_path(path):
+                preview.add_class("visible")
         else:
             status.update("✓ Valid genspec file")
             status.set_class(False, "hint", "validation-error", "validation-warning")
             status.add_class("validation-ok")
             import_btn.disabled = False
+            # Show preview on valid file
+            if preview.update_from_path(path):
+                preview.add_class("visible")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-import":
