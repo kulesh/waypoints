@@ -80,6 +80,33 @@ def parse_args() -> argparse.Namespace:
         default="replay",
         help="Import mode: replay uses cached outputs, regenerate calls LLM",
     )
+    import_parser.add_argument(
+        "--run",
+        action="store_true",
+        help="Immediately execute waypoints after import",
+    )
+
+    # Run command (headless execution)
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Execute waypoints for a project (headless)",
+    )
+    run_parser.add_argument(
+        "project",
+        help="Project slug to execute",
+    )
+    run_parser.add_argument(
+        "--on-error",
+        choices=["retry", "skip", "abort"],
+        default="abort",
+        help="Behavior on waypoint failure (default: abort)",
+    )
+    run_parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=10,
+        help="Maximum iterations per waypoint (default: 10)",
+    )
 
     return parser.parse_args()
 
@@ -150,7 +177,7 @@ def cmd_import(args: argparse.Namespace) -> int:
     # Create project
     replay_mode = args.mode == "replay"
     try:
-        project = create_project_from_spec(spec, name, replay_mode=replay_mode)
+        project = create_project_from_spec(args.file, name, replay_mode=replay_mode)
     except ValueError as e:
         print(f"Error creating project: {e}", file=sys.stderr)
         return 1
@@ -166,6 +193,133 @@ def cmd_import(args: argparse.Namespace) -> int:
         print("\nProject prepared for regeneration.")
         print("Run the executor to regenerate from prompts.")
 
+    # Optionally run immediately
+    if args.run:
+        print("\nStarting headless execution...")
+        # Create a namespace for cmd_run
+        run_args = argparse.Namespace(
+            project=project.slug,
+            on_error="abort",
+            max_iterations=10,
+        )
+        return cmd_run(run_args)
+
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """Execute waypoints for a project (headless mode)."""
+    import asyncio
+
+    from waypoints.config.paths import get_paths
+    from waypoints.fly.executor import ExecutionResult
+    from waypoints.fly.intervention import InterventionNeededError
+    from waypoints.models.flight_plan import FlightPlanReader
+    from waypoints.models.project import Project
+    from waypoints.models.waypoint import WaypointStatus
+    from waypoints.orchestration.coordinator import JourneyCoordinator
+
+    paths = get_paths()
+    project_path = paths.projects_dir / args.project
+
+    if not project_path.exists():
+        print(f"Error: Project '{args.project}' not found", file=sys.stderr)
+        print(f"  Looked in: {paths.projects_dir}", file=sys.stderr)
+        return 1
+
+    # Load project
+    project = Project.load(project_path)
+    if project is None:
+        print(f"Error: Could not load project '{args.project}'", file=sys.stderr)
+        return 1
+
+    # Load flight plan
+    flight_plan = FlightPlanReader.load(project)
+    if flight_plan is None:
+        print("Error: No flight plan found for this project", file=sys.stderr)
+        return 1
+
+    print(f"Project: {project.name}")
+    print(f"Waypoints: {len(flight_plan.waypoints)}")
+    print()
+
+    # Create coordinator
+    coordinator = JourneyCoordinator(project, flight_plan)
+
+    # Reset any stale in-progress waypoints
+    coordinator.reset_stale_in_progress()
+
+    # Execution loop
+    completed = 0
+    failed = 0
+    skipped = 0
+
+    while True:
+        include_failed = args.on_error == "retry"
+        waypoint = coordinator.select_next_waypoint(include_failed=include_failed)
+        if waypoint is None:
+            break
+
+        print(f"Executing: {waypoint.id} - {waypoint.title}")
+
+        try:
+            result = asyncio.run(
+                coordinator.execute_waypoint(
+                    waypoint,
+                    max_iterations=args.max_iterations,
+                )
+            )
+
+            action = coordinator.handle_execution_result(waypoint, result)
+
+            if result == ExecutionResult.SUCCESS:
+                completed += 1
+                print("  ✓ Completed")
+            elif result == ExecutionResult.FAILED:
+                failed += 1
+                print("  ✗ Failed")
+                if args.on_error == "abort":
+                    print("\nAborting due to failure (--on-error=abort)")
+                    break
+                elif args.on_error == "skip":
+                    print("  Skipping to next waypoint")
+                    continue
+                # retry: will be picked up next iteration
+
+            if action.action == "complete":
+                break
+
+        except InterventionNeededError as e:
+            msg = e.intervention.error_summary
+            print(f"  ⚠ Intervention needed: {msg}", file=sys.stderr)
+            if args.on_error == "abort":
+                print("\nAborting due to intervention (--on-error=abort)")
+                return 2
+            elif args.on_error == "skip":
+                print("  Skipping to next waypoint")
+                skipped += 1
+                waypoint.status = WaypointStatus.SKIPPED
+                continue
+            # retry: pause for now
+            break
+
+        except Exception as e:
+            print(f"  ✗ Error: {e}", file=sys.stderr)
+            logging.exception("Waypoint execution error")
+            if args.on_error == "abort":
+                return 1
+            elif args.on_error == "skip":
+                skipped += 1
+                continue
+            break
+
+    # Summary
+    print()
+    print(f"Summary: {completed} completed, {failed} failed, {skipped} skipped")
+
+    # Determine exit code
+    if failed > 0:
+        return 1
     return 0
 
 
@@ -196,6 +350,8 @@ def main() -> None:
         sys.exit(cmd_export(args))
     elif args.command == "import":
         sys.exit(cmd_import(args))
+    elif args.command == "run":
+        sys.exit(cmd_run(args))
     else:
         # Default: launch TUI
         sys.exit(cmd_tui(args))
