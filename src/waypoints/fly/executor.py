@@ -57,14 +57,17 @@ logger = logging.getLogger(__name__)
 # Max iterations before giving up
 MAX_ITERATIONS = 10
 
-# Pattern to detect criterion verification markers in agent output
-# Model outputs: <criterion index="N" status="verified|failed">
-#   <text>...</text><evidence>...</evidence></criterion>
+# Pattern to detect acceptance criterion verification markers in agent output
+# Model outputs nested elements for reliable parsing:
+#   <acceptance-criterion><index>N</index><status>verified|failed</status>
+#   <text>...</text><evidence>...</evidence></acceptance-criterion>
 CRITERION_PATTERN = re.compile(
-    r'<criterion index="(\d+)" status="(verified|failed)">\s*'
+    r"<acceptance-criterion>\s*"
+    r"<index>(\d+)</index>\s*"
+    r"<status>(verified|failed)</status>\s*"
     r"<text>(.*?)</text>\s*"
     r"<evidence>(.*?)</evidence>\s*"
-    r"</criterion>",
+    r"</acceptance-criterion>",
     re.DOTALL,
 )
 
@@ -289,19 +292,42 @@ This allows the system to capture evidence of your validation work.
 When you verify each acceptance criterion, report using this format:
 
 ```xml
-<criterion index="N" status="verified">
+<acceptance-criterion>
+<index>N</index>
+<status>verified</status>
 <text>The criterion text (copy from list above)</text>
 <evidence>
-Explain how you verified this criterion:
-- What code/tests you checked
-- What behavior you observed
-- Why it passes
+Verify each criterion in TWO steps:
+
+STEP 1 - Static Analysis:
+- Identify the code that implements this feature
+- Reference specific files, functions, line numbers
+- Note any relevant tests
+
+STEP 2 - Runtime Verification:
+- Run actual commands that exercise the feature
+- Show the command and its output
+- Explain why the output proves the criterion is met
+
+Example evidence:
+STEP 1 - Static Analysis:
+src/commands/amend.rs implements --parent flag (lines 193-196)
+Test test_reparent_task validates the behavior
+
+STEP 2 - Runtime Verification:
+$ tracker amend 5 --parent 2
+Item #5 updated: parent changed to #2
+
+$ tracker details 5
+Parent: #2 (Feature: User Auth)
+
+Conclusion: The command successfully reparented the task as expected.
 </evidence>
-</criterion>
+</acceptance-criterion>
 ```
 
-Use `status="verified"` if the criterion passes, `status="failed"` if it fails.
-Output a `<criterion>` block for each acceptance criterion.
+Use `<status>verified</status>` if the criterion passes, `<status>failed</status>` if it fails.
+Output an `<acceptance-criterion>` block for each acceptance criterion.
 This allows the system to capture your verification work.
 
 If any validation fails:
