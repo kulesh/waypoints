@@ -8,10 +8,20 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Footer, OptionList, Static
+from textual.widgets import (
+    Button,
+    Footer,
+    Input,
+    Label,
+    OptionList,
+    RadioButton,
+    RadioSet,
+    Static,
+)
 from textual.widgets.option_list import Option
 
 from waypoints.fly.execution_log import ExecutionLogReader
+from waypoints.genspec.importer import create_project_from_spec, validate_genspec_file
 from waypoints.llm.metrics import MetricsCollector
 from waypoints.models import Project
 from waypoints.models.flight_plan import FlightPlanReader
@@ -116,6 +126,176 @@ class ConfirmDeleteProjectModal(ModalScreen[bool]):
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+
+class ImportProjectModal(ModalScreen[tuple[str, str] | None]):
+    """Modal for importing a genspec file.
+
+    Returns: (file_path, mode) where mode is "run" or "review", or None if cancelled.
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+enter", "submit", "Import", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    ImportProjectModal {
+        align: center middle;
+        background: $surface 60%;
+    }
+
+    ImportProjectModal > Vertical {
+        width: 70;
+        height: auto;
+        max-height: 30;
+        background: $surface;
+        border: solid $surface-lighten-2;
+        padding: 1 2;
+    }
+
+    ImportProjectModal .modal-title {
+        text-style: bold;
+        color: $text;
+        text-align: center;
+        padding: 1 0;
+        margin-bottom: 1;
+    }
+
+    ImportProjectModal .field-label {
+        color: $text-muted;
+        margin-top: 1;
+    }
+
+    ImportProjectModal Input {
+        width: 100%;
+        margin-bottom: 1;
+    }
+
+    ImportProjectModal .hint {
+        color: $text-disabled;
+        text-style: italic;
+    }
+
+    ImportProjectModal .validation-error {
+        color: $error;
+        margin-top: 1;
+    }
+
+    ImportProjectModal .validation-warning {
+        color: $warning;
+    }
+
+    ImportProjectModal .validation-ok {
+        color: $success;
+    }
+
+    ImportProjectModal RadioSet {
+        margin-top: 1;
+        margin-bottom: 1;
+        height: auto;
+    }
+
+    ImportProjectModal .modal-actions {
+        dock: bottom;
+        height: auto;
+        padding: 1 0 0 0;
+        margin-top: 1;
+        border-top: solid $surface-lighten-1;
+        align: center middle;
+    }
+
+    ImportProjectModal Button {
+        margin: 0 1;
+        min-width: 10;
+    }
+
+    ImportProjectModal Button#btn-import {
+        background: $primary;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Import GenSpec", classes="modal-title")
+            yield Label("File path:", classes="field-label")
+            yield Input(placeholder="/path/to/project.genspec.jsonl", id="file-path")
+            yield Static("", id="validation-status", classes="hint")
+            yield Label("After import:", classes="field-label")
+            with RadioSet(id="mode-select"):
+                yield RadioButton(
+                    "Run Now - start FLY phase immediately", id="mode-run", value=True
+                )
+                yield RadioButton(
+                    "Review First - go to CHART review", id="mode-review"
+                )
+            with Horizontal(classes="modal-actions"):
+                yield Button(
+                    "Import", id="btn-import", variant="primary", disabled=True
+                )
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_mount(self) -> None:
+        """Focus the file path input."""
+        self.query_one("#file-path", Input).focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Validate file when path changes."""
+        if event.input.id == "file-path":
+            self._validate_file(event.value.strip())
+
+    def _validate_file(self, path: str) -> None:
+        """Validate the genspec file and update UI."""
+        status = self.query_one("#validation-status", Static)
+        import_btn = self.query_one("#btn-import", Button)
+
+        if not path:
+            status.update("")
+            status.set_class(
+                False, "validation-error", "validation-warning", "validation-ok"
+            )
+            status.add_class("hint")
+            import_btn.disabled = True
+            return
+
+        result = validate_genspec_file(path)
+
+        if result.has_errors:
+            status.update("✗ " + "; ".join(result.errors))
+            status.set_class(False, "hint", "validation-warning", "validation-ok")
+            status.add_class("validation-error")
+            import_btn.disabled = True
+        elif result.has_warnings:
+            status.update("⚠ " + "; ".join(result.warnings))
+            status.set_class(False, "hint", "validation-error", "validation-ok")
+            status.add_class("validation-warning")
+            import_btn.disabled = False
+        else:
+            status.update("✓ Valid genspec file")
+            status.set_class(False, "hint", "validation-error", "validation-warning")
+            status.add_class("validation-ok")
+            import_btn.disabled = False
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-import":
+            self.action_submit()
+        else:
+            self.dismiss(None)
+
+    def action_submit(self) -> None:
+        """Submit the import request."""
+        file_path = self.query_one("#file-path", Input).value.strip()
+        if not file_path:
+            return
+
+        # Get selected mode
+        radio_set = self.query_one("#mode-select", RadioSet)
+        mode = "run" if radio_set.pressed_index == 0 else "review"
+
+        self.dismiss((file_path, mode))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class ProjectListPanel(Vertical):
@@ -415,6 +595,7 @@ class ProjectSelectionScreen(Screen[None]):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", show=True),
         Binding("n", "new_project", "New", show=True),
+        Binding("i", "import_project", "Import", show=True),
         Binding("d", "delete_project", "Delete", show=True),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
@@ -481,6 +662,36 @@ class ProjectSelectionScreen(Screen[None]):
     def action_new_project(self) -> None:
         """Create a new project - go to IdeationScreen."""
         self.app.switch_screen(IdeationScreen())
+
+    def action_import_project(self) -> None:
+        """Import a project from a genspec file."""
+        self._show_import_dialog()
+
+    def _show_import_dialog(self) -> None:
+        """Show import project modal."""
+
+        def handle_import(result: tuple[str, str] | None) -> None:
+            if result is None:
+                return
+            file_path, mode = result
+            try:
+                target_state = "fly:ready" if mode == "run" else "chart:review"
+                project = create_project_from_spec(file_path, target_state=target_state)
+                self._refresh_projects()
+
+                if mode == "run":
+                    self.notify(f"Imported: {project.name}")
+                    self.app._resume_project(project)  # type: ignore[attr-defined]
+                else:
+                    self.notify(f"Imported: {project.name} - ready for review")
+            except Exception as e:
+                logger.exception("Import failed")
+                self.notify(f"Import failed: {e}", severity="error")
+
+        self.app.push_screen(
+            ImportProjectModal(),
+            handle_import,
+        )
 
     def action_open_project(self) -> None:
         """Open/resume the selected project."""
