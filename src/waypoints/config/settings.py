@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -126,17 +127,122 @@ class Settings:
     def model(self) -> str:
         """Get the LLM model name for metrics tracking.
 
-        This should match the model used by Claude Agent SDK.
+        Deprecated: Use llm_model instead. This property exists for
+        backwards compatibility.
         """
-        saved = self._data.get("model")
-        if saved:
-            return str(saved)
-        return "claude-sonnet-4"  # Current default model
+        return self.llm_model
 
     @model.setter
     def model(self, value: str) -> None:
         """Set the model name."""
-        self.set("model", value)
+        self.llm_model = value
+
+    # --- LLM Provider Settings ---
+
+    @property
+    def llm_provider(self) -> str:
+        """Get the LLM provider name ('anthropic' or 'openai')."""
+        llm = self._data.get("llm", {})
+        return str(llm.get("provider", "anthropic"))
+
+    @llm_provider.setter
+    def llm_provider(self, value: str) -> None:
+        """Set the LLM provider."""
+        llm = self._data.get("llm", {})
+        llm["provider"] = value
+        self.set("llm", llm)
+
+    @property
+    def llm_model(self) -> str:
+        """Get the LLM model name.
+
+        Returns the configured model, or a default based on the provider.
+        """
+        llm = self._data.get("llm", {})
+
+        # Check for model in new llm config
+        if "model" in llm:
+            return str(llm["model"])
+
+        # Migration: check old top-level model setting
+        old_model = self._data.get("model")
+        if old_model:
+            return str(old_model)
+
+        # Default based on provider
+        provider = llm.get("provider", "anthropic")
+        if provider == "openai":
+            return "gpt-5.2"
+        return "claude-sonnet-4-5-20241022"
+
+    @llm_model.setter
+    def llm_model(self, value: str) -> None:
+        """Set the LLM model name."""
+        llm = self._data.get("llm", {})
+        llm["model"] = value
+        self.set("llm", llm)
+
+    @property
+    def openai_api_key(self) -> str | None:
+        """Get OpenAI API key from settings or environment.
+
+        Priority: settings > OPENAI_API_KEY env var
+        """
+        llm = self._data.get("llm", {})
+        key = llm.get("openai_api_key")
+        if key:
+            return str(key)
+        return os.environ.get("OPENAI_API_KEY")
+
+    @openai_api_key.setter
+    def openai_api_key(self, value: str | None) -> None:
+        """Set OpenAI API key in settings."""
+        llm = self._data.get("llm", {})
+        if value:
+            llm["openai_api_key"] = value
+        elif "openai_api_key" in llm:
+            del llm["openai_api_key"]
+        self.set("llm", llm)
+
+    @property
+    def anthropic_api_key(self) -> str | None:
+        """Get Anthropic API key from settings or environment.
+
+        Priority: settings > ANTHROPIC_API_KEY env var
+        Returns None if using web auth.
+        """
+        llm = self._data.get("llm", {})
+        key = llm.get("anthropic_api_key")
+        if key:
+            return str(key)
+        return os.environ.get("ANTHROPIC_API_KEY")
+
+    @anthropic_api_key.setter
+    def anthropic_api_key(self, value: str | None) -> None:
+        """Set Anthropic API key in settings."""
+        llm = self._data.get("llm", {})
+        if value:
+            llm["anthropic_api_key"] = value
+        elif "anthropic_api_key" in llm:
+            del llm["anthropic_api_key"]
+        self.set("llm", llm)
+
+    @property
+    def use_web_auth(self) -> bool:
+        """Whether to use web auth for Anthropic (default True).
+
+        When True and no API key is set, Anthropic provider uses
+        browser-based authentication via Claude Agent SDK.
+        """
+        llm = self._data.get("llm", {})
+        return bool(llm.get("use_web_auth", True))
+
+    @use_web_auth.setter
+    def use_web_auth(self, value: bool) -> None:
+        """Set web auth preference for Anthropic."""
+        llm = self._data.get("llm", {})
+        llm["use_web_auth"] = value
+        self.set("llm", llm)
 
 
 # Global settings instance
