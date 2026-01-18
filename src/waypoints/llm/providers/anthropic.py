@@ -132,11 +132,11 @@ class AnthropicProvider(LLMProvider):
         """Run agent query and yield text chunks, then StreamComplete."""
         env_backup: str | None = None
 
-        if self.use_web_auth and self.api_key is None:
-            # Clear API key to force web auth
+        if self.use_web_auth:
+            # Clear API key to force web auth (always, when web auth is enabled)
             env_backup = os.environ.pop("ANTHROPIC_API_KEY", None)
         elif self.api_key:
-            # Use provided API key
+            # Use provided API key (only when NOT using web auth)
             env_backup = os.environ.get("ANTHROPIC_API_KEY")
             os.environ["ANTHROPIC_API_KEY"] = self.api_key
 
@@ -173,11 +173,8 @@ class AnthropicProvider(LLMProvider):
             yield StreamComplete(full_text=full_text, cost_usd=cost)
         finally:
             loop.close()
-            # Restore env var
-            if self.use_web_auth and self.api_key is None:
-                if env_backup is not None:
-                    os.environ["ANTHROPIC_API_KEY"] = env_backup
-            elif self.api_key and env_backup is not None:
+            # Restore env var if we removed it
+            if env_backup is not None:
                 os.environ["ANTHROPIC_API_KEY"] = env_backup
 
     async def agent_query(
@@ -192,8 +189,8 @@ class AnthropicProvider(LLMProvider):
     ) -> AsyncIterator[StreamChunk | StreamToolUse | StreamComplete]:
         """Run an agentic query with tool use."""
         env_config: dict[str, str] = {}
-        if self.use_web_auth and self.api_key is None:
-            env_config["ANTHROPIC_API_KEY"] = ""  # Force web auth
+        if self.use_web_auth:
+            env_config["ANTHROPIC_API_KEY"] = ""  # Force web auth (always)
         elif self.api_key:
             env_config["ANTHROPIC_API_KEY"] = self.api_key
 
