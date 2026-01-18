@@ -217,7 +217,7 @@ class InputBar(Vertical):
     InputBar {
         dock: bottom;
         height: auto;
-        max-height: 12;
+        max-height: 15;
         padding: 0;
     }
 
@@ -228,16 +228,19 @@ class InputBar(Vertical):
 
     InputBar ChatInput {
         width: 100%;
-        min-height: 3;
-        height: auto;
-        max-height: 10;
+        height: 5;
+        max-height: 12;
         border: none;
         background: transparent;
-        padding: 1 1;
+        padding: 0 1;
     }
 
     InputBar ChatInput:focus {
         border: none;
+    }
+
+    InputBar ChatInput > .text-area--cursor-line {
+        background: transparent;
     }
 
     InputBar ChatInput.-disabled {
