@@ -18,7 +18,7 @@ class ModelStatusIndicator(Static):
     ModelStatusIndicator {
         width: 2;
         height: 1;
-        background: transparent;
+        background: initial;
     }
 
     ModelStatusIndicator.ready {
