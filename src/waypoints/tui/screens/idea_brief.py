@@ -146,7 +146,7 @@ class IdeaBriefScreen(Screen[None]):
         margin: 0 0 0 1;
         height: 1;
         width: 2;
-        background: transparent;
+        background: initial;
     }
     """
 
