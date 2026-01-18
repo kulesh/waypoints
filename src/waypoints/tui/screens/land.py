@@ -119,6 +119,11 @@ class DebriefPanel(VerticalScroll):
         color: $text-muted;
         padding-left: 2;
     }
+
+    DebriefPanel .summary-paragraph {
+        color: $text-muted;
+        padding: 0 0 1 0;
+    }
     """
 
     def __init__(self, project: Project, flight_plan: FlightPlan | None, **kwargs: Any):
@@ -128,6 +133,7 @@ class DebriefPanel(VerticalScroll):
 
     def compose(self) -> ComposeResult:
         yield Static("DEBRIEF", classes="section-title")
+        yield Static("", id="summary-content", classes="summary-paragraph")
         yield Static("", id="stats-content")
         yield Static("Project Outputs", classes="section-title")
         yield Static("", id="outputs-content")
@@ -144,6 +150,7 @@ class DebriefPanel(VerticalScroll):
 
     def on_mount(self) -> None:
         """Load and display debrief data."""
+        self._update_summary()
         self._update_stats()
         self._update_outputs()
         self._update_execution()
@@ -151,6 +158,138 @@ class DebriefPanel(VerticalScroll):
         self._update_waypoint_costs()
         self._update_issues()
         self._update_quality_gates()
+
+    def _update_summary(self) -> None:
+        """Generate a narrative summary of the project completion."""
+        parts: list[str] = []
+
+        # 1. Completion status
+        total = 0
+        completed = 0
+        if self.flight_plan:
+            total = len(self.flight_plan.waypoints)
+            completed = sum(
+                1
+                for wp in self.flight_plan.waypoints
+                if wp.status == WaypointStatus.COMPLETE
+            )
+            if completed == total and total > 0:
+                parts.append(
+                    f"Project completed successfully with all {total} waypoints built"
+                )
+            elif total > 0:
+                incomplete = total - completed
+                parts.append(
+                    f"Project completed {completed}/{total} waypoints "
+                    f"({incomplete} incomplete)"
+                )
+
+        # 2. Iterations
+        total_iterations = 0
+        total_seconds = 0
+        try:
+            log_files = ExecutionLogReader.list_logs(self.project)
+            for log_path in log_files:
+                log = ExecutionLogReader.load(log_path)
+                if log.completed_at and log.started_at:
+                    total_seconds += int(
+                        (log.completed_at - log.started_at).total_seconds()
+                    )
+                if log.entries:
+                    iteration_entries = [
+                        e for e in log.entries if e.entry_type == "iteration_start"
+                    ]
+                    if iteration_entries:
+                        iterations = sorted(e.iteration for e in iteration_entries)
+                        max_iter = 0
+                        for i, it in enumerate(iterations, start=1):
+                            if it == i:
+                                max_iter = it
+                            else:
+                                break
+                        total_iterations += max_iter
+        except Exception:
+            pass
+
+        if parts and total_iterations > 0:
+            parts[-1] += f" over {total_iterations} iterations."
+        elif parts:
+            parts[-1] += "."
+
+        # 3. Cost & time
+        cost = 0.0
+        try:
+            collector = MetricsCollector(self.project)
+            cost = collector.total_cost
+        except Exception:
+            pass
+
+        if cost > 0 and total_seconds > 0:
+            parts.append(
+                f"Total LLM cost was ${cost:.2f} across "
+                f"{format_duration(total_seconds)} of execution time."
+            )
+        elif cost > 0:
+            parts.append(f"Total LLM cost was ${cost:.2f}.")
+
+        # 4. Quality gates outcome
+        receipts_path = self.project.get_path() / "receipts"
+        if receipts_path.exists():
+            receipts = list(receipts_path.glob("*.json"))
+            if receipts:
+                passed, failed = self._count_receipt_status(receipts)
+                if failed == 0 and passed > 0:
+                    parts.append(
+                        f"All {passed} quality gate receipts passed verification."
+                    )
+                elif passed > 0 or failed > 0:
+                    parts.append(
+                        f"{passed} receipts passed, {failed} failed verification."
+                    )
+
+        # 5. Top spender (optional)
+        try:
+            collector = MetricsCollector(self.project)
+            costs = collector.cost_by_waypoint()
+            if costs:
+                top_wp_id, top_cost = max(costs.items(), key=lambda x: x[1])
+                if top_cost >= 0.01:
+                    wp_title = top_wp_id
+                    if self.flight_plan:
+                        for wp in self.flight_plan.waypoints:
+                            if wp.id == top_wp_id:
+                                wp_title = wp.title[:40]
+                                break
+                    parts.append(
+                        f'Highest-cost waypoint was "{wp_title}" at ${top_cost:.2f}.'
+                    )
+        except Exception:
+            pass
+
+        summary = " ".join(parts)
+        content = self.query_one("#summary-content", Static)
+        content.update(summary if summary else "")
+
+    def _count_receipt_status(self, receipts: list[Any]) -> tuple[int, int]:
+        """Count passed and failed receipts."""
+        import json
+
+        passed = 0
+        failed = 0
+        for path in receipts:
+            try:
+                data = json.loads(path.read_text())
+                checklist = data.get("checklist", [])
+                all_passed = all(
+                    item.get("status") in ("passed", "skipped") for item in checklist
+                )
+                if all_passed:
+                    passed += 1
+                else:
+                    failed += 1
+            except Exception:
+                continue
+        return passed, failed
 
     def _update_stats(self) -> None:
         """Update completion statistics."""
