@@ -119,6 +119,11 @@ class JourneyCoordinator:
             self._flight_plan = self._load_flight_plan()
         return self._flight_plan
 
+    @flight_plan.setter
+    def flight_plan(self, value: FlightPlan | None) -> None:
+        """Set the current flight plan."""
+        self._flight_plan = value
+
     @property
     def current_waypoint(self) -> Waypoint | None:
         """Get the currently selected waypoint."""
@@ -154,7 +159,7 @@ class JourneyCoordinator:
                 logger.info("Reset stale IN_PROGRESS waypoint %s to PENDING", wp.id)
 
         if changed:
-            self._save_flight_plan()
+            self.save_flight_plan()
         return changed
 
     def mark_waypoint_status(self, waypoint: Waypoint, status: WaypointStatus) -> None:
@@ -165,7 +170,7 @@ class JourneyCoordinator:
             status: The new status
         """
         waypoint.status = status
-        self._save_flight_plan()
+        self.save_flight_plan()
 
     # ─── FLY Phase: Waypoint Selection ───────────────────────────────────
 
@@ -263,7 +268,7 @@ class JourneyCoordinator:
         """
         # Mark as in progress
         waypoint.status = WaypointStatus.IN_PROGRESS
-        self._save_flight_plan()
+        self.save_flight_plan()
 
         # Get product spec for context
         spec = self._load_product_spec()
@@ -323,7 +328,7 @@ class JourneyCoordinator:
         """
         if result == ExecutionResult.SUCCESS:
             waypoint.status = WaypointStatus.COMPLETE
-            self._save_flight_plan()
+            self.save_flight_plan()
 
             # Check if parent epic should auto-complete
             self._check_parent_completion(waypoint)
@@ -341,7 +346,7 @@ class JourneyCoordinator:
 
         elif result == ExecutionResult.FAILED:
             waypoint.status = WaypointStatus.FAILED
-            self._save_flight_plan()
+            self.save_flight_plan()
             return NextAction(
                 action="pause",
                 waypoint=waypoint,
@@ -350,19 +355,22 @@ class JourneyCoordinator:
 
         elif result == ExecutionResult.CANCELLED:
             waypoint.status = WaypointStatus.PENDING
-            self._save_flight_plan()
+            self.save_flight_plan()
             return NextAction(action="pause", message="Execution cancelled")
 
         else:
             # MAX_ITERATIONS or INTERVENTION_NEEDED handled via exception
             return NextAction(action="pause", waypoint=waypoint)
 
-    def _check_parent_completion(self, waypoint: Waypoint) -> None:
+    def check_parent_completion(self, waypoint: Waypoint) -> None:
         """Check if parent epic is ready for execution (all children done).
 
         This method logs when a parent becomes ready but does NOT auto-complete.
         Parents will be selected and executed like regular waypoints to verify
         their own acceptance criteria.
+
+        Args:
+            waypoint: The child waypoint that just completed
         """
         if self.flight_plan is None or waypoint.parent_id is None:
             return
@@ -410,7 +418,7 @@ class JourneyCoordinator:
         if action == InterventionAction.RETRY:
             # Reset to in-progress and retry
             waypoint.status = WaypointStatus.IN_PROGRESS
-            self._save_flight_plan()
+            self.save_flight_plan()
             return NextAction(
                 action="continue",
                 waypoint=waypoint,
@@ -420,7 +428,7 @@ class JourneyCoordinator:
         elif action == InterventionAction.SKIP:
             # Mark as skipped and continue
             waypoint.status = WaypointStatus.SKIPPED
-            self._save_flight_plan()
+            self.save_flight_plan()
             next_wp = self.select_next_waypoint()
             if next_wp:
                 return NextAction(action="continue", waypoint=next_wp)
@@ -433,13 +441,13 @@ class JourneyCoordinator:
             # if self.git and rollback_tag:
             #     self.git.rollback_to_tag(rollback_tag)
             waypoint.status = WaypointStatus.PENDING
-            self._save_flight_plan()
+            self.save_flight_plan()
             return NextAction(action="pause", message=f"Rolled back to {rollback_tag}")
 
         elif action == InterventionAction.ABORT:
             # Mark failed and stop
             waypoint.status = WaypointStatus.FAILED
-            self._save_flight_plan()
+            self.save_flight_plan()
             return NextAction(action="abort", message="Execution aborted")
 
         elif action == InterventionAction.EDIT:
@@ -584,7 +592,7 @@ class JourneyCoordinator:
         self._flight_plan = flight_plan
 
         # Save to disk
-        self._save_flight_plan()
+        self.save_flight_plan()
 
         # Log initial generation to audit trail
         self._log_waypoint_event(
@@ -876,7 +884,7 @@ class JourneyCoordinator:
         before_data = existing.to_dict() if existing else {}
 
         self.flight_plan.update_waypoint(waypoint)
-        self._save_flight_plan()
+        self.save_flight_plan()
 
         # Log to audit trail
         self._log_waypoint_event(
@@ -914,7 +922,7 @@ class JourneyCoordinator:
         self.flight_plan.remove_waypoint(waypoint_id)
 
         # Save to disk
-        self._save_flight_plan()
+        self.save_flight_plan()
 
         # Log to audit trail
         self._log_waypoint_event(
@@ -952,7 +960,7 @@ class JourneyCoordinator:
         self.flight_plan.insert_waypoints_after(parent_id, sub_waypoints)
 
         # Save to disk
-        self._save_flight_plan()
+        self.save_flight_plan()
 
         # Log to audit trail
         self._log_waypoint_event(
@@ -980,7 +988,7 @@ class JourneyCoordinator:
         else:
             self.flight_plan.add_waypoint(waypoint)
 
-        self._save_flight_plan()
+        self.save_flight_plan()
 
         # Log to audit trail
         self._log_waypoint_event(
@@ -1014,7 +1022,7 @@ class JourneyCoordinator:
 
         # Reorder
         self.flight_plan.reorder_waypoints(new_order)
-        self._save_flight_plan()
+        self.save_flight_plan()
 
         # Log to audit trail
         self._log_waypoint_event(
@@ -1327,7 +1335,7 @@ class JourneyCoordinator:
             logger.warning("Could not load flight plan: %s", e)
             return None
 
-    def _save_flight_plan(self) -> None:
+    def save_flight_plan(self) -> None:
         """Save flight plan to project."""
         if self.flight_plan is None:
             return
