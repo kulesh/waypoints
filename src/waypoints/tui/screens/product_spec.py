@@ -16,6 +16,12 @@ if TYPE_CHECKING:
     from waypoints.tui.app import WaypointsApp
 
 from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
+from waypoints.llm.prompts import (
+    SPEC_GENERATION_PROMPT,
+    SPEC_SUMMARY_PROMPT,
+    SPEC_SYSTEM_PROMPT,
+    SUMMARY_SYSTEM_PROMPT,
+)
 from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory
 from waypoints.tui.mixins import MentionProcessingMixin
@@ -23,83 +29,6 @@ from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
 
 logger = logging.getLogger(__name__)
-
-SPEC_GENERATION_PROMPT = """\
-Based on the Idea Brief below, generate a comprehensive Product Specification.
-
-The specification should be detailed enough for engineers and product managers
-to understand exactly what needs to be built. Use Markdown format.
-
-# Product Specification: [Product Name]
-
-## 1. Executive Summary
-Brief overview of the product and its value proposition.
-
-## 2. Problem Statement
-### 2.1 Current Pain Points
-### 2.2 Impact of the Problem
-### 2.3 Why Now?
-
-## 3. Target Users
-### 3.1 Primary Persona
-### 3.2 Secondary Personas
-### 3.3 User Journey
-
-## 4. Product Overview
-### 4.1 Vision Statement
-### 4.2 Core Value Proposition
-### 4.3 Key Differentiators
-
-## 5. Features & Requirements
-### 5.1 MVP Features (Must Have)
-### 5.2 Phase 2 Features (Should Have)
-### 5.3 Future Considerations (Nice to Have)
-
-## 6. Technical Considerations
-### 6.1 Architecture Overview
-### 6.2 Technology Stack Recommendations
-### 6.3 Integration Requirements
-### 6.4 Security & Privacy
-
-## 7. Success Metrics
-### 7.1 Key Performance Indicators
-### 7.2 Success Criteria for MVP
-
-## 8. Risks & Mitigations
-### 8.1 Technical Risks
-### 8.2 Market Risks
-### 8.3 Mitigation Strategies
-
-## 9. FAQ
-Common questions and answers for the development team.
-
-## 10. Appendix
-### 10.1 Glossary
-### 10.2 References
-
----
-
-Here is the Idea Brief to expand:
-
-{brief}
-
-Generate the complete Product Specification now:"""
-
-SPEC_SUMMARY_PROMPT = """\
-Based on this product specification, write a polished 200-250 word summary
-that captures:
-- What the product is and does
-- The problem it solves and for whom
-- Key features and differentiators
-- Technical approach (briefly)
-
-Write in third person, present tense. No markdown formatting, no headers,
-just plain prose. This summary will be shown in a project list view.
-
-Product Specification:
-{spec_content}
-
-Write the summary now (200-250 words):"""
 
 
 class ProductSpecScreen(Screen[None]):
@@ -252,14 +181,10 @@ class ProductSpecScreen(Screen[None]):
 
         spec_content = ""
 
-        system_prompt = (
-            "You are a senior product manager creating detailed "
-            "product specifications. Be thorough but practical."
-        )
         try:
             for result in self.llm_client.stream_message(
                 messages=[{"role": "user", "content": prompt}],
-                system=system_prompt,
+                system=SPEC_SYSTEM_PROMPT,
             ):
                 if isinstance(result, StreamChunk):
                     spec_content += result.text
@@ -311,10 +236,9 @@ class ProductSpecScreen(Screen[None]):
 
         try:
             summary = ""
-            system = "You are a concise technical writer. Write plain prose."
             for result in self.llm_client.stream_message(
                 messages=[{"role": "user", "content": prompt}],
-                system=system,
+                system=SUMMARY_SYSTEM_PROMPT,
             ):
                 if isinstance(result, StreamChunk):
                     summary += result.text

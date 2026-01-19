@@ -16,6 +16,12 @@ if TYPE_CHECKING:
     from waypoints.tui.app import WaypointsApp
 
 from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
+from waypoints.llm.prompts import (
+    BRIEF_GENERATION_PROMPT,
+    BRIEF_SUMMARY_PROMPT,
+    BRIEF_SYSTEM_PROMPT,
+    SUMMARY_SYSTEM_PROMPT,
+)
 from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory, MessageRole
 from waypoints.tui.mixins import MentionProcessingMixin
@@ -23,56 +29,6 @@ from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
 
 logger = logging.getLogger(__name__)
-
-BRIEF_GENERATION_PROMPT = """\
-Based on the ideation conversation below, generate a concise Idea Brief document.
-
-The brief should be in Markdown format and include:
-
-# Idea Brief: [Catchy Title]
-
-## Problem Statement
-What problem are we solving and why does it matter?
-
-## Target Users
-Who are the primary users and what are their pain points?
-
-## Proposed Solution
-High-level description of what we're building.
-
-## Key Features
-- Bullet points of core capabilities
-
-## Success Criteria
-How will we know if this succeeds?
-
-## Open Questions
-Any unresolved items that need further exploration.
-
----
-
-Keep it concise (under 500 words). Focus on clarity over completeness.
-The goal is to capture the essence of the idea so others can quickly understand it.
-
-Here is the ideation conversation:
-
-{conversation}
-
-Generate the Idea Brief now:"""
-
-BRIEF_SUMMARY_PROMPT = """\
-Based on this idea brief, write a concise 100-150 word summary that captures:
-- What the project is
-- The core problem it solves
-- Key features
-
-Write in third person, present tense. No markdown formatting, no headers,
-just plain prose. This summary will be shown in a project list view.
-
-Idea Brief:
-{brief_content}
-
-Write the summary now (100-150 words):"""
 
 
 class IdeaBriefScreen(Screen[None]):
@@ -226,12 +182,9 @@ class IdeaBriefScreen(Screen[None]):
         brief_content = ""
 
         try:
-            system_prompt = (
-                "You are a technical writer creating concise product documentation."
-            )
             for result in self.llm_client.stream_message(
                 messages=[{"role": "user", "content": prompt}],
-                system=system_prompt,
+                system=BRIEF_SYSTEM_PROMPT,
             ):
                 if isinstance(result, StreamChunk):
                     brief_content += result.text
@@ -291,10 +244,9 @@ class IdeaBriefScreen(Screen[None]):
 
         try:
             summary = ""
-            system = "You are a concise technical writer. Write plain prose."
             for result in self.llm_client.stream_message(
                 messages=[{"role": "user", "content": prompt}],
-                system=system,
+                system=SUMMARY_SYSTEM_PROMPT,
             ):
                 if isinstance(result, StreamChunk):
                     summary += result.text

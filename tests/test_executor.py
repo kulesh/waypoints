@@ -12,10 +12,10 @@ from waypoints.fly.executor import (
     ExecutionStep,
     FileOperation,
     WaypointExecutor,
-    _build_prompt,
     _extract_file_operation,
 )
 from waypoints.git.config import Checklist
+from waypoints.llm.prompts import build_execution_prompt
 from waypoints.models.waypoint import Waypoint
 
 
@@ -24,12 +24,12 @@ class TestCriterionPattern:
 
     def test_matches_single_criterion(self) -> None:
         """Match single criterion marker."""
-        text = '''<acceptance-criterion>
+        text = """<acceptance-criterion>
 <index>0</index>
 <status>verified</status>
 <text>Feature implemented</text>
 <evidence>Code review shows implementation is complete.</evidence>
-</acceptance-criterion>'''
+</acceptance-criterion>"""
         matches = CRITERION_PATTERN.findall(text)
         assert len(matches) == 1
         assert matches[0][0] == "0"  # index
@@ -39,7 +39,7 @@ class TestCriterionPattern:
 
     def test_matches_multiple_criteria(self) -> None:
         """Match multiple criterion markers."""
-        text = '''Some output text
+        text = """Some output text
 <acceptance-criterion>
 <index>0</index>
 <status>verified</status>
@@ -58,7 +58,7 @@ More output
 <status>failed</status>
 <text>Third criterion done</text>
 <evidence>Missing implementation.</evidence>
-</acceptance-criterion>'''
+</acceptance-criterion>"""
         matches = CRITERION_PATTERN.findall(text)
         assert len(matches) == 3
         assert matches[0][0] == "0"
@@ -70,12 +70,12 @@ More output
 
     def test_extracts_index_status_text_evidence(self) -> None:
         """Correctly extract index, status, text, and evidence."""
-        text = '''<acceptance-criterion>
+        text = """<acceptance-criterion>
 <index>5</index>
 <status>verified</status>
 <text>Tests pass with 100% coverage</text>
 <evidence>Ran pytest with --cov flag showing 100% coverage.</evidence>
-</acceptance-criterion>'''
+</acceptance-criterion>"""
         matches = CRITERION_PATTERN.findall(text)
         assert matches[0][0] == "5"  # index
         assert matches[0][1] == "verified"  # status
@@ -86,13 +86,13 @@ More output
         """No match when format is wrong."""
         invalid_texts = [
             # Missing status
-            '<acceptance-criterion><index>0</index><text>Missing status</text><evidence>E</evidence></acceptance-criterion>',
+            "<acceptance-criterion><index>0</index><text>Missing status</text><evidence>E</evidence></acceptance-criterion>",
             # Missing index
-            '<acceptance-criterion><status>verified</status><text>Missing index</text><evidence>E</evidence></acceptance-criterion>',
+            "<acceptance-criterion><status>verified</status><text>Missing index</text><evidence>E</evidence></acceptance-criterion>",
             # Missing evidence
-            '<acceptance-criterion><index>0</index><status>verified</status><text>Missing evidence</text></acceptance-criterion>',
+            "<acceptance-criterion><index>0</index><status>verified</status><text>Missing evidence</text></acceptance-criterion>",
             # Non-numeric index
-            '<acceptance-criterion><index>abc</index><status>verified</status><text>Non-numeric</text><evidence>E</evidence></acceptance-criterion>',
+            "<acceptance-criterion><index>abc</index><status>verified</status><text>Non-numeric</text><evidence>E</evidence></acceptance-criterion>",
         ]
         for text in invalid_texts:
             matches = CRITERION_PATTERN.findall(text)
@@ -100,7 +100,7 @@ More output
 
     def test_multiline_evidence_matched(self) -> None:
         """Evidence can span multiple lines."""
-        text = '''<acceptance-criterion>
+        text = """<acceptance-criterion>
 <index>0</index>
 <status>verified</status>
 <text>Tests pass</text>
@@ -109,7 +109,7 @@ Line 1 of evidence.
 Line 2 of evidence.
 Line 3 of evidence.
 </evidence>
-</acceptance-criterion>'''
+</acceptance-criterion>"""
         matches = CRITERION_PATTERN.findall(text)
         assert len(matches) == 1
         assert "Line 1" in matches[0][3]
@@ -192,7 +192,7 @@ class TestExtractFileOperation:
 
 
 class TestBuildPrompt:
-    """Tests for _build_prompt function."""
+    """Tests for build_execution_prompt function."""
 
     @pytest.fixture
     def waypoint(self) -> Waypoint:
@@ -215,7 +215,7 @@ class TestBuildPrompt:
         checklist: Checklist,
     ) -> None:
         """Prompt includes waypoint ID."""
-        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
+        prompt = build_execution_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "WP-1" in prompt
 
     def test_includes_waypoint_title(
@@ -224,7 +224,7 @@ class TestBuildPrompt:
         checklist: Checklist,
     ) -> None:
         """Prompt includes waypoint title."""
-        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
+        prompt = build_execution_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "Implement feature X" in prompt
 
     def test_includes_objective(
@@ -233,7 +233,7 @@ class TestBuildPrompt:
         checklist: Checklist,
     ) -> None:
         """Prompt includes objective."""
-        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
+        prompt = build_execution_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "Build feature X with full test coverage" in prompt
 
     def test_includes_indexed_criteria(
@@ -242,7 +242,7 @@ class TestBuildPrompt:
         checklist: Checklist,
     ) -> None:
         """Prompt includes indexed acceptance criteria."""
-        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
+        prompt = build_execution_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "[0] Code works" in prompt
         assert "[1] Tests pass" in prompt
         assert "[2] Documentation updated" in prompt
@@ -254,7 +254,7 @@ class TestBuildPrompt:
     ) -> None:
         """Prompt includes product spec."""
         spec = "This is the product specification."
-        prompt = _build_prompt(waypoint, spec, Path("/project"), checklist)
+        prompt = build_execution_prompt(waypoint, spec, Path("/project"), checklist)
         assert "This is the product specification" in prompt
 
     def test_truncates_long_spec(
@@ -264,7 +264,9 @@ class TestBuildPrompt:
     ) -> None:
         """Long spec is truncated with ellipsis."""
         long_spec = "x" * 3000
-        prompt = _build_prompt(waypoint, long_spec, Path("/project"), checklist)
+        prompt = build_execution_prompt(
+            waypoint, long_spec, Path("/project"), checklist
+        )
         assert "..." in prompt
         # Should truncate to 2000 chars + ...
         assert long_spec[:2000] in prompt
@@ -275,7 +277,9 @@ class TestBuildPrompt:
         checklist: Checklist,
     ) -> None:
         """Prompt includes project path."""
-        prompt = _build_prompt(waypoint, "spec", Path("/my/project"), checklist)
+        prompt = build_execution_prompt(
+            waypoint, "spec", Path("/my/project"), checklist
+        )
         assert "/my/project" in prompt
 
     def test_includes_safety_rules(
@@ -284,7 +288,7 @@ class TestBuildPrompt:
         checklist: Checklist,
     ) -> None:
         """Prompt includes safety rules."""
-        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
+        prompt = build_execution_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "STAY IN THE PROJECT" in prompt
         assert "NEVER" in prompt
 
@@ -294,7 +298,7 @@ class TestBuildPrompt:
         checklist: Checklist,
     ) -> None:
         """Prompt includes checklist items."""
-        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
+        prompt = build_execution_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "Code passes linting" in prompt
         assert "All tests pass" in prompt
 
@@ -304,7 +308,7 @@ class TestBuildPrompt:
         checklist: Checklist,
     ) -> None:
         """Prompt includes completion marker."""
-        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
+        prompt = build_execution_prompt(waypoint, "spec", Path("/project"), checklist)
         assert "<waypoint-complete>WP-1</waypoint-complete>" in prompt
 
     def test_includes_criterion_marker_format(
@@ -313,7 +317,7 @@ class TestBuildPrompt:
         checklist: Checklist,
     ) -> None:
         """Prompt explains criterion marker format."""
-        prompt = _build_prompt(waypoint, "spec", Path("/project"), checklist)
+        prompt = build_execution_prompt(waypoint, "spec", Path("/project"), checklist)
         # Check for new nested criterion format
         assert "<acceptance-criterion>" in prompt
         assert "<index>N</index>" in prompt
