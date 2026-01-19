@@ -331,7 +331,7 @@ class JourneyCoordinator:
             self.save_flight_plan()
 
             # Check if parent epic should auto-complete
-            self._check_parent_completion(waypoint)
+            self.check_parent_completion(waypoint)
 
             # Commit if git is available
             if self.git:
