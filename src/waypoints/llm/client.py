@@ -15,6 +15,7 @@ from waypoints.llm.providers.base import (
     StreamComplete,
     StreamToolUse,
     classify_api_error,
+    extract_reset_time,
     is_retryable_error,
 )
 
@@ -32,6 +33,7 @@ __all__ = [
     "StreamToolUse",
     "agent_query",
     "classify_api_error",
+    "extract_reset_time",
     "get_provider",
     "is_retryable_error",
 ]

@@ -1,5 +1,6 @@
 """Base class for LLM providers."""
 
+import re
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
@@ -72,6 +73,10 @@ BUDGET_PATTERNS = [
     "quota exceeded",
     "usage limit",
     "daily limit",
+    "out of extra usage",  # "You're out of extra usage"
+    "out of usage",
+    "limit reached",
+    "resets",  # Messages mentioning when usage resets
 ]
 
 
@@ -92,6 +97,37 @@ def classify_api_error(error: Exception) -> APIErrorType:
             return APIErrorType.API_UNAVAILABLE
 
     return APIErrorType.UNKNOWN
+
+
+def extract_reset_time(error_msg: str) -> str | None:
+    """Extract reset time from API error message if present.
+
+    Parses messages like:
+    - "resets 7pm (America/New_York)"
+    - "resets in 2 hours"
+    - "resets at 3:00pm"
+
+    Args:
+        error_msg: The error message to parse
+
+    Returns:
+        The reset time string if found, None otherwise
+    """
+    patterns = [
+        # "resets 7pm (America/New_York)" - time with timezone
+        r"resets?\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)\s*\([^)]+\))",
+        # "resets in 2 hours" - relative time
+        r"resets?\s+(in\s+\d+\s+(?:hour|minute|second)s?)",
+        # "resets at 3:00pm" or "resets at 15:00"
+        r"resets?\s+at\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)",
+        # "resets 7pm" - simple time without timezone
+        r"resets?\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm))",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, error_msg, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return None
 
 
 def is_retryable_error(error_type: APIErrorType) -> bool:
