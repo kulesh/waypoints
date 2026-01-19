@@ -7,6 +7,10 @@ import sys
 from pathlib import Path
 
 from waypoints.config.paths import get_paths
+from waypoints.config.project_root import (
+    get_projects_root,
+    is_projects_root_overridden,
+)
 
 
 def setup_logging() -> None:
@@ -26,6 +30,13 @@ def setup_logging() -> None:
         ],
     )
     logging.info("Waypoints starting, logging to %s", log_file)
+    projects_root = get_projects_root()
+    source = (
+        "settings.project_directory override"
+        if is_projects_root_overridden()
+        else "workspace .waypoints/projects"
+    )
+    logging.info("Projects root: %s (%s)", projects_root, source)
 
 
 def parse_args() -> argparse.Namespace:
@@ -169,16 +180,15 @@ def parse_args() -> argparse.Namespace:
 
 def cmd_export(args: argparse.Namespace) -> int:
     """Export a project to generative specification."""
-    from waypoints.config.paths import get_paths
     from waypoints.genspec import export_project, export_to_file
     from waypoints.models.project import Project
 
-    paths = get_paths()
-    project_path = paths.projects_dir / args.project
+    projects_root = get_projects_root()
+    project_path = projects_root / args.project
 
     if not project_path.exists():
         print(f"Error: Project '{args.project}' not found", file=sys.stderr)
-        print(f"  Looked in: {paths.projects_dir}", file=sys.stderr)
+        print(f"  Looked in: {projects_root}", file=sys.stderr)
         return 1
 
     # Load project
@@ -267,7 +277,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     """Execute waypoints for a project (headless mode)."""
     import asyncio
 
-    from waypoints.config.paths import get_paths
     from waypoints.fly.executor import ExecutionResult
     from waypoints.fly.intervention import InterventionNeededError
     from waypoints.models.flight_plan import FlightPlanReader
@@ -275,12 +284,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     from waypoints.models.waypoint import WaypointStatus
     from waypoints.orchestration.coordinator import JourneyCoordinator
 
-    paths = get_paths()
-    project_path = paths.projects_dir / args.project
+    projects_root = get_projects_root()
+    project_path = projects_root / args.project
 
     if not project_path.exists():
         print(f"Error: Project '{args.project}' not found", file=sys.stderr)
-        print(f"  Looked in: {paths.projects_dir}", file=sys.stderr)
+        print(f"  Looked in: {projects_root}", file=sys.stderr)
         return 1
 
     # Load project
