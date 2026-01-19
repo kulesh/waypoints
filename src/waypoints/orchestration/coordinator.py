@@ -28,11 +28,22 @@ from waypoints.llm.prompts import (
     BRIEF_GENERATION_PROMPT,
     BRIEF_SUMMARY_PROMPT,
     BRIEF_SYSTEM_PROMPT,
+    CHART_SYSTEM_PROMPT,
     QA_SYSTEM_PROMPT,
+    REPRIORITIZE_PROMPT,
     SPEC_GENERATION_PROMPT,
     SPEC_SUMMARY_PROMPT,
     SPEC_SYSTEM_PROMPT,
     SUMMARY_SYSTEM_PROMPT,
+    WAYPOINT_ADD_PROMPT,
+    WAYPOINT_BREAKDOWN_PROMPT,
+    WAYPOINT_GENERATION_PROMPT,
+)
+from waypoints.llm.validation import (
+    WaypointValidationError,
+    validate_reprioritization,
+    validate_single_waypoint,
+    validate_waypoints,
 )
 from waypoints.models import (
     DialogueHistory,
@@ -530,7 +541,7 @@ class JourneyCoordinator:
 
     # ─── CHART Phase: Flight Plan Generation ─────────────────────────────
 
-    async def generate_flight_plan(
+    def generate_flight_plan(
         self,
         spec: str,
         on_chunk: ChunkCallback | None = None,
@@ -544,10 +555,47 @@ class JourneyCoordinator:
         Returns:
             Generated FlightPlan
         """
-        # TODO: Extract from ChartScreen._generate_waypoints()
-        raise NotImplementedError("Will be extracted from ChartScreen")
+        # Create LLM client if needed
+        if self.llm is None:
+            self.llm = ChatClient(
+                metrics_collector=self.metrics,
+                phase="chart",
+            )
 
-    async def break_down_waypoint(
+        prompt = WAYPOINT_GENERATION_PROMPT.format(spec=spec)
+        logger.info("Generating waypoints from spec: %d chars", len(spec))
+
+        # Stream response from LLM
+        full_response = ""
+        for result in self.llm.stream_message(
+            messages=[{"role": "user", "content": prompt}],
+            system=CHART_SYSTEM_PROMPT,
+        ):
+            if isinstance(result, StreamChunk):
+                full_response += result.text
+                if on_chunk:
+                    on_chunk(result.text)
+
+        # Parse waypoints from response
+        waypoints = self._parse_waypoints(full_response)
+
+        # Create flight plan
+        flight_plan = FlightPlan(waypoints=waypoints)
+        self._flight_plan = flight_plan
+
+        # Save to disk
+        self._save_flight_plan()
+
+        # Log initial generation to audit trail
+        self._log_waypoint_event(
+            "generated",
+            {"waypoints": [wp.to_dict() for wp in waypoints]},
+        )
+
+        logger.info("Generated flight plan with %d waypoints", len(waypoints))
+        return flight_plan
+
+    def break_down_waypoint(
         self,
         waypoint: Waypoint,
         on_chunk: ChunkCallback | None = None,
@@ -560,9 +608,263 @@ class JourneyCoordinator:
 
         Returns:
             List of generated sub-waypoints
+
+        Raises:
+            ValueError: If waypoint is already an epic (has children)
         """
-        # TODO: Extract from ChartScreen._generate_sub_waypoints()
-        raise NotImplementedError("Will be extracted from ChartScreen")
+        if self.flight_plan and self.flight_plan.is_epic(waypoint.id):
+            raise ValueError(f"{waypoint.id} already has sub-waypoints")
+
+        # Create LLM client if needed
+        if self.llm is None:
+            self.llm = ChatClient(
+                metrics_collector=self.metrics,
+                phase="chart",
+            )
+
+        # Format prompt
+        criteria_str = "\n".join(f"- {c}" for c in waypoint.acceptance_criteria)
+        if not criteria_str:
+            criteria_str = "(none specified)"
+
+        prompt = WAYPOINT_BREAKDOWN_PROMPT.format(
+            parent_id=waypoint.id,
+            title=waypoint.title,
+            objective=waypoint.objective,
+            criteria=criteria_str,
+        )
+
+        logger.info("Breaking down waypoint: %s", waypoint.id)
+
+        # Stream response from LLM
+        full_response = ""
+        for result in self.llm.stream_message(
+            messages=[{"role": "user", "content": prompt}],
+            system=CHART_SYSTEM_PROMPT,
+        ):
+            if isinstance(result, StreamChunk):
+                full_response += result.text
+                if on_chunk:
+                    on_chunk(result.text)
+
+        # Parse sub-waypoints (pass existing IDs for validation)
+        existing_ids = (
+            {wp.id for wp in self.flight_plan.waypoints}
+            if self.flight_plan
+            else set()
+        )
+        sub_waypoints = self._parse_waypoints(full_response, existing_ids)
+
+        # Ensure all have correct parent_id
+        for wp in sub_waypoints:
+            wp.parent_id = waypoint.id
+
+        logger.info(
+            "Generated %d sub-waypoints for %s", len(sub_waypoints), waypoint.id
+        )
+        return sub_waypoints
+
+    def generate_waypoint(
+        self,
+        description: str,
+        spec_summary: str | None = None,
+        on_chunk: ChunkCallback | None = None,
+    ) -> tuple[Waypoint, str | None]:
+        """Generate a single waypoint from description.
+
+        Args:
+            description: User's description of what the waypoint should do
+            spec_summary: Optional truncated product spec for context
+            on_chunk: Callback for streaming progress
+
+        Returns:
+            Tuple of (waypoint, insert_after_id or None)
+
+        Raises:
+            WaypointValidationError: If generated waypoint fails validation
+        """
+        if self.flight_plan is None:
+            raise RuntimeError("No flight plan loaded")
+
+        # Create LLM client if needed
+        if self.llm is None:
+            self.llm = ChatClient(
+                metrics_collector=self.metrics,
+                phase="chart",
+            )
+
+        next_id = self._next_waypoint_id()
+        existing_ids = {wp.id for wp in self.flight_plan.waypoints}
+
+        # Format existing waypoints for context
+        existing_waypoints = "\n".join(
+            f"- {wp.id}: {wp.title}" for wp in self.flight_plan.get_root_waypoints()
+        )
+
+        # Use provided spec_summary or empty string
+        spec_context = spec_summary or "No product spec available"
+
+        prompt = WAYPOINT_ADD_PROMPT.format(
+            description=description,
+            existing_waypoints=existing_waypoints or "No existing waypoints",
+            spec_summary=spec_context,
+            next_id=next_id,
+        )
+
+        logger.info("Generating waypoint from description: %s", description[:100])
+
+        # Stream response from LLM
+        full_response = ""
+        for result in self.llm.stream_message(
+            messages=[{"role": "user", "content": prompt}],
+            system=CHART_SYSTEM_PROMPT,
+        ):
+            if isinstance(result, StreamChunk):
+                full_response += result.text
+                if on_chunk:
+                    on_chunk(result.text)
+
+        # Validate the response
+        validation = validate_single_waypoint(full_response, existing_ids)
+        if not validation.valid:
+            raise WaypointValidationError(validation.errors)
+
+        # Create waypoint from validated data
+        data = validation.data
+        assert data is not None
+        waypoint = Waypoint(
+            id=data["id"],
+            title=data["title"],
+            objective=data["objective"],
+            acceptance_criteria=data.get("acceptance_criteria", []),
+            dependencies=data.get("dependencies", []),
+            status=WaypointStatus.PENDING,
+        )
+
+        logger.info("Generated waypoint: %s", waypoint.id)
+        return waypoint, validation.insert_after
+
+    def suggest_reprioritization(
+        self,
+        spec_summary: str | None = None,
+        on_chunk: ChunkCallback | None = None,
+    ) -> tuple[list[str], str, list[dict[str, str]]]:
+        """Suggest optimal waypoint order.
+
+        Args:
+            spec_summary: Optional truncated product spec for context
+            on_chunk: Callback for streaming progress
+
+        Returns:
+            Tuple of (new_order, rationale, changes) where:
+            - new_order: List of waypoint IDs in suggested order
+            - rationale: Explanation for the new order
+            - changes: List of per-waypoint change reasons
+
+        Raises:
+            RuntimeError: If no flight plan or fewer than 2 waypoints
+            WaypointValidationError: If reprioritization response invalid
+        """
+        import json
+
+        if self.flight_plan is None:
+            raise RuntimeError("No flight plan loaded")
+
+        root_waypoints = self.flight_plan.get_root_waypoints()
+        if len(root_waypoints) < 2:
+            raise RuntimeError("Need at least 2 waypoints to reprioritize")
+
+        # Create LLM client if needed
+        if self.llm is None:
+            self.llm = ChatClient(
+                metrics_collector=self.metrics,
+                phase="chart",
+            )
+
+        # Format waypoints for context
+        waypoints_json = json.dumps(
+            [
+                {"id": wp.id, "title": wp.title, "dependencies": wp.dependencies}
+                for wp in root_waypoints
+            ],
+            indent=2,
+        )
+
+        spec_context = spec_summary or "No product spec available"
+
+        prompt = REPRIORITIZE_PROMPT.format(
+            waypoints_json=waypoints_json,
+            spec_summary=spec_context,
+        )
+
+        logger.info("Generating reprioritization suggestion")
+
+        # Stream response from LLM
+        full_response = ""
+        for result in self.llm.stream_message(
+            messages=[{"role": "user", "content": prompt}],
+            system=CHART_SYSTEM_PROMPT,
+        ):
+            if isinstance(result, StreamChunk):
+                full_response += result.text
+                if on_chunk:
+                    on_chunk(result.text)
+
+        # Validate response
+        root_ids = {wp.id for wp in root_waypoints}
+        validation = validate_reprioritization(full_response, root_ids)
+        if not validation.valid:
+            raise WaypointValidationError(validation.errors)
+
+        logger.info("Reprioritization suggested: %s", validation.new_order)
+        return validation.new_order, validation.rationale, validation.changes
+
+    def _parse_waypoints(
+        self, response: str, existing_ids: set[str] | None = None
+    ) -> list[Waypoint]:
+        """Parse and validate waypoints from LLM response.
+
+        Args:
+            response: Raw LLM response containing waypoint JSON
+            existing_ids: Set of existing waypoint IDs (for sub-waypoint validation)
+
+        Returns:
+            List of validated Waypoint objects
+
+        Raises:
+            WaypointValidationError: If validation fails
+        """
+        result = validate_waypoints(response, existing_ids)
+
+        if not result.valid:
+            raise WaypointValidationError(result.errors)
+
+        waypoints = []
+        for item in result.data or []:
+            wp = Waypoint(
+                id=item["id"],
+                title=item["title"],
+                objective=item["objective"],
+                acceptance_criteria=item.get("acceptance_criteria", []),
+                parent_id=item.get("parent_id"),
+                dependencies=item.get("dependencies", []),
+                status=WaypointStatus.PENDING,
+            )
+            waypoints.append(wp)
+
+        logger.info("Parsed %d waypoints from LLM response", len(waypoints))
+        return waypoints
+
+    def _next_waypoint_id(self) -> str:
+        """Generate next available waypoint ID."""
+        if self.flight_plan is None:
+            return "WP-001"
+        existing = {wp.id for wp in self.flight_plan.waypoints}
+        for i in range(1, 1000):
+            candidate = f"WP-{i:03d}"
+            if candidate not in existing:
+                return candidate
+        return "WP-999"  # Fallback
 
     def update_waypoint(self, waypoint: Waypoint) -> None:
         """Update a waypoint and persist changes."""
