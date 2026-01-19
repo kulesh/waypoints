@@ -146,13 +146,10 @@ class RegenerateModal(ModalScreen[str | None]):
                     yield RadioButton(
                         "Regenerate (call LLM fresh)", id="mode-regenerate"
                     )
-                    yield RadioButton(
-                        "Compare (replay vs regenerate)", id="mode-compare"
-                    )
 
                 yield Static(
-                    "Replay: instant. Regenerate: fresh LLM outputs. "
-                    "Compare: diff both.",
+                    "Replay: instant, uses cached outputs. "
+                    "Regenerate: fresh LLM calls.",
                     classes="hint",
                 )
 
@@ -179,12 +176,11 @@ class RegenerateModal(ModalScreen[str | None]):
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
         """Handle mode selection changes."""
         if event.radio_set.id == "mode-select":
-            # Show "Start from" section only for Regenerate/Compare modes
+            # Show "Start from" section only for Regenerate mode
             start_from_section = self.query_one("#start-from-section")
             regenerate_btn = self.query_one("#mode-regenerate", RadioButton)
-            compare_btn = self.query_one("#mode-compare", RadioButton)
 
-            if regenerate_btn.value or compare_btn.value:
+            if regenerate_btn.value:
                 start_from_section.add_class("visible")
             else:
                 start_from_section.remove_class("visible")
@@ -220,17 +216,14 @@ class RegenerateModal(ModalScreen[str | None]):
         try:
             # Get selected mode from RadioSet
             regenerate_btn = self.query_one("#mode-regenerate", RadioButton)
-            compare_btn = self.query_one("#mode-compare", RadioButton)
-            if compare_btn.value:
-                mode = ExecutionMode.COMPARE
-            elif regenerate_btn.value:
+            if regenerate_btn.value:
                 mode = ExecutionMode.REGENERATE
             else:
                 mode = ExecutionMode.REPLAY
 
-            # Get skip_qa option (only relevant for Regenerate/Compare modes)
+            # Get skip_qa option (only relevant for Regenerate mode)
             skip_qa = False
-            if mode in (ExecutionMode.REGENERATE, ExecutionMode.COMPARE):
+            if mode == ExecutionMode.REGENERATE:
                 start_brief_btn = self.query_one("#start-brief", RadioButton)
                 skip_qa = start_brief_btn.value
 
@@ -241,7 +234,6 @@ class RegenerateModal(ModalScreen[str | None]):
             mode_names = {
                 ExecutionMode.REPLAY: "Replaying",
                 ExecutionMode.REGENERATE: "Regenerating",
-                ExecutionMode.COMPARE: "Comparing",
             }
             mode_name = mode_names.get(mode, "Processing")
             extra = " (from Idea Brief)" if skip_qa else ""
