@@ -35,34 +35,34 @@ class RegenerateModal(ModalScreen[str | None]):
     }
 
     RegenerateModal > Vertical {
-        width: 60;
+        width: 55;
         height: auto;
         max-height: 80%;
         background: $surface;
         border: solid $surface-lighten-2;
-        padding: 1 2;
+        padding: 0 1;
     }
 
     RegenerateModal .modal-title {
         text-style: bold;
         color: $text;
         text-align: center;
-        padding: 1 0;
-        margin-bottom: 1;
+        padding: 0;
+        margin-bottom: 0;
         border-bottom: solid $surface-lighten-1;
     }
 
     RegenerateModal .modal-content {
-        padding: 0 1;
+        padding: 0;
     }
 
     RegenerateModal .modal-label {
         color: $text-muted;
-        padding: 0 0 1 0;
+        padding: 0;
     }
 
     RegenerateModal Input {
-        margin-bottom: 1;
+        margin: 0 0 1 0;
         background: $surface-lighten-1;
         border: none;
     }
@@ -73,7 +73,7 @@ class RegenerateModal(ModalScreen[str | None]):
     }
 
     RegenerateModal RadioSet {
-        margin-bottom: 1;
+        margin: 0;
         height: auto;
         background: transparent;
         border: none;
@@ -88,12 +88,24 @@ class RegenerateModal(ModalScreen[str | None]):
     RegenerateModal .hint {
         color: $text-muted;
         text-style: italic;
+        margin: 0;
+    }
+
+    RegenerateModal .start-from-section {
+        height: 0;
+        overflow: hidden;
+        margin: 0;
+    }
+
+    RegenerateModal .start-from-section.visible {
+        height: auto;
+        margin-top: 1;
     }
 
     RegenerateModal .modal-actions {
         dock: bottom;
         height: auto;
-        padding: 1 0 0 0;
+        padding: 0;
         margin-top: 1;
         border-top: solid $surface-lighten-1;
         align: center middle;
@@ -144,8 +156,18 @@ class RegenerateModal(ModalScreen[str | None]):
                     classes="hint",
                 )
 
+                with Vertical(classes="start-from-section", id="start-from-section"):
+                    yield Label("Start from:", classes="modal-label")
+                    with RadioSet(id="start-from-select"):
+                        yield RadioButton(
+                            "Shape Q&A", id="start-qa", value=True
+                        )
+                        yield RadioButton(
+                            "Idea Brief (use cached Q&A)", id="start-brief"
+                        )
+
             with Horizontal(classes="modal-actions"):
-                yield Button("Regenerate", id="regenerate-btn")
+                yield Button("OK", id="ok-btn")
                 yield Button("Cancel", id="cancel-btn")
 
     def on_mount(self) -> None:
@@ -154,11 +176,24 @@ class RegenerateModal(ModalScreen[str | None]):
         replay_button.value = True
         self.query_one("#project-name", Input).focus()
 
+    def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
+        """Handle mode selection changes."""
+        if event.radio_set.id == "mode-select":
+            # Show "Start from" section only for Regenerate/Compare modes
+            start_from_section = self.query_one("#start-from-section")
+            regenerate_btn = self.query_one("#mode-regenerate", RadioButton)
+            compare_btn = self.query_one("#mode-compare", RadioButton)
+
+            if regenerate_btn.value or compare_btn.value:
+                start_from_section.add_class("visible")
+            else:
+                start_from_section.remove_class("visible")
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "cancel-btn":
             self.dismiss(None)
-        elif event.button.id == "regenerate-btn":
+        elif event.button.id == "ok-btn":
             self._submit()
 
     def action_cancel(self) -> None:
@@ -193,6 +228,12 @@ class RegenerateModal(ModalScreen[str | None]):
             else:
                 mode = ExecutionMode.REPLAY
 
+            # Get skip_qa option (only relevant for Regenerate/Compare modes)
+            skip_qa = False
+            if mode in (ExecutionMode.REGENERATE, ExecutionMode.COMPARE):
+                start_brief_btn = self.query_one("#start-brief", RadioButton)
+                skip_qa = start_brief_btn.value
+
             # Export current project to spec
             spec = export_project(self.project)
 
@@ -203,7 +244,10 @@ class RegenerateModal(ModalScreen[str | None]):
                 ExecutionMode.COMPARE: "Comparing",
             }
             mode_name = mode_names.get(mode, "Processing")
-            self.app.notify(f"{mode_name} project from spec...", severity="information")
+            extra = " (from Idea Brief)" if skip_qa else ""
+            self.app.notify(
+                f"{mode_name} project from spec{extra}...", severity="information"
+            )
 
             def on_progress(message: str, current: int, total: int) -> None:
                 logger.info("Progress: %s (%d/%d)", message, current, total)
@@ -213,6 +257,7 @@ class RegenerateModal(ModalScreen[str | None]):
                 project_name=new_name,
                 mode=mode,
                 on_progress=on_progress,
+                skip_qa=skip_qa,
             )
 
             if result.success and result.project:

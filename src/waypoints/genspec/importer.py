@@ -282,15 +282,15 @@ def validate_genspec_file(path: str | Path) -> ValidationResult:
 
 
 def create_project_from_spec(
-    spec_path: str | Path,
+    spec_or_path: str | Path | GenerativeSpec,
     name: str | None = None,
     target_state: str = "chart:review",
     replay_mode: bool = True,
 ) -> Project:
-    """Create a new project from a generative specification file.
+    """Create a new project from a generative specification.
 
     Args:
-        spec_path: Path to the .genspec.jsonl file
+        spec_or_path: Either a GenerativeSpec object or path to .genspec.jsonl file
         name: Name for the new project (defaults to spec's project name)
         target_state: Journey state to set after import:
             - "fly:ready": Ready to execute waypoints (for "Run Now" mode)
@@ -304,8 +304,11 @@ def create_project_from_spec(
         ValueError: If spec validation fails
         FileNotFoundError: If spec file doesn't exist
     """
-    # Load spec from file
-    spec = import_from_file(Path(spec_path))
+    # Load spec from file or use directly
+    if isinstance(spec_or_path, GenerativeSpec):
+        spec = spec_or_path
+    else:
+        spec = import_from_file(Path(spec_or_path))
 
     # Validate spec
     validation = validate_spec(spec)
@@ -331,11 +334,6 @@ def create_project_from_spec(
 
     logger.info("Creating project: %s at %s", project_name, project_path)
 
-    # Create project directory structure
-    project_path.mkdir(parents=True, exist_ok=True)
-    (project_path / "sessions").mkdir(exist_ok=True)
-    (project_path / "docs").mkdir(exist_ok=True)
-
     # Create project metadata
     now = datetime.now()
     project = Project(
@@ -345,6 +343,10 @@ def create_project_from_spec(
         updated_at=now,
         initial_idea=spec.initial_idea,
     )
+
+    # Create project directory structure using Project's path management
+    # (ensures consistency between paths.projects_dir and settings.project_directory)
+    project._ensure_directories()
 
     if replay_mode:
         # In replay mode, restore artifacts from spec
