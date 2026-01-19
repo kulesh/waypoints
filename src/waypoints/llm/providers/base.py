@@ -24,6 +24,7 @@ class StreamToolUse:
 
     tool_name: str
     tool_input: dict[str, Any]
+    tool_output: str | None = None
 
 
 @dataclass

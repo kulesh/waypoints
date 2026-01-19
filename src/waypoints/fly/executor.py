@@ -460,7 +460,7 @@ class WaypointExecutor:
                             iteration,
                             chunk.tool_name,
                             chunk.tool_input,
-                            None,  # Output not available from streaming
+                            chunk.tool_output,
                         )
                         # Extract and track file operation
                         file_op = _extract_file_operation(
