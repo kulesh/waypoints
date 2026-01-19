@@ -420,7 +420,9 @@ class OpenAIProvider(LLMProvider):
                 func_info = tool_def.get("function", {})
                 tool_name = str(func_info.get("name", ""))
                 mapped_name = TOOL_NAME_MAP.get(tool_name, tool_name)
-                if tool_name.lower() in all_allowed or mapped_name.lower() in all_allowed:
+                tool_lower = tool_name.lower()
+                mapped_lower = mapped_name.lower()
+                if tool_lower in all_allowed or mapped_lower in all_allowed:
                     tools.append(tool_def)
 
         for attempt in range(MAX_RETRIES + 1):

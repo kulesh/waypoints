@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-import jsonschema  # type: ignore[import-untyped]
+import jsonschema
 
 # JSON Schema for a single waypoint (used when adding new waypoints)
 SINGLE_WAYPOINT_SCHEMA: dict[str, Any] = {
