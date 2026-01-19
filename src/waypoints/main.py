@@ -108,6 +108,62 @@ def parse_args() -> argparse.Namespace:
         help="Maximum iterations per waypoint (default: 10)",
     )
 
+    # Compare command (verification)
+    compare_parser = subparsers.add_parser(
+        "compare",
+        help="Compare two artifacts for semantic equivalence",
+    )
+    compare_parser.add_argument(
+        "artifact_a",
+        type=Path,
+        help="First artifact file (spec or flight plan)",
+    )
+    compare_parser.add_argument(
+        "artifact_b",
+        type=Path,
+        help="Second artifact file (spec or flight plan)",
+    )
+    compare_parser.add_argument(
+        "--type",
+        "-t",
+        choices=["spec", "plan"],
+        default="spec",
+        help="Artifact type (default: spec)",
+    )
+    compare_parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show streaming LLM output",
+    )
+
+    # Verify command
+    verify_parser = subparsers.add_parser(
+        "verify",
+        help="Verify genspec reproducibility",
+    )
+    verify_parser.add_argument(
+        "genspec_dir",
+        type=Path,
+        help="Directory containing genspec artifacts (idea-brief, etc.)",
+    )
+    verify_parser.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="Create reference from current generation (first run)",
+    )
+    verify_parser.add_argument(
+        "--skip-fly",
+        action="store_true",
+        help="Skip execution, compare artifacts only",
+    )
+    verify_parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show detailed progress",
+    )
+
     return parser.parse_args()
 
 
@@ -323,6 +379,53 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_compare(args: argparse.Namespace) -> int:
+    """Compare two artifacts for semantic equivalence."""
+    import json
+
+    from waypoints.verify.compare import compare_flight_plans, compare_specs
+
+    # Read artifacts
+    if not args.artifact_a.exists():
+        print(f"Error: File not found: {args.artifact_a}", file=sys.stderr)
+        return 1
+    if not args.artifact_b.exists():
+        print(f"Error: File not found: {args.artifact_b}", file=sys.stderr)
+        return 1
+
+    artifact_a = args.artifact_a.read_text()
+    artifact_b = args.artifact_b.read_text()
+
+    # Compare based on type
+    if args.type == "spec":
+        result = compare_specs(artifact_a, artifact_b, verbose=args.verbose)
+    else:
+        result = compare_flight_plans(artifact_a, artifact_b, verbose=args.verbose)
+
+    # Output result
+    print(json.dumps(result.to_dict(), indent=2))
+
+    # Exit code based on verdict
+    if result.verdict.value == "equivalent":
+        return 0
+    elif result.verdict.value == "different":
+        return 1
+    else:  # uncertain
+        return 2
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Verify genspec reproducibility."""
+    from waypoints.verify.orchestrator import run_verification
+
+    return run_verification(
+        genspec_dir=args.genspec_dir,
+        bootstrap=args.bootstrap,
+        skip_fly=args.skip_fly,
+        verbose=args.verbose,
+    )
+
+
 def cmd_tui(args: argparse.Namespace) -> int:
     """Launch the TUI application."""
     from waypoints.tui.app import WaypointsApp
@@ -352,6 +455,10 @@ def main() -> None:
         sys.exit(cmd_import(args))
     elif args.command == "run":
         sys.exit(cmd_run(args))
+    elif args.command == "compare":
+        sys.exit(cmd_compare(args))
+    elif args.command == "verify":
+        sys.exit(cmd_verify(args))
     else:
         # Default: launch TUI
         sys.exit(cmd_tui(args))
