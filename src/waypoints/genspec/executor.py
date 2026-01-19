@@ -79,6 +79,7 @@ def execute_spec(
     project_name: str,
     mode: ExecutionMode = ExecutionMode.REPLAY,
     on_progress: ProgressCallback | None = None,
+    skip_qa: bool = False,
 ) -> ExecutionResult:
     """Execute a generative specification.
 
@@ -87,18 +88,19 @@ def execute_spec(
         project_name: Name for the created/regenerated project
         mode: Execution mode (REPLAY, REGENERATE, or COMPARE)
         on_progress: Optional callback for progress updates (message, current, total)
+        skip_qa: If True, skip Shape Q&A steps and use cached outputs
 
     Returns:
         ExecutionResult with project and step results
     """
-    logger.info("Executing spec in %s mode", mode.value)
+    logger.info("Executing spec in %s mode (skip_qa=%s)", mode.value, skip_qa)
 
     if mode == ExecutionMode.REPLAY:
         return _execute_replay(spec, project_name, on_progress)
     elif mode == ExecutionMode.REGENERATE:
-        return _execute_regenerate(spec, project_name, on_progress)
+        return _execute_regenerate(spec, project_name, on_progress, skip_qa=skip_qa)
     elif mode == ExecutionMode.COMPARE:
-        return _execute_compare(spec, project_name, on_progress)
+        return _execute_compare(spec, project_name, on_progress, skip_qa=skip_qa)
     else:
         return ExecutionResult(
             mode=mode,
@@ -155,8 +157,16 @@ def _execute_regenerate(
     spec: GenerativeSpec,
     project_name: str,
     on_progress: ProgressCallback | None = None,
+    skip_qa: bool = False,
 ) -> ExecutionResult:
-    """Execute in regenerate mode - call LLM for each step."""
+    """Execute in regenerate mode - call LLM for each step.
+
+    Args:
+        spec: The specification to execute
+        project_name: Name for the new project
+        on_progress: Optional progress callback
+        skip_qa: If True, skip Shape Q&A steps and use cached outputs
+    """
     result = ExecutionResult(mode=ExecutionMode.REGENERATE)
     start_time = datetime.now()
 
@@ -168,10 +178,45 @@ def _execute_regenerate(
         total_steps = len(spec.steps)
 
         if on_progress:
-            on_progress("Regenerating from prompts...", 0, total_steps)
+            msg = "Regenerating from prompts..."
+            if skip_qa:
+                msg = "Regenerating from Idea Brief (using cached Q&A)..."
+            on_progress(msg, 0, total_steps)
 
         # For each step, call LLM with the stored prompt
         for i, step in enumerate(spec.steps):
+            # Skip SPARK and FLY steps - these are not regenerated
+            # SPARK is user input, FLY is meant to run fresh
+            if step.phase in (Phase.SPARK, Phase.FLY):
+                result.step_results.append(
+                    StepResult(
+                        step_id=step.step_id,
+                        phase=step.phase,
+                        success=True,
+                        output=step.output,
+                    )
+                )
+                continue
+
+            # Skip Q&A steps if requested - use cached output instead
+            if skip_qa and step.phase == Phase.SHAPE_QA:
+                if on_progress:
+                    on_progress(
+                        f"Using cached {step.phase.value} step {step.step_id}...",
+                        i,
+                        total_steps,
+                    )
+                # Use cached output
+                result.step_results.append(
+                    StepResult(
+                        step_id=step.step_id,
+                        phase=step.phase,
+                        success=True,
+                        output=step.output,
+                    )
+                )
+                continue
+
             if on_progress:
                 on_progress(
                     f"Regenerating {step.phase.value} step {step.step_id}...",
@@ -295,14 +340,24 @@ def _create_artifacts_from_steps(
         elif step_result.phase == Phase.SHAPE_SPEC:
             spec_content = step_result.output.content
 
-    # Write idea brief
+    # Write idea brief (use regenerated or fall back to cached)
+    if not brief_content:
+        # Fall back to cached artifact
+        cached_brief = spec.get_artifact(ArtifactType.IDEA_BRIEF)
+        if cached_brief:
+            brief_content = cached_brief.content
     if brief_content:
         brief_path = docs_path / f"idea-brief-{timestamp}.md"
         brief_path.write_text(brief_content)
         result.artifacts_created.append("idea_brief")
         logger.info("Created idea brief: %s", brief_path)
 
-    # Write product spec
+    # Write product spec (use regenerated or fall back to cached)
+    if not spec_content:
+        # Fall back to cached artifact
+        cached_spec = spec.get_artifact(ArtifactType.PRODUCT_SPEC)
+        if cached_spec:
+            spec_content = cached_spec.content
     if spec_content:
         spec_path = docs_path / f"product-spec-{timestamp}.md"
         spec_path.write_text(spec_content)
@@ -334,6 +389,7 @@ def _execute_compare(
     spec: GenerativeSpec,
     project_name: str,
     on_progress: ProgressCallback | None = None,
+    skip_qa: bool = False,
 ) -> ExecutionResult:
     """Execute in compare mode - run both replay and regenerate, then diff."""
     result = ExecutionResult(mode=ExecutionMode.COMPARE)
@@ -353,23 +409,29 @@ def _execute_compare(
 
         # Run regenerate
         regen_result = _execute_regenerate(
-            spec, f"{project_name}-regen", on_progress=None
+            spec, f"{project_name}-regen", on_progress=None, skip_qa=skip_qa
         )
 
-        # Use the regenerated project as the result
-        result.project = regen_result.project
-        result.step_results = regen_result.step_results
-        result.artifacts_created = regen_result.artifacts_created
-        result.total_cost_usd = regen_result.total_cost_usd
+        # Check for errors in child results
+        if replay_result.error:
+            result.error = f"Replay failed: {replay_result.error}"
+        elif regen_result.error:
+            result.error = f"Regenerate failed: {regen_result.error}"
+        else:
+            # Use the regenerated project as the result
+            result.project = regen_result.project
+            result.step_results = regen_result.step_results
+            result.artifacts_created = regen_result.artifacts_created
+            result.total_cost_usd = regen_result.total_cost_usd
 
-        # Store comparison info in the result
-        # In a full implementation, you would compute diffs here
-        if replay_result.project and regen_result.project:
-            logger.info(
-                "Comparison complete: replay=%s, regen=%s",
-                replay_result.project.slug,
-                regen_result.project.slug,
-            )
+            # Store comparison info in the result
+            # In a full implementation, you would compute diffs here
+            if replay_result.project and regen_result.project:
+                logger.info(
+                    "Comparison complete: replay=%s, regen=%s",
+                    replay_result.project.slug,
+                    regen_result.project.slug,
+                )
 
         if on_progress:
             on_progress("Comparison complete", 2, 2)
