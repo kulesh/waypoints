@@ -45,6 +45,7 @@ from waypoints.llm.client import (
     StreamToolUse,
     agent_query,
     classify_api_error,
+    extract_reset_time,
 )
 from waypoints.models.project import Project
 from waypoints.models.waypoint import Waypoint
@@ -326,7 +327,8 @@ Conclusion: The command successfully reparented the task as expected.
 </acceptance-criterion>
 ```
 
-Use `<status>verified</status>` if the criterion passes, `<status>failed</status>` if it fails.
+Use `<status>verified</status>` if the criterion passes,
+`<status>failed</status>` if it fails.
 Output an `<acceptance-criterion>` block for each acceptance criterion.
 This allows the system to capture your verification work.
 
@@ -501,7 +503,7 @@ class WaypointExecutor:
                                 captured_criteria[idx] = CriterionVerification(
                                     index=idx,
                                     criterion=text.strip(),
-                                    status=status,  # type: ignore[arg-type]
+                                    status=status,
                                     evidence=evidence.strip(),
                                     verified_at=datetime.now(),
                                 )
@@ -630,14 +632,22 @@ class WaypointExecutor:
                         "Wait a few minutes and retry."
                     ),
                     APIErrorType.API_UNAVAILABLE: (
-                        "Claude service temporarily unavailable. " "Try again shortly."
+                        "Claude service temporarily unavailable. Try again shortly."
                     ),
                     APIErrorType.BUDGET_EXCEEDED: (
-                        "Daily Claude budget exceeded. "
+                        "Claude usage limit exceeded. "
                         "Execution paused until budget resets."
                     ),
                 }
                 error_summary = error_summaries.get(api_error_type, str(e))
+
+                # For budget errors, try to extract and include reset time
+                if api_error_type == APIErrorType.BUDGET_EXCEEDED:
+                    reset_time = extract_reset_time(str(e))
+                    if reset_time:
+                        error_summary = (
+                            f"Claude usage limit exceeded. Resets {reset_time}."
+                        )
 
                 self._report_progress(
                     iteration, self.max_iterations, "error", f"Error: {error_summary}"
