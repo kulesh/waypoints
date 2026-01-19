@@ -1,6 +1,7 @@
 """Unit tests for WaypointExecutor."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,8 +15,11 @@ from waypoints.fly.executor import (
     WaypointExecutor,
     _extract_file_operation,
 )
+from waypoints.fly.stack import ValidationCommand
 from waypoints.git.config import Checklist
+from waypoints.git.receipt import ChecklistReceipt
 from waypoints.llm.prompts import build_execution_prompt
+from waypoints.llm.providers.base import StreamChunk
 from waypoints.models.waypoint import Waypoint
 
 
@@ -86,13 +90,30 @@ More output
         """No match when format is wrong."""
         invalid_texts = [
             # Missing status
-            "<acceptance-criterion><index>0</index><text>Missing status</text><evidence>E</evidence></acceptance-criterion>",
+            (
+                "<acceptance-criterion><index>0</index>"
+                "<text>Missing status</text>"
+                "<evidence>E</evidence></acceptance-criterion>"
+            ),
             # Missing index
-            "<acceptance-criterion><status>verified</status><text>Missing index</text><evidence>E</evidence></acceptance-criterion>",
+            (
+                "<acceptance-criterion><status>verified</status>"
+                "<text>Missing index</text>"
+                "<evidence>E</evidence></acceptance-criterion>"
+            ),
             # Missing evidence
-            "<acceptance-criterion><index>0</index><status>verified</status><text>Missing evidence</text></acceptance-criterion>",
+            (
+                "<acceptance-criterion><index>0</index>"
+                "<status>verified</status>"
+                "<text>Missing evidence</text></acceptance-criterion>"
+            ),
             # Non-numeric index
-            "<acceptance-criterion><index>abc</index><status>verified</status><text>Non-numeric</text><evidence>E</evidence></acceptance-criterion>",
+            (
+                "<acceptance-criterion><index>abc</index>"
+                "<status>verified</status>"
+                "<text>Non-numeric</text>"
+                "<evidence>E</evidence></acceptance-criterion>"
+            ),
         ]
         for text in invalid_texts:
             matches = CRITERION_PATTERN.findall(text)
@@ -556,3 +577,116 @@ class TestExecutionContext:
             file_operations=ops,
         )
         assert len(ctx.file_operations) == 2
+
+
+class DummyLogWriter:
+    """Lightweight log writer stub for finalize tests."""
+
+    def __init__(self) -> None:
+        self.tool_calls: list[tuple[str, dict[str, object], str]] = []
+        self.validated: tuple[str, bool, str] | None = None
+
+    def log_finalize_start(self) -> None:
+        """Log start placeholder."""
+
+    def log_finalize_tool_call(
+        self, name: str, tool_input: dict[str, object], output: str
+    ) -> None:
+        """Record finalize tool calls."""
+        self.tool_calls.append((name, tool_input, output))
+
+    def log_finalize_end(self) -> None:
+        """Log end placeholder."""
+
+    def log_receipt_validated(
+        self, receipt_path: str, valid: bool, reason: str
+    ) -> None:
+        """Record validation outcome."""
+        self.validated = (receipt_path, valid, reason)
+
+    def log_finalize_output(self, output: str) -> None:
+        """Log finalize output placeholder."""
+        self.output = output  # type: ignore[attr-defined]
+
+    def log_error(self, iteration: int, message: str) -> None:
+        """Log error placeholder."""
+        self.error = (iteration, message)  # type: ignore[attr-defined]
+
+
+@pytest.mark.anyio
+async def test_finalize_runs_host_validation_commands(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Host-run validation output is captured into the receipt."""
+
+    async def fake_agent_query(**_: object):
+        yield StreamChunk(
+            text='<receipt-verdict status="valid">looks good</receipt-verdict>'
+        )
+
+    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+
+    project = SimpleNamespace(get_path=lambda: tmp_path)
+    waypoint = Waypoint(
+        id="WP-123",
+        title="Test waypoint",
+        objective="Validate receipt capture",
+        acceptance_criteria=[],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+    executor._log_writer = DummyLogWriter()
+
+    command = "python -c \"print('host evidence')\""
+    validation_commands = [
+        ValidationCommand(name="tests", command=command, category="test")
+    ]
+
+    result = await executor._finalize_and_verify_receipt(
+        tmp_path, {}, validation_commands, []
+    )
+
+    assert result is True
+    receipts = list((tmp_path / "receipts").glob("*.json"))
+    assert len(receipts) == 1
+
+    receipt = ChecklistReceipt.load(receipts[0])
+    outputs = [item.stdout for item in receipt.checklist]
+    assert any("host evidence" in out for out in outputs)
+
+
+@pytest.mark.anyio
+async def test_finalize_falls_back_to_model_commands(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Model-reported validation commands are executed on host when needed."""
+
+    async def fake_agent_query(**_: object):
+        yield StreamChunk(
+            text='<receipt-verdict status="valid">looks good</receipt-verdict>'
+        )
+
+    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+
+    project = SimpleNamespace(get_path=lambda: tmp_path)
+    waypoint = Waypoint(
+        id="WP-456",
+        title="Test waypoint",
+        objective="Fallback validation",
+        acceptance_criteria=[],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+    executor._log_writer = DummyLogWriter()
+
+    reported_commands = ["python -c \"print('fallback evidence')\""]
+
+    result = await executor._finalize_and_verify_receipt(
+        tmp_path, {}, [], reported_commands
+    )
+
+    assert result is True
+    receipts = list((tmp_path / "receipts").glob("*.json"))
+    assert len(receipts) == 1
+
+    receipt = ChecklistReceipt.load(receipts[0])
+    outputs = [item.stdout for item in receipt.checklist]
+    assert any("fallback evidence" in out for out in outputs)
