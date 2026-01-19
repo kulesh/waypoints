@@ -140,7 +140,7 @@ class ChartScreen(Screen[None]):
     def _sync_coordinator_flight_plan(self) -> None:
         """Sync coordinator's flight plan with screen's."""
         if self._coordinator is not None and self.flight_plan is not None:
-            self._coordinator._flight_plan = self.flight_plan
+            self._coordinator.flight_plan = self.flight_plan
 
     def compose(self) -> ComposeResult:
         yield StatusHeader()

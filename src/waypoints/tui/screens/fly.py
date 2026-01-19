@@ -42,7 +42,7 @@ from waypoints.fly.intervention import (
 )
 from waypoints.git import GitConfig, GitService, ReceiptValidator
 from waypoints.models import JourneyState, Project
-from waypoints.models.flight_plan import FlightPlan, FlightPlanWriter
+from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.screens.intervention import InterventionModal
@@ -1972,9 +1972,8 @@ class FlyScreen(Screen[None]):
         )
 
     def _save_flight_plan(self) -> None:
-        """Save the flight plan to disk."""
-        writer = FlightPlanWriter(self.project)
-        writer.save(self.flight_plan)
+        """Save the flight plan to disk via coordinator."""
+        self.coordinator.save_flight_plan()
 
     def _log_verification_summary(self, waypoint: Waypoint, log: ExecutionLog) -> None:
         """Log verification summary comparing live criteria with receipt."""
@@ -2109,7 +2108,7 @@ class FlyScreen(Screen[None]):
             completed_waypoint: The waypoint that just completed
         """
         # Delegate to coordinator - it logs readiness but doesn't auto-complete
-        self.coordinator._check_parent_completion(completed_waypoint)
+        self.coordinator.check_parent_completion(completed_waypoint)
 
     def action_forward(self) -> None:
         """Go forward to Land screen if available."""
