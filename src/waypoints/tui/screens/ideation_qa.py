@@ -13,10 +13,9 @@ from textual.widgets import Footer, Header, Rule, Static
 if TYPE_CHECKING:
     from waypoints.tui.app import WaypointsApp
 
-from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
-from waypoints.llm.prompts import QA_SYSTEM_PROMPT
-from waypoints.models import JourneyState, Project, SessionWriter
+from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import MessageRole
+from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.messages import (
     StreamingChunk,
     StreamingCompleted,
@@ -84,15 +83,22 @@ class IdeationQAScreen(BaseDialogueScreen):
         super().__init__(**kwargs)
         self.project = project
         self.idea = idea
-        self.llm_client: ChatClient | None = None
-        self.session_writer = SessionWriter(
-            project, "ideation", self.history.session_id
-        )
+        self._coordinator: JourneyCoordinator | None = None
 
     @property
     def waypoints_app(self) -> "WaypointsApp":
         """Get the app as WaypointsApp for type checking."""
         return cast("WaypointsApp", self.app)
+
+    @property
+    def coordinator(self) -> JourneyCoordinator:
+        """Get the coordinator, creating if needed."""
+        if self._coordinator is None:
+            self._coordinator = JourneyCoordinator(
+                project=self.project,
+                metrics=self.waypoints_app.metrics_collector,
+            )
+        return self._coordinator
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -121,12 +127,6 @@ class IdeationQAScreen(BaseDialogueScreen):
         # Set up metrics collection for this project
         self.waypoints_app.set_project_for_metrics(self.project)
 
-        # Create ChatClient with metrics collector
-        self.llm_client = ChatClient(
-            metrics_collector=self.waypoints_app.metrics_collector,
-            phase="ideation-qa",
-        )
-
         # Transition journey state: SPARK_ENTERING -> SHAPE_QA
         self.project.transition_journey(JourneyState.SHAPE_QA)
 
@@ -134,10 +134,10 @@ class IdeationQAScreen(BaseDialogueScreen):
 
     def handle_user_message(self, text: str) -> None:
         """Process user's answer."""
-        msg = self.history.add_message(MessageRole.USER, text)
-        self.session_writer.append_message(msg)
+        # Add to local history for UI display
+        self.history.add_message(MessageRole.USER, text)
         self.dialogue_view.add_user_message(text)
-        self._send_to_llm()
+        self._send_to_llm(text)
 
     def process_response(self, content: str) -> None:
         """Process completed response - just continue Q&A."""
@@ -145,93 +145,76 @@ class IdeationQAScreen(BaseDialogueScreen):
 
     @work(thread=True)
     def _start_qa(self) -> None:
-        """Start Q&A with the idea as context."""
-        assert self.llm_client is not None, "llm_client not initialized"
-
-        initial_context = (
-            f"I have an idea I'd like to refine:\n\n{self.idea}\n\n"
-            "Please help me crystallize this idea by asking clarifying questions."
-        )
-
-        initial_msg = self.history.add_message(MessageRole.USER, initial_context)
-        self.session_writer.append_message(initial_msg)
-        logger.info("Starting ideation Q&A with idea: %s", self.idea[:100])
-
+        """Start Q&A with the idea as context via coordinator."""
+        message_id = str(uuid4())
         self.app.call_from_thread(self.post_message, StreamingStarted())
 
-        response_content = ""
-        message_id = str(uuid4())
+        def on_chunk(chunk: str) -> None:
+            self.app.call_from_thread(
+                self.post_message, StreamingChunk(chunk, message_id)
+            )
 
         try:
-            for result in self.llm_client.stream_message(
-                messages=self.history.to_api_format(),
-                system=QA_SYSTEM_PROMPT,
-            ):
-                if isinstance(result, StreamChunk):
-                    response_content += result.text
-                    self.app.call_from_thread(
-                        self.post_message, StreamingChunk(result.text, message_id)
-                    )
-                elif isinstance(result, StreamComplete):
-                    # Update header cost display
-                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
+            response = self.coordinator.start_qa_dialogue(
+                idea=self.idea,
+                on_chunk=on_chunk,
+            )
+            # Update header cost display
+            self.app.call_from_thread(self.waypoints_app.update_header_cost)
+
+            # Add assistant response to local history for UI
+            self.history.add_message(MessageRole.ASSISTANT, response)
+
         except Exception as e:
             logger.exception("Error calling LLM: %s", e)
-            response_content = f"Error: {e}"
+            response = f"Error: {e}"
             self.app.call_from_thread(self.notify, f"API Error: {e}", severity="error")
 
-        assistant_msg = self.history.add_message(
-            MessageRole.ASSISTANT, response_content
-        )
-        self.session_writer.append_message(assistant_msg)
         self.app.call_from_thread(
-            self.post_message, StreamingCompleted(message_id, response_content)
+            self.post_message, StreamingCompleted(message_id, response)
         )
 
     @work(thread=True)
-    def _send_to_llm(self) -> None:
-        """Send conversation to LLM for next question."""
-        assert self.llm_client is not None, "llm_client not initialized"
-
+    def _send_to_llm(self, user_response: str) -> None:
+        """Continue Q&A dialogue via coordinator."""
+        message_id = str(uuid4())
         self.app.call_from_thread(self.post_message, StreamingStarted())
 
-        response_content = ""
-        message_id = str(uuid4())
+        def on_chunk(chunk: str) -> None:
+            self.app.call_from_thread(
+                self.post_message, StreamingChunk(chunk, message_id)
+            )
 
         try:
-            for result in self.llm_client.stream_message(
-                messages=self.history.to_api_format(),
-                system=QA_SYSTEM_PROMPT,
-            ):
-                if isinstance(result, StreamChunk):
-                    response_content += result.text
-                    self.app.call_from_thread(
-                        self.post_message, StreamingChunk(result.text, message_id)
-                    )
-                elif isinstance(result, StreamComplete):
-                    # Update header cost display
-                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
+            response = self.coordinator.continue_qa_dialogue(
+                user_response=user_response,
+                on_chunk=on_chunk,
+            )
+            # Update header cost display
+            self.app.call_from_thread(self.waypoints_app.update_header_cost)
+
+            # Add assistant response to local history for UI
+            self.history.add_message(MessageRole.ASSISTANT, response)
+
         except Exception as e:
             logger.exception("Error calling LLM: %s", e)
-            response_content = f"Error: {e}"
+            response = f"Error: {e}"
             self.app.call_from_thread(self.notify, f"API Error: {e}", severity="error")
 
-        assistant_msg = self.history.add_message(
-            MessageRole.ASSISTANT, response_content
-        )
-        self.session_writer.append_message(assistant_msg)
         self.app.call_from_thread(
-            self.post_message, StreamingCompleted(message_id, response_content)
+            self.post_message, StreamingCompleted(message_id, response)
         )
 
     def action_finish_ideation(self) -> None:
         """User is satisfied - generate idea brief."""
+        # Use coordinator's dialogue history (has full conversation)
+        dialogue_history = self.coordinator.dialogue_history
         self.app.switch_phase(  # type: ignore
             "idea-brief",
             {
                 "project": self.project,
                 "idea": self.idea,
-                "history": self.history,
+                "history": dialogue_history,
             },
         )
 

@@ -15,15 +15,9 @@ from textual.widgets import Footer, Header, Markdown, Static, TextArea
 if TYPE_CHECKING:
     from waypoints.tui.app import WaypointsApp
 
-from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
-from waypoints.llm.prompts import (
-    SPEC_GENERATION_PROMPT,
-    SPEC_SUMMARY_PROMPT,
-    SPEC_SYSTEM_PROMPT,
-    SUMMARY_SYSTEM_PROMPT,
-)
 from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory
+from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.mixins import MentionProcessingMixin
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
@@ -122,20 +116,34 @@ class ProductSpecScreen(Screen[None]):
         self.history = history
         self.spec_content: str = ""
         self.is_editing: bool = False
-        self.llm_client: ChatClient | None = None
-        self.file_path = self._generate_file_path()
+        self._coordinator: JourneyCoordinator | None = None
 
     @property
     def waypoints_app(self) -> "WaypointsApp":
         """Get the app as WaypointsApp for type checking."""
         return cast("WaypointsApp", self.app)
 
-    def _generate_file_path(self) -> Path:
-        """Generate a unique file path for this spec."""
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    @property
+    def coordinator(self) -> JourneyCoordinator:
+        """Get the coordinator, creating if needed."""
+        if self._coordinator is None:
+            self._coordinator = JourneyCoordinator(
+                project=self.project,
+                metrics=self.waypoints_app.metrics_collector,
+            )
+        return self._coordinator
+
+    def _get_latest_file_path(self) -> Path:
+        """Get the path to the latest spec file."""
         docs_dir = self.project.get_docs_path()
-        docs_dir.mkdir(parents=True, exist_ok=True)
-        return docs_dir / f"product-spec-{timestamp}.md"
+        pattern = "product-spec-*.md"
+        matching_files = sorted(docs_dir.glob(pattern), reverse=True)
+
+        if matching_files:
+            return matching_files[0]
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            return docs_dir / f"product-spec-{timestamp}.md"
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -146,7 +154,7 @@ class ProductSpecScreen(Screen[None]):
                 yield Static("Generating product specification...")
             yield Markdown("", id="spec-display")
         yield TextArea(id="spec-editor")
-        yield Static(str(self.file_path), classes="file-path", id="file-path")
+        yield Static("", classes="file-path", id="file-path")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -156,12 +164,6 @@ class ProductSpecScreen(Screen[None]):
         # Set up metrics collection for this project
         self.waypoints_app.set_project_for_metrics(self.project)
 
-        # Create ChatClient with metrics collector
-        self.llm_client = ChatClient(
-            metrics_collector=self.waypoints_app.metrics_collector,
-            phase="product-spec",
-        )
-
         # Transition journey state: SHAPE_BRIEF_REVIEW -> SHAPE_SPEC_GENERATING
         self.project.transition_journey(JourneyState.SHAPE_SPEC_GENERATING)
 
@@ -169,36 +171,37 @@ class ProductSpecScreen(Screen[None]):
 
     @work(thread=True)
     def _generate_spec(self) -> None:
-        """Generate product specification from idea brief."""
-        assert self.llm_client is not None, "llm_client not initialized"
-
-        prompt = SPEC_GENERATION_PROMPT.format(brief=self.brief)
-
+        """Generate product specification via coordinator."""
         logger.info("Generating product spec from brief: %d chars", len(self.brief))
 
         # Start thinking indicator
         self.app.call_from_thread(self._set_thinking, True)
 
-        spec_content = ""
+        accumulated_content = ""
+
+        def on_chunk(chunk: str) -> None:
+            nonlocal accumulated_content
+            accumulated_content += chunk
+            self.app.call_from_thread(self._update_spec_display, accumulated_content)
 
         try:
-            for result in self.llm_client.stream_message(
-                messages=[{"role": "user", "content": prompt}],
-                system=SPEC_SYSTEM_PROMPT,
-            ):
-                if isinstance(result, StreamChunk):
-                    spec_content += result.text
-                    self.app.call_from_thread(self._update_spec_display, spec_content)
-                elif isinstance(result, StreamComplete):
-                    # Update header cost display
-                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
+            # Coordinator generates spec, saves to disk, and generates summary
+            spec_content = self.coordinator.generate_product_spec(
+                brief=self.brief,
+                on_chunk=on_chunk,
+            )
+            # Update header cost display
+            self.app.call_from_thread(self.waypoints_app.update_header_cost)
+
+            self.spec_content = spec_content
+            self.app.call_from_thread(self._finalize_spec)
+
         except Exception as e:
             logger.exception("Error generating spec: %s", e)
-            spec_content = f"# Error\n\nFailed to generate specification: {e}"
+            self.spec_content = f"# Error\n\nFailed to generate specification: {e}"
+            self.app.call_from_thread(self._update_spec_display, self.spec_content)
             self.app.call_from_thread(self.notify, f"Error: {e}", severity="error")
 
-        self.spec_content = spec_content
-        self.app.call_from_thread(self._finalize_spec)
         # Stop thinking indicator
         self.app.call_from_thread(self._set_thinking, False)
 
@@ -213,52 +216,27 @@ class ProductSpecScreen(Screen[None]):
         display.update(content)
 
     def _finalize_spec(self) -> None:
-        """Finalize spec display after generation and save to disk."""
+        """Finalize spec display after generation."""
         editor = self.query_one("#spec-editor", TextArea)
         editor.text = self.spec_content
-        self._save_to_disk()
 
-        # Generate project summary in background
-        self._generate_summary()
+        # Update file path display (coordinator already saved)
+        file_path = self._get_latest_file_path()
+        self.query_one("#file-path", Static).update(str(file_path))
 
         # Transition journey state: SHAPE_SPEC_GENERATING -> SHAPE_SPEC_REVIEW
         self.project.transition_journey(JourneyState.SHAPE_SPEC_REVIEW)
 
+        self.notify(f"Saved to {file_path.name}", severity="information")
         logger.info("Spec generation complete: %d chars", len(self.spec_content))
 
-    @work(thread=True)
-    def _generate_summary(self) -> None:
-        """Generate and save project summary from spec."""
-        if not self.spec_content or not self.llm_client:
-            return
-
-        prompt = SPEC_SUMMARY_PROMPT.format(spec_content=self.spec_content)
-
-        try:
-            summary = ""
-            for result in self.llm_client.stream_message(
-                messages=[{"role": "user", "content": prompt}],
-                system=SUMMARY_SYSTEM_PROMPT,
-            ):
-                if isinstance(result, StreamChunk):
-                    summary += result.text
-                elif isinstance(result, StreamComplete):
-                    pass
-
-            # Clean up the summary (remove any accidental markdown)
-            summary = summary.strip()
-            self.project.summary = summary
-            self.project.save()
-            logger.info("Generated project summary: %d chars", len(summary))
-        except Exception as e:
-            logger.exception("Error generating summary: %s", e)
-
     def _save_to_disk(self) -> None:
-        """Save the spec content to disk."""
+        """Save the spec content to disk (for edits)."""
+        file_path = self._get_latest_file_path()
         try:
-            self.file_path.write_text(self.spec_content)
-            logger.info("Saved spec to %s", self.file_path)
-            self.notify(f"Saved to {self.file_path.name}", severity="information")
+            file_path.write_text(self.spec_content)
+            logger.info("Saved spec to %s", file_path)
+            self.notify(f"Saved to {file_path.name}", severity="information")
         except OSError as e:
             logger.exception("Failed to save spec: %s", e)
             self.notify(f"Failed to save: {e}", severity="error")

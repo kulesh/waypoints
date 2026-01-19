@@ -15,15 +15,9 @@ from textual.widgets import Footer, Header, Markdown, Static, TextArea
 if TYPE_CHECKING:
     from waypoints.tui.app import WaypointsApp
 
-from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
-from waypoints.llm.prompts import (
-    BRIEF_GENERATION_PROMPT,
-    BRIEF_SUMMARY_PROMPT,
-    BRIEF_SYSTEM_PROMPT,
-    SUMMARY_SYSTEM_PROMPT,
-)
 from waypoints.models import JourneyState, Project
-from waypoints.models.dialogue import DialogueHistory, MessageRole
+from waypoints.models.dialogue import DialogueHistory
+from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.mixins import MentionProcessingMixin
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
@@ -119,20 +113,34 @@ class IdeaBriefScreen(Screen[None]):
         self.history = history
         self.brief_content: str = ""
         self.is_editing: bool = False
-        self.llm_client: ChatClient | None = None
-        self.file_path = self._generate_file_path()
+        self._coordinator: JourneyCoordinator | None = None
 
     @property
     def waypoints_app(self) -> "WaypointsApp":
         """Get the app as WaypointsApp for type checking."""
         return cast("WaypointsApp", self.app)
 
-    def _generate_file_path(self) -> Path:
-        """Generate a unique file path for this brief."""
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    @property
+    def coordinator(self) -> JourneyCoordinator:
+        """Get the coordinator, creating if needed."""
+        if self._coordinator is None:
+            self._coordinator = JourneyCoordinator(
+                project=self.project,
+                metrics=self.waypoints_app.metrics_collector,
+            )
+        return self._coordinator
+
+    def _get_latest_file_path(self) -> Path:
+        """Get the path to the latest brief file."""
         docs_dir = self.project.get_docs_path()
-        docs_dir.mkdir(parents=True, exist_ok=True)
-        return docs_dir / f"idea-brief-{timestamp}.md"
+        pattern = "idea-brief-*.md"
+        matching_files = sorted(docs_dir.glob(pattern), reverse=True)
+
+        if matching_files:
+            return matching_files[0]
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            return docs_dir / f"idea-brief-{timestamp}.md"
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -143,7 +151,7 @@ class IdeaBriefScreen(Screen[None]):
                 yield Static("Generating idea brief...")
             yield Markdown("", id="brief-display")
         yield TextArea(id="brief-editor")
-        yield Static(str(self.file_path), classes="file-path", id="file-path")
+        yield Static("", classes="file-path", id="file-path")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -153,12 +161,6 @@ class IdeaBriefScreen(Screen[None]):
         # Set up metrics collection for this project
         self.waypoints_app.set_project_for_metrics(self.project)
 
-        # Create ChatClient with metrics collector
-        self.llm_client = ChatClient(
-            metrics_collector=self.waypoints_app.metrics_collector,
-            phase="idea-brief",
-        )
-
         # Transition journey state: SHAPE_QA -> SHAPE_BRIEF_GENERATING
         self.project.transition_journey(JourneyState.SHAPE_BRIEF_GENERATING)
 
@@ -166,12 +168,7 @@ class IdeaBriefScreen(Screen[None]):
 
     @work(thread=True)
     def _generate_brief(self) -> None:
-        """Generate idea brief from conversation history."""
-        assert self.llm_client is not None, "llm_client not initialized"
-
-        conversation_text = self._format_conversation()
-        prompt = BRIEF_GENERATION_PROMPT.format(conversation=conversation_text)
-
+        """Generate idea brief via coordinator."""
         logger.info(
             "Generating idea brief from %d messages", len(self.history.messages)
         )
@@ -179,36 +176,33 @@ class IdeaBriefScreen(Screen[None]):
         # Start thinking indicator
         self.app.call_from_thread(self._set_thinking, True)
 
-        brief_content = ""
+        accumulated_content = ""
+
+        def on_chunk(chunk: str) -> None:
+            nonlocal accumulated_content
+            accumulated_content += chunk
+            self.app.call_from_thread(self._update_brief_display, accumulated_content)
 
         try:
-            for result in self.llm_client.stream_message(
-                messages=[{"role": "user", "content": prompt}],
-                system=BRIEF_SYSTEM_PROMPT,
-            ):
-                if isinstance(result, StreamChunk):
-                    brief_content += result.text
-                    self.app.call_from_thread(self._update_brief_display, brief_content)
-                elif isinstance(result, StreamComplete):
-                    # Update header cost display
-                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
+            # Coordinator generates brief, saves to disk, and generates summary
+            brief_content = self.coordinator.generate_idea_brief(
+                history=self.history,
+                on_chunk=on_chunk,
+            )
+            # Update header cost display
+            self.app.call_from_thread(self.waypoints_app.update_header_cost)
+
+            self.brief_content = brief_content
+            self.app.call_from_thread(self._finalize_brief)
+
         except Exception as e:
             logger.exception("Error generating brief: %s", e)
-            brief_content = f"# Error\n\nFailed to generate brief: {e}"
+            self.brief_content = f"# Error\n\nFailed to generate brief: {e}"
+            self.app.call_from_thread(self._update_brief_display, self.brief_content)
             self.app.call_from_thread(self.notify, f"Error: {e}", severity="error")
 
-        self.brief_content = brief_content
-        self.app.call_from_thread(self._finalize_brief)
         # Stop thinking indicator
         self.app.call_from_thread(self._set_thinking, False)
-
-    def _format_conversation(self) -> str:
-        """Format dialogue history for the generation prompt."""
-        parts = []
-        for msg in self.history.messages:
-            role = "User" if msg.role == MessageRole.USER else "Assistant"
-            parts.append(f"{role}: {msg.content}")
-        return "\n\n".join(parts)
 
     def _set_thinking(self, thinking: bool) -> None:
         """Toggle the model status indicator."""
@@ -221,52 +215,27 @@ class IdeaBriefScreen(Screen[None]):
         display.update(content)
 
     def _finalize_brief(self) -> None:
-        """Finalize brief display after generation and save to disk."""
+        """Finalize brief display after generation."""
         editor = self.query_one("#brief-editor", TextArea)
         editor.text = self.brief_content
-        self._save_to_disk()
 
-        # Generate project summary in background
-        self._generate_summary()
+        # Update file path display (coordinator already saved)
+        file_path = self._get_latest_file_path()
+        self.query_one("#file-path", Static).update(str(file_path))
 
         # Transition journey state: SHAPE_BRIEF_GENERATING -> SHAPE_BRIEF_REVIEW
         self.project.transition_journey(JourneyState.SHAPE_BRIEF_REVIEW)
 
+        self.notify(f"Saved to {file_path.name}", severity="information")
         logger.info("Brief generation complete: %d chars", len(self.brief_content))
 
-    @work(thread=True)
-    def _generate_summary(self) -> None:
-        """Generate and save project summary from brief."""
-        if not self.brief_content or not self.llm_client:
-            return
-
-        prompt = BRIEF_SUMMARY_PROMPT.format(brief_content=self.brief_content)
-
-        try:
-            summary = ""
-            for result in self.llm_client.stream_message(
-                messages=[{"role": "user", "content": prompt}],
-                system=SUMMARY_SYSTEM_PROMPT,
-            ):
-                if isinstance(result, StreamChunk):
-                    summary += result.text
-                elif isinstance(result, StreamComplete):
-                    pass
-
-            # Clean up the summary (remove any accidental markdown)
-            summary = summary.strip()
-            self.project.summary = summary
-            self.project.save()
-            logger.info("Generated project summary: %d chars", len(summary))
-        except Exception as e:
-            logger.exception("Error generating summary: %s", e)
-
     def _save_to_disk(self) -> None:
-        """Save the brief content to disk."""
+        """Save the brief content to disk (for edits)."""
+        file_path = self._get_latest_file_path()
         try:
-            self.file_path.write_text(self.brief_content)
-            logger.info("Saved brief to %s", self.file_path)
-            self.notify(f"Saved to {self.file_path.name}", severity="information")
+            file_path.write_text(self.brief_content)
+            logger.info("Saved brief to %s", file_path)
+            self.notify(f"Saved to {file_path.name}", severity="information")
         except OSError as e:
             logger.exception("Failed to save brief: %s", e)
             self.notify(f"Failed to save: {e}", severity="error")
