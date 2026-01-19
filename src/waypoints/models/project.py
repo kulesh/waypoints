@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from waypoints.config.project_root import get_projects_root
+
 if TYPE_CHECKING:
     from waypoints.models.journey import Journey, JourneyState
 
@@ -69,9 +71,7 @@ class Project:
     @classmethod
     def _get_projects_dir(cls) -> Path:
         """Get the projects directory from settings (respects user override)."""
-        from waypoints.config import settings
-
-        return settings.project_directory
+        return get_projects_root()
 
     def get_path(self) -> Path:
         """Get the project's root directory path."""

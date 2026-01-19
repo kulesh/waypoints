@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from waypoints.config.paths import get_paths
+from waypoints.config.project_root import get_projects_root
 from waypoints.genspec.spec import (
     Artifact,
     ArtifactType,
@@ -322,15 +322,15 @@ def create_project_from_spec(
     project_name = name or spec.source_project or "Imported Project"
 
     # Create project
-    paths = get_paths()
     slug = _slugify(project_name)
+    projects_root = get_projects_root()
 
     # Ensure unique slug
-    project_path = paths.projects_dir / slug
+    project_path = projects_root / slug
     if project_path.exists():
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         slug = f"{slug}-{timestamp}"
-        project_path = paths.projects_dir / slug
+        project_path = projects_root / slug
 
     logger.info("Creating project: %s at %s", project_name, project_path)
 
@@ -345,7 +345,7 @@ def create_project_from_spec(
     )
 
     # Create project directory structure using Project's path management
-    # (ensures consistency between paths.projects_dir and settings.project_directory)
+    # (ensures consistency with settings.project_directory)
     project._ensure_directories()
 
     if replay_mode:

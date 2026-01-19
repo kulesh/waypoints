@@ -4,6 +4,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from waypoints.genspec.spec import (
     Artifact,
     ArtifactType,
@@ -523,3 +525,46 @@ class TestGenSpecSerialization:
         assert not result.valid
         assert result.has_errors
         assert any("flight_plan" in e.lower() for e in result.errors)
+
+
+def test_create_project_respects_project_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Projects are created under the configured project_directory."""
+    from waypoints import config
+    from waypoints.config.paths import reset_paths
+    from waypoints.genspec.importer import create_project_from_spec
+
+    reset_paths()  # Ensure get_paths() doesn't carry a previous workspace
+    custom_root = tmp_path / "custom-projects"
+    monkeypatch.setattr(
+        config.settings, "_data", {"project_directory": str(custom_root)}
+    )
+
+    spec = GenerativeSpec(
+        version="1.0",
+        waypoints_version="0.1.0",
+        source_project="source",
+        created_at=datetime.now(),
+        initial_idea="idea",
+        artifacts=[
+            Artifact(
+                artifact_type=ArtifactType.FLIGHT_PLAN,
+                content=json.dumps(
+                    [
+                        {
+                            "id": "WP-1",
+                            "title": "Test",
+                            "objective": "Obj",
+                            "acceptance_criteria": [],
+                        }
+                    ]
+                ),
+            )
+        ],
+    )
+
+    project = create_project_from_spec(spec, name="Imported Project", replay_mode=True)
+
+    assert project.get_path().is_relative_to(custom_root.resolve())
+    assert project.slug.startswith("imported-project")
