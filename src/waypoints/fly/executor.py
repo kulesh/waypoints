@@ -32,6 +32,13 @@ from waypoints.fly.intervention import (
     InterventionNeededError,
     InterventionType,
 )
+from waypoints.fly.stack import (
+    STACK_COMMANDS,
+    StackConfig,
+    ValidationCommand,
+    detect_stack,
+    detect_stack_from_spec,
+)
 from waypoints.git.config import Checklist
 from waypoints.git.receipt import (
     CapturedEvidence,
@@ -231,6 +238,7 @@ class WaypointExecutor:
         self.steps: list[ExecutionStep] = []
         self._cancelled = False
         self._log_writer: ExecutionLogWriter | None = None
+        self._validation_commands: list[ValidationCommand] = []
 
     def cancel(self) -> None:
         """Cancel the execution."""
@@ -280,6 +288,9 @@ class WaypointExecutor:
         """Internal implementation of execute, runs in project directory."""
         # Load checklist from project (creates default if not exists)
         checklist = Checklist.load(self.project)
+        self._validation_commands = self._resolve_validation_commands(
+            project_path, checklist
+        )
 
         prompt = build_execution_prompt(
             self.waypoint, self.spec, project_path, checklist
@@ -295,7 +306,7 @@ class WaypointExecutor:
 
         iteration = 0
         full_output = ""
-        captured_evidence: dict[str, CapturedEvidence] = {}  # Validation evidence
+        reported_validation_commands: list[str] = []
         # Criteria verification evidence
         captured_criteria: dict[int, CriterionVerification] = {}
         completion_marker = f"<waypoint-complete>{self.waypoint.id}</waypoint-complete>"
@@ -338,20 +349,20 @@ class WaypointExecutor:
                         # Parse validation evidence markers BEFORE completion check
                         # (completion check returns early, so we need to capture first)
                         for match in VALIDATION_PATTERN.findall(full_output):
-                            command, exit_code, output = match
-                            category = _detect_validation_category(command)
-                            if category and category not in captured_evidence:
-                                captured_evidence[category] = CapturedEvidence(
-                                    command=command.strip(),
-                                    exit_code=int(exit_code),
-                                    stdout=output.strip(),
-                                    stderr="",
-                                    captured_at=datetime.now(),
-                                )
+                            command, _, _ = match
+                            normalized_command = command.strip()
+                            if not normalized_command:
+                                continue
+                            if normalized_command in reported_validation_commands:
+                                continue
+
+                            reported_validation_commands.append(normalized_command)
+                            category = _detect_validation_category(normalized_command)
+                            if category:
                                 logger.info(
-                                    "Captured validation evidence: %s (exit=%s)",
+                                    "Model reported validation command for %s: %s",
                                     category,
-                                    exit_code,
+                                    normalized_command,
                                 )
 
                         # Parse criterion verification markers
@@ -395,7 +406,10 @@ class WaypointExecutor:
 
                             # Run finalize step to verify receipt
                             receipt_valid = await self._finalize_and_verify_receipt(
-                                project_path, captured_evidence, captured_criteria
+                                project_path,
+                                captured_criteria,
+                                self._validation_commands,
+                                reported_validation_commands,
                             )
 
                             if receipt_valid:
@@ -691,25 +705,151 @@ When complete, output the completion marker specified in the instructions."""
         receipt = ChecklistReceipt.load(receipt_path)
         return build_verification_prompt(receipt)
 
+    def _resolve_validation_commands(
+        self, project_path: Path, checklist: Checklist
+    ) -> list[ValidationCommand]:
+        """Resolve validation commands to run for receipt evidence."""
+        stack_configs = detect_stack(project_path)
+
+        # Fallback to spec hints if no stack files exist yet
+        if not stack_configs:
+            for stack in detect_stack_from_spec(self.spec):
+                commands = STACK_COMMANDS.get(stack, [])
+                stack_configs.append(
+                    StackConfig(stack_type=stack, commands=list(commands))
+                )
+
+        resolved: list[ValidationCommand] = []
+        overrides = checklist.validation_overrides
+        seen_keys: set[str] = set()
+
+        for config in stack_configs:
+            for cmd in config.commands:
+                actual_command = overrides.get(cmd.category, cmd.command)
+                key = f"{cmd.name}:{actual_command}"
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                resolved.append(
+                    ValidationCommand(
+                        name=cmd.name,
+                        command=actual_command,
+                        category=cmd.category,
+                        optional=cmd.optional,
+                    )
+                )
+
+        return resolved
+
+    def _fallback_validation_commands_from_model(
+        self, reported_commands: list[str]
+    ) -> list[ValidationCommand]:
+        """Build validation commands from model-reported markers."""
+        commands: list[ValidationCommand] = []
+        seen: set[str] = set()
+
+        for command in reported_commands:
+            normalized = command.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            category = _detect_validation_category(normalized) or "validation"
+            commands.append(
+                ValidationCommand(
+                    name=category,
+                    command=normalized,
+                    category=category,
+                    optional=False,
+                )
+            )
+
+        return commands
+
+    def _run_validation_commands(
+        self, project_path: Path, commands: list[ValidationCommand]
+    ) -> dict[str, CapturedEvidence]:
+        """Execute validation commands on the host and capture evidence."""
+        evidence: dict[str, CapturedEvidence] = {}
+        if not commands:
+            return evidence
+
+        def _decode_output(data: bytes | str | None) -> str:
+            if isinstance(data, bytes):
+                return data.decode(errors="replace")
+            return data or ""
+
+        for cmd in commands:
+            start_time = datetime.now()
+            try:
+                result = subprocess.run(
+                    cmd.command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    cwd=project_path,
+                    timeout=300,
+                )
+                stdout = _decode_output(result.stdout)
+                stderr = _decode_output(result.stderr)
+                exit_code = result.returncode
+            except subprocess.TimeoutExpired as e:
+                stdout = _decode_output(e.stdout)
+                stderr = _decode_output(e.stderr) + "\nCommand timed out"
+                exit_code = 124
+            except Exception as e:  # pragma: no cover - safety net
+                stdout = ""
+                stderr = f"Error running validation command: {e}"
+                exit_code = 1
+
+            label = cmd.name or cmd.command
+            evidence[label] = CapturedEvidence(
+                command=cmd.command,
+                exit_code=exit_code,
+                stdout=stdout,
+                stderr=stderr,
+                captured_at=start_time,
+            )
+
+            logger.info(
+                "Ran validation command (%s): %s [exit=%d]",
+                cmd.category,
+                cmd.command,
+                exit_code,
+            )
+
+            if self._log_writer:
+                self._log_writer.log_finalize_tool_call(
+                    "ValidationCommand",
+                    {
+                        "command": cmd.command,
+                        "category": cmd.category,
+                        "name": cmd.name,
+                    },
+                    f"exit_code={exit_code}",
+                )
+
+        return evidence
+
     async def _finalize_and_verify_receipt(
         self,
         project_path: Path,
-        captured_evidence: dict[str, CapturedEvidence],
         captured_criteria: dict[int, CriterionVerification],
+        validation_commands: list[ValidationCommand],
+        reported_validation_commands: list[str],
     ) -> bool:
-        """Build receipt from captured evidence and verify with LLM.
-
-        Uses evidence captured from the model's validation output during
-        execution, rather than running validation commands ourselves.
+        """Build receipt from host-captured evidence and verify with LLM.
 
         Args:
-            project_path: Project working directory
-            captured_evidence: Validation evidence captured from model output,
-                keyed by category (tests, linting, formatting, etc.)
+            project_path: Project working directory.
             captured_criteria: Criterion verification evidence captured from
                 model output, keyed by criterion index.
+            validation_commands: Preferred validation commands derived from
+                stack detection and checklist overrides.
+            reported_validation_commands: Commands reported by the model in
+                <validation> blocks (used as fallback when no stack commands).
 
-        Returns True if receipt is valid, False otherwise.
+        Returns:
+            True if receipt is valid, False otherwise.
         """
         assert self._log_writer is not None  # Guaranteed by _execute_impl
         self._log_writer.log_finalize_start()
@@ -718,7 +858,7 @@ When complete, output the completion marker specified in the instructions."""
             self.max_iterations,
             self.max_iterations,
             "finalizing",
-            "Building receipt from captured evidence...",
+            "Running host validations and building receipt...",
         )
 
         # Build receipt with waypoint context
@@ -729,21 +869,21 @@ When complete, output the completion marker specified in the instructions."""
             acceptance_criteria=self.waypoint.acceptance_criteria,
         )
 
-        # Add captured validation evidence from model output
-        for category, evidence in captured_evidence.items():
-            logger.info(
-                "Adding captured evidence: %s (exit_code=%d)",
-                category,
-                evidence.exit_code,
-            )
-            receipt_builder.capture(category, evidence)
+        commands_to_run = validation_commands or (
+            self._fallback_validation_commands_from_model(reported_validation_commands)
+        )
 
-            # Log the captured evidence
-            self._log_writer.log_finalize_tool_call(
-                "CapturedValidation",
-                {"command": evidence.command, "category": category},
-                f"exit_code={evidence.exit_code}",
+        if not commands_to_run:
+            logger.warning("No validation commands available to run for receipt")
+            self._log_writer.log_finalize_end()
+            self._log_writer.log_receipt_validated(
+                "", False, "No validation commands provided"
             )
+            return False
+
+        host_evidence = self._run_validation_commands(project_path, commands_to_run)
+        for category, evidence in host_evidence.items():
+            receipt_builder.capture(category, evidence)
 
         # Add captured criteria verification from model output
         for idx, criterion in captured_criteria.items():
