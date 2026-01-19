@@ -16,24 +16,11 @@ from textual.widgets import Footer, Static
 if TYPE_CHECKING:
     from waypoints.tui.app import WaypointsApp
 
-from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
-from waypoints.llm.prompts import (
-    CHART_SYSTEM_PROMPT,
-    REPRIORITIZE_PROMPT,
-    WAYPOINT_ADD_PROMPT,
-    WAYPOINT_BREAKDOWN_PROMPT,
-    WAYPOINT_GENERATION_PROMPT,
-)
-from waypoints.llm.validation import (
-    WaypointValidationError,
-    validate_reprioritization,
-    validate_single_waypoint,
-    validate_waypoints,
-)
+from waypoints.llm.validation import WaypointValidationError
 from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory
-from waypoints.models.flight_plan import FlightPlan, FlightPlanReader, FlightPlanWriter
-from waypoints.models.waypoint import Waypoint, WaypointStatus
+from waypoints.models.flight_plan import FlightPlan, FlightPlanReader
+from waypoints.models.waypoint import Waypoint
 from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.flight_plan import (
@@ -128,7 +115,6 @@ class ChartScreen(Screen[None]):
         self.brief = brief
         self.history = history
         self.flight_plan: FlightPlan | None = None
-        self.llm_client: ChatClient | None = None
         self.file_path = project.get_path() / "flight-plan.jsonl"
         self._active_panel = "left"
 
@@ -147,6 +133,7 @@ class ChartScreen(Screen[None]):
             self._coordinator = JourneyCoordinator(
                 project=self.project,
                 flight_plan=self.flight_plan,
+                metrics=self.waypoints_app.metrics_collector,
             )
         return self._coordinator
 
@@ -175,12 +162,6 @@ class ChartScreen(Screen[None]):
 
         # Set up metrics collection for this project
         self.waypoints_app.set_project_for_metrics(self.project)
-
-        # Create ChatClient with metrics collector
-        self.llm_client = ChatClient(
-            metrics_collector=self.waypoints_app.metrics_collector,
-            phase="chart",
-        )
 
         # Hide main container initially (show generating view)
         self.query_one(".main-container").display = False
@@ -239,43 +220,18 @@ class ChartScreen(Screen[None]):
 
     @work(thread=True)
     def _generate_waypoints(self) -> None:
-        """Generate waypoints from product spec via LLM."""
-        assert self.llm_client is not None, "llm_client not initialized"
-
-        prompt = WAYPOINT_GENERATION_PROMPT.format(spec=self.spec)
-
+        """Generate waypoints from product spec via coordinator."""
         logger.info("Generating waypoints from spec: %d chars", len(self.spec))
 
         self.app.call_from_thread(self._set_thinking, True)
 
-        full_response = ""
-
         try:
-            for result in self.llm_client.stream_message(
-                messages=[{"role": "user", "content": prompt}],
-                system=CHART_SYSTEM_PROMPT,
-            ):
-                if isinstance(result, StreamChunk):
-                    full_response += result.text
-                elif isinstance(result, StreamComplete):
-                    # Update header cost display
-                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
+            # Coordinator generates flight plan, saves to disk, and logs to audit
+            flight_plan = self.coordinator.generate_flight_plan(spec=self.spec)
+            self.flight_plan = flight_plan
 
-            # Parse waypoints from response
-            waypoints = self._parse_waypoints(full_response)
-
-            # Create flight plan
-            self.flight_plan = FlightPlan(waypoints=waypoints)
-
-            # Save to disk
-            writer = FlightPlanWriter(self.project)
-            writer.save(self.flight_plan)
-
-            # Log initial generation to audit trail
-            from waypoints.models.waypoint_history import WaypointHistoryWriter
-
-            history_writer = WaypointHistoryWriter(self.project)
-            history_writer.log_generated([wp.to_dict() for wp in waypoints])
+            # Update header cost display
+            self.app.call_from_thread(self.waypoints_app.update_header_cost)
 
             self.app.call_from_thread(self._finalize_generation)
 
@@ -284,42 +240,6 @@ class ChartScreen(Screen[None]):
             self.app.call_from_thread(self.notify, f"Error: {e}", severity="error")
 
         self.app.call_from_thread(self._set_thinking, False)
-
-    def _parse_waypoints(
-        self, response: str, existing_ids: set[str] | None = None
-    ) -> list[Waypoint]:
-        """Parse and validate waypoints from LLM response.
-
-        Args:
-            response: Raw LLM response containing waypoint JSON.
-            existing_ids: Set of existing waypoint IDs (for sub-waypoint validation).
-
-        Returns:
-            List of validated Waypoint objects.
-
-        Raises:
-            WaypointValidationError: If validation fails.
-        """
-        result = validate_waypoints(response, existing_ids)
-
-        if not result.valid:
-            raise WaypointValidationError(result.errors)
-
-        waypoints = []
-        for item in result.data or []:
-            wp = Waypoint(
-                id=item["id"],
-                title=item["title"],
-                objective=item["objective"],
-                acceptance_criteria=item.get("acceptance_criteria", []),
-                parent_id=item.get("parent_id"),
-                dependencies=item.get("dependencies", []),
-                status=WaypointStatus.PENDING,
-            )
-            waypoints.append(wp)
-
-        logger.info("Parsed %d waypoints from LLM response", len(waypoints))
-        return waypoints
 
     def _finalize_generation(self) -> None:
         """Finalize after generation completes."""
@@ -539,51 +459,24 @@ class ChartScreen(Screen[None]):
 
     @work(thread=True)
     def _generate_sub_waypoints(self, parent: Waypoint) -> None:
-        """Generate sub-waypoints via LLM."""
-        assert self.llm_client is not None, "llm_client not initialized"
-
-        criteria_str = "\n".join(f"- {c}" for c in parent.acceptance_criteria)
-        if not criteria_str:
-            criteria_str = "(none specified)"
-
-        prompt = WAYPOINT_BREAKDOWN_PROMPT.format(
-            parent_id=parent.id,
-            title=parent.title,
-            objective=parent.objective,
-            criteria=criteria_str,
-        )
-
+        """Generate sub-waypoints via coordinator."""
         self.app.call_from_thread(self._set_thinking, True)
 
         try:
-            full_response = ""
-            for result in self.llm_client.stream_message(
-                messages=[{"role": "user", "content": prompt}],
-                system=CHART_SYSTEM_PROMPT,
-            ):
-                if isinstance(result, StreamChunk):
-                    full_response += result.text
-                elif isinstance(result, StreamComplete):
-                    # Update header cost display
-                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
+            # Coordinator breaks down waypoint and returns sub-waypoints
+            sub_waypoints = self.coordinator.break_down_waypoint(waypoint=parent)
 
-            # Parse the sub-waypoints (pass existing IDs for validation)
-            existing_ids = (
-                {wp.id for wp in self.flight_plan.waypoints}
-                if self.flight_plan
-                else set()
-            )
-            sub_waypoints = self._parse_waypoints(full_response, existing_ids)
-
-            # Ensure all have correct parent_id
-            for wp in sub_waypoints:
-                wp.parent_id = parent.id
+            # Update header cost display
+            self.app.call_from_thread(self.waypoints_app.update_header_cost)
 
             # Show preview modal
             self.app.call_from_thread(
                 self._show_break_down_preview, parent, sub_waypoints
             )
 
+        except ValueError as e:
+            # Waypoint is already an epic
+            self.app.call_from_thread(self.notify, str(e), severity="warning")
         except Exception as e:
             logger.exception("Error generating sub-waypoints: %s", e)
             self.app.call_from_thread(self.notify, f"Error: {e}", severity="error")
@@ -684,88 +577,45 @@ class ChartScreen(Screen[None]):
 
         self.app.push_screen(AddWaypointModal(), handle_result)
 
-    def _next_waypoint_id(self) -> str:
-        """Generate next available waypoint ID."""
-        if not self.flight_plan:
-            return "WP-001"
-        existing = {wp.id for wp in self.flight_plan.waypoints}
-        for i in range(1, 1000):
-            candidate = f"WP-{i:03d}"
-            if candidate not in existing:
-                return candidate
-        return "WP-999"  # Fallback
-
     @work(thread=True)
     def _generate_new_waypoint(self, description: str) -> None:
-        """Generate a waypoint from user description via LLM."""
-        assert self.llm_client is not None
+        """Generate a waypoint from user description via coordinator."""
         assert self.flight_plan is not None
-
-        next_id = self._next_waypoint_id()
-        existing_ids = {wp.id for wp in self.flight_plan.waypoints}
-
-        # Format existing waypoints for context
-        existing_waypoints = "\n".join(
-            f"- {wp.id}: {wp.title}" for wp in self.flight_plan.get_root_waypoints()
-        )
-
-        # Truncate spec for prompt
-        spec_summary = self.spec[:2000] if self.spec else "No product spec available"
-
-        prompt = WAYPOINT_ADD_PROMPT.format(
-            description=description,
-            existing_waypoints=existing_waypoints or "No existing waypoints",
-            spec_summary=spec_summary,
-            next_id=next_id,
-        )
 
         self.app.call_from_thread(
             self.notify, "Generating waypoint...", severity="information"
         )
 
-        full_response = ""
+        # Truncate spec for prompt context
+        spec_summary = self.spec[:2000] if self.spec else None
+
         try:
-            for result in self.llm_client.stream_message(
-                messages=[{"role": "user", "content": prompt}],
-                system=CHART_SYSTEM_PROMPT,
-            ):
-                if isinstance(result, StreamChunk):
-                    full_response += result.text
-                elif isinstance(result, StreamComplete):
-                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
+            # Coordinator generates waypoint and returns it with insert position
+            waypoint, insert_after = self.coordinator.generate_waypoint(
+                description=description,
+                spec_summary=spec_summary,
+            )
+
+            # Update header cost display
+            self.app.call_from_thread(self.waypoints_app.update_header_cost)
+
+            # Show preview modal
+            self.app.call_from_thread(
+                self._show_waypoint_preview, waypoint, insert_after
+            )
+
+        except WaypointValidationError as e:
+            logger.error("Waypoint validation failed: %s", e)
+            self.app.call_from_thread(
+                self.notify,
+                f"Invalid waypoint: {e}",
+                severity="error",
+            )
         except Exception as e:
             logger.exception("Error generating waypoint: %s", e)
             self.app.call_from_thread(
                 self.notify, f"Error generating waypoint: {e}", severity="error"
             )
-            return
-
-        # Validate the response
-        validation = validate_single_waypoint(full_response, existing_ids)
-        if not validation.valid:
-            logger.error("Waypoint validation failed: %s", validation.errors)
-            self.app.call_from_thread(
-                self.notify,
-                f"Invalid waypoint: {validation.errors[0]}",
-                severity="error",
-            )
-            return
-
-        # Create waypoint from validated data
-        data = validation.data
-        assert data is not None
-        waypoint = Waypoint(
-            id=data["id"],
-            title=data["title"],
-            objective=data["objective"],
-            acceptance_criteria=data.get("acceptance_criteria", []),
-            dependencies=data.get("dependencies", []),
-            status=WaypointStatus.PENDING,
-        )
-
-        # Show preview modal
-        insert_after = validation.insert_after
-        self.app.call_from_thread(self._show_waypoint_preview, waypoint, insert_after)
 
     def _show_waypoint_preview(
         self, waypoint: Waypoint, insert_after: str | None
@@ -811,82 +661,62 @@ class ChartScreen(Screen[None]):
 
     @work(thread=True)
     def _generate_reprioritization(self) -> None:
-        """Generate reprioritization suggestion via LLM."""
-        import json
-
-        assert self.llm_client is not None
+        """Generate reprioritization suggestion via coordinator."""
         assert self.flight_plan is not None
 
         root_waypoints = self.flight_plan.get_root_waypoints()
+        current_order = [wp.id for wp in root_waypoints]
 
-        # Format waypoints for context
-        waypoints_json = json.dumps(
-            [
-                {"id": wp.id, "title": wp.title, "dependencies": wp.dependencies}
-                for wp in root_waypoints
-            ],
-            indent=2,
-        )
+        # Truncate spec for prompt context
+        spec_summary = self.spec[:2000] if self.spec else None
 
-        # Truncate spec for prompt
-        spec_summary = self.spec[:2000] if self.spec else "No product spec available"
-
-        prompt = REPRIORITIZE_PROMPT.format(
-            waypoints_json=waypoints_json,
-            spec_summary=spec_summary,
-        )
-
-        full_response = ""
         try:
-            for result in self.llm_client.stream_message(
-                messages=[{"role": "user", "content": prompt}],
-                system=CHART_SYSTEM_PROMPT,
-            ):
-                if isinstance(result, StreamChunk):
-                    full_response += result.text
-                elif isinstance(result, StreamComplete):
-                    self.app.call_from_thread(self.waypoints_app.update_header_cost)
+            # Coordinator suggests reprioritization
+            new_order, rationale, changes = self.coordinator.suggest_reprioritization(
+                spec_summary=spec_summary,
+            )
+
+            # Update header cost display
+            self.app.call_from_thread(self.waypoints_app.update_header_cost)
+
+            # Check if order actually changed
+            if new_order == current_order:
+                self.app.call_from_thread(self._set_thinking, False)
+                self.app.call_from_thread(
+                    self.notify,
+                    f"Order is already optimal: {rationale}",
+                    severity="information",
+                )
+                return
+
+            # Show preview modal
+            self.app.call_from_thread(self._set_thinking, False)
+            self.app.call_from_thread(
+                self._show_reprioritize_preview,
+                current_order,
+                new_order,
+                rationale,
+                changes,
+            )
+
+        except RuntimeError as e:
+            # Not enough waypoints or no flight plan
+            self.app.call_from_thread(self._set_thinking, False)
+            self.app.call_from_thread(self.notify, str(e), severity="warning")
+        except WaypointValidationError as e:
+            logger.error("Reprioritization validation failed: %s", e)
+            self.app.call_from_thread(self._set_thinking, False)
+            self.app.call_from_thread(
+                self.notify,
+                f"Invalid response: {e}",
+                severity="error",
+            )
         except Exception as e:
             logger.exception("Error generating reprioritization: %s", e)
             self.app.call_from_thread(self._set_thinking, False)
             self.app.call_from_thread(
                 self.notify, f"Error analyzing order: {e}", severity="error"
             )
-            return
-
-        # Hide thinking indicator
-        self.app.call_from_thread(self._set_thinking, False)
-
-        # Validate response
-        root_ids = {wp.id for wp in root_waypoints}
-        validation = validate_reprioritization(full_response, root_ids)
-        if not validation.valid:
-            logger.error("Reprioritization validation failed: %s", validation.errors)
-            self.app.call_from_thread(
-                self.notify,
-                f"Invalid response: {validation.errors[0]}",
-                severity="error",
-            )
-            return
-
-        # Check if order actually changed
-        current_order = [wp.id for wp in root_waypoints]
-        if validation.new_order == current_order:
-            self.app.call_from_thread(
-                self.notify,
-                f"Order is already optimal: {validation.rationale}",
-                severity="information",
-            )
-            return
-
-        # Show preview modal
-        self.app.call_from_thread(
-            self._show_reprioritize_preview,
-            current_order,
-            validation.new_order,
-            validation.rationale,
-            validation.changes,
-        )
 
     def _show_reprioritize_preview(
         self,
