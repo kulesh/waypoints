@@ -26,6 +26,7 @@ from waypoints.llm.providers.base import (
     classify_api_error,
     is_retryable_error,
 )
+from waypoints.llm.tools import execute_tool
 
 if TYPE_CHECKING:
     from waypoints.llm.metrics import MetricsCollector
@@ -232,9 +233,13 @@ class AnthropicProvider(LLMProvider):
                                 yield StreamChunk(text=block.text)
                             elif isinstance(block, ToolUseBlock):
                                 has_yielded = True
+                                tool_output = execute_tool(
+                                    block.name, block.input, cwd
+                                )
                                 yield StreamToolUse(
                                     tool_name=block.name,
                                     tool_input=block.input,
+                                    tool_output=tool_output,
                                 )
                     elif isinstance(message, ResultMessage):
                         cost = message.total_cost_usd

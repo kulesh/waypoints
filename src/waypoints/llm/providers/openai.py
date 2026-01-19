@@ -6,7 +6,6 @@ import logging
 import os
 import time
 from collections.abc import AsyncIterator, Iterator
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from waypoints.llm.providers.base import (
@@ -19,6 +18,7 @@ from waypoints.llm.providers.base import (
     classify_api_error,
     is_retryable_error,
 )
+from waypoints.llm.tools import execute_tool
 
 if TYPE_CHECKING:
     from waypoints.llm.metrics import MetricsCollector
@@ -164,116 +164,6 @@ TOOL_NAME_MAP = {
     "glob": "Glob",
     "grep": "Grep",
 }
-
-
-def _execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
-    """Execute a tool and return the result as a string.
-
-    Args:
-        name: Tool name (read_file, write_file, etc.)
-        arguments: Tool arguments.
-        cwd: Working directory for relative paths.
-
-    Returns:
-        Result string to send back to the model.
-    """
-    import subprocess
-
-    try:
-        if name == "read_file":
-            path = Path(arguments["file_path"])
-            if not path.is_absolute() and cwd:
-                path = Path(cwd) / path
-            if not path.exists():
-                return f"Error: File not found: {path}"
-            return path.read_text()
-
-        elif name == "write_file":
-            path = Path(arguments["file_path"])
-            if not path.is_absolute() and cwd:
-                path = Path(cwd) / path
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(arguments["content"])
-            return f"Successfully wrote to {path}"
-
-        elif name == "edit_file":
-            path = Path(arguments["file_path"])
-            if not path.is_absolute() and cwd:
-                path = Path(cwd) / path
-            if not path.exists():
-                return f"Error: File not found: {path}"
-            content = path.read_text()
-            old_string = arguments["old_string"]
-            new_string = arguments["new_string"]
-            if old_string not in content:
-                return "Error: old_string not found in file"
-            new_content = content.replace(old_string, new_string, 1)
-            path.write_text(new_content)
-            return f"Successfully edited {path}"
-
-        elif name == "bash":
-            command = arguments["command"]
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                cwd=cwd,
-                timeout=120,
-            )
-            output = result.stdout
-            if result.stderr:
-                output += f"\nSTDERR:\n{result.stderr}"
-            if result.returncode != 0:
-                output += f"\nExit code: {result.returncode}"
-            return output or "(no output)"
-
-        elif name == "glob":
-            pattern = arguments["pattern"]
-            search_path = Path(arguments.get("path", cwd or "."))
-            if not search_path.is_absolute() and cwd:
-                search_path = Path(cwd) / search_path
-            matches = list(search_path.glob(pattern))
-            return "\n".join(str(m) for m in matches[:100]) or "(no matches)"
-
-        elif name == "grep":
-            import re
-
-            pattern = arguments["pattern"]
-            search_path = Path(arguments.get("path", cwd or "."))
-            if not search_path.is_absolute() and cwd:
-                search_path = Path(cwd) / search_path
-            glob_pattern = arguments.get("glob", "**/*")
-
-            results: list[str] = []
-            regex = re.compile(pattern)
-
-            if search_path.is_file():
-                files = [search_path]
-            else:
-                files = list(search_path.glob(glob_pattern))
-
-            for f in files[:50]:  # Limit files searched
-                if f.is_file():
-                    try:
-                        content = f.read_text()
-                        for i, line in enumerate(content.split("\n"), 1):
-                            if regex.search(line):
-                                results.append(f"{f}:{i}:{line}")
-                                if len(results) >= 100:
-                                    break
-                    except (UnicodeDecodeError, PermissionError):
-                        continue
-                if len(results) >= 100:
-                    break
-
-            return "\n".join(results) or "(no matches)"
-
-        else:
-            return f"Error: Unknown tool: {name}"
-
-    except Exception as e:
-        return f"Error executing {name}: {e}"
 
 
 class OpenAIProvider(LLMProvider):
@@ -483,13 +373,13 @@ class OpenAIProvider(LLMProvider):
 
                             # Yield tool use for logging/display
                             has_yielded = True
+                            # Execute the tool (host-side) and surface output
+                            result = execute_tool(tool_name, arguments, cwd)
                             yield StreamToolUse(
                                 tool_name=TOOL_NAME_MAP.get(tool_name, tool_name),
                                 tool_input=arguments,
+                                tool_output=result,
                             )
-
-                            # Execute the tool
-                            result = _execute_tool(tool_name, arguments, cwd)
 
                             # Add tool result to messages
                             messages.append({
