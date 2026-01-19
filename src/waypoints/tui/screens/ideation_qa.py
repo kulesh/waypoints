@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from waypoints.tui.app import WaypointsApp
 
 from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
+from waypoints.llm.prompts import QA_SYSTEM_PROMPT
 from waypoints.models import JourneyState, Project, SessionWriter
 from waypoints.models.dialogue import MessageRole
 from waypoints.tui.messages import (
@@ -28,30 +29,6 @@ from waypoints.tui.widgets.dialogue import (
 from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
 
 logger = logging.getLogger(__name__)
-
-SYSTEM_PROMPT = """\
-You are a product design assistant helping crystallize an idea through dialogue.
-
-Your role is to ask ONE clarifying question at a time to help the user refine
-their idea. After each answer, briefly acknowledge what you learned, then ask
-the next most important question.
-
-Focus on understanding:
-1. The core problem being solved and why it matters
-2. Who the target users are and their pain points
-3. Key features and capabilities needed
-4. Technical constraints or preferences
-5. What success looks like
-
-Guidelines:
-- Ask only ONE question per response
-- Keep questions focused and specific
-- Build on previous answers
-- Be curious and dig deeper when answers are vague
-- Don't summarize or conclude - the user will tell you when they're done
-
-The user will press Ctrl+D when they feel the idea is sufficiently refined.
-Until then, keep asking questions to deepen understanding."""
 
 
 class IdeationQAScreen(BaseDialogueScreen):
@@ -188,7 +165,7 @@ class IdeationQAScreen(BaseDialogueScreen):
         try:
             for result in self.llm_client.stream_message(
                 messages=self.history.to_api_format(),
-                system=SYSTEM_PROMPT,
+                system=QA_SYSTEM_PROMPT,
             ):
                 if isinstance(result, StreamChunk):
                     response_content += result.text
@@ -224,7 +201,7 @@ class IdeationQAScreen(BaseDialogueScreen):
         try:
             for result in self.llm_client.stream_message(
                 messages=self.history.to_api_format(),
-                system=SYSTEM_PROMPT,
+                system=QA_SYSTEM_PROMPT,
             ):
                 if isinstance(result, StreamChunk):
                     response_content += result.text
