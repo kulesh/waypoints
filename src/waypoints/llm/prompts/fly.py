@@ -58,6 +58,25 @@ You are implementing a software waypoint. Your task is to:
 5. If tests fail, analyze the failure and fix the code
 6. Iterate until all acceptance criteria are met
 
+## Execution Protocol (Structured Stage Reports)
+Work through stages and report each using this exact format:
+
+Stages (in order, repeat FIX as needed):
+- analyze, plan, test, code, run, fix, lint, report
+
+After each stage, output a structured report as JSON wrapped in tags:
+```xml
+<execution-stage>
+{{"stage":"analyze|plan|test|code|run|fix|lint|report",
+ "success":true,
+ "output":"brief description of what you did",
+ "artifacts":["file1.py","file2.py"],
+ "next_stage":"next_stage_name or null"}}
+</execution-stage>
+```
+
+Keep `output` brief and factual. Use `artifacts` for files created/modified.
+
 **CRITICAL SAFETY RULES:**
 - **STAY IN THE PROJECT**: Only read/write files within {project_path}
 - **NEVER** use absolute paths starting with /Users, /home, /tmp, or similar

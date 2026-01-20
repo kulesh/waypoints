@@ -14,6 +14,7 @@ from .journey import (
 )
 from .project import Project, slugify
 from .session import SessionReader, SessionWriter
+from .state_manager import JourneyStateManager, StateGuardError
 from .waypoint import Waypoint, WaypointStatus
 
 __all__ = [
@@ -28,8 +29,10 @@ __all__ = [
     "MessageRole",
     "PHASE_TO_STATE",
     "Project",
+    "JourneyStateManager",
     "RECOVERABLE_STATES",
     "RECOVERY_MAP",
+    "StateGuardError",
     "STATE_TO_PHASE",
     "SessionReader",
     "SessionWriter",

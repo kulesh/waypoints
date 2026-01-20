@@ -162,7 +162,10 @@ class IdeaBriefScreen(Screen[None]):
         self.waypoints_app.set_project_for_metrics(self.project)
 
         # Transition journey state: SHAPE_QA -> SHAPE_BRIEF_GENERATING
-        self.project.transition_journey(JourneyState.SHAPE_BRIEF_GENERATING)
+        self.coordinator.transition(
+            JourneyState.SHAPE_BRIEF_GENERATING,
+            reason="idea_brief.generate",
+        )
 
         self._generate_brief()
 
@@ -224,7 +227,10 @@ class IdeaBriefScreen(Screen[None]):
         self.query_one("#file-path", Static).update(str(file_path))
 
         # Transition journey state: SHAPE_BRIEF_GENERATING -> SHAPE_BRIEF_REVIEW
-        self.project.transition_journey(JourneyState.SHAPE_BRIEF_REVIEW)
+        self.coordinator.transition(
+            JourneyState.SHAPE_BRIEF_REVIEW,
+            reason="idea_brief.review",
+        )
 
         self.notify(f"Saved to {file_path.name}", severity="information")
         logger.info("Brief generation complete: %d chars", len(self.brief_content))

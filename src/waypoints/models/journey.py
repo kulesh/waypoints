@@ -179,7 +179,7 @@ class Journey:
         """
         return target in VALID_TRANSITIONS.get(self.state, set())
 
-    def transition(self, target: JourneyState) -> "Journey":
+    def transition(self, target: JourneyState, reason: str | None = None) -> "Journey":
         """Transition to a new state, returning a new Journey.
 
         This method is immutable - it returns a new Journey instance
@@ -199,13 +199,14 @@ class Journey:
 
         now = datetime.now(UTC)
         new_history = self.state_history.copy()
-        new_history.append(
-            {
-                "from": self.state.value,
-                "to": target.value,
-                "at": now.isoformat(),
-            }
-        )
+        entry: dict[str, str] = {
+            "from": self.state.value,
+            "to": target.value,
+            "at": now.isoformat(),
+        }
+        if reason:
+            entry["reason"] = reason
+        new_history.append(entry)
 
         return Journey(
             state=target,

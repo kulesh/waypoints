@@ -182,7 +182,9 @@ class ChartScreen(Screen[None]):
             # Generate new plan - but first verify we can transition
             # Expected: SHAPE_SPEC_REVIEW -> CHART_GENERATING
             journey = self.project.journey
-            if journey and not journey.can_transition(JourneyState.CHART_GENERATING):
+            if journey and not self.coordinator.can_transition(
+                JourneyState.CHART_GENERATING
+            ):
                 # Not in expected state (e.g., after crash recovery to earlier state)
                 # Redirect to appropriate screen for current phase
                 logger.warning(
@@ -197,7 +199,10 @@ class ChartScreen(Screen[None]):
                 self.app.call_later(self._redirect_to_current_phase)
                 return
 
-            self.project.transition_journey(JourneyState.CHART_GENERATING)
+            self.coordinator.transition(
+                JourneyState.CHART_GENERATING,
+                reason="chart.generate",
+            )
             self._generate_waypoints()
 
     def _show_panels(self) -> None:
@@ -250,7 +255,10 @@ class ChartScreen(Screen[None]):
         self._update_panels()
 
         # Transition journey state: CHART_GENERATING -> CHART_REVIEW
-        self.project.transition_journey(JourneyState.CHART_REVIEW)
+        self.coordinator.transition(
+            JourneyState.CHART_REVIEW,
+            reason="chart.review",
+        )
 
         self.notify("Flight plan generated!", severity="information")
         logger.info("Flight plan generation complete")
@@ -786,8 +794,11 @@ class ChartScreen(Screen[None]):
         # Transition journey state to FLY_READY when valid.
         journey = self.project.journey
         if journey:
-            if journey.can_transition(JourneyState.FLY_READY):
-                self.project.transition_journey(JourneyState.FLY_READY)
+            if self.coordinator.can_transition(JourneyState.FLY_READY):
+                self.coordinator.transition(
+                    JourneyState.FLY_READY,
+                    reason="chart.proceed",
+                )
             elif journey.state in (
                 JourneyState.FLY_READY,
                 JourneyState.FLY_EXECUTING,
@@ -805,7 +816,10 @@ class ChartScreen(Screen[None]):
                 )
                 return
         else:
-            self.project.transition_journey(JourneyState.FLY_READY)
+            self.coordinator.transition(
+                JourneyState.FLY_READY,
+                reason="chart.proceed",
+            )
 
         # Transition to FLY phase
         self.waypoints_app.switch_phase(
@@ -841,7 +855,10 @@ class ChartScreen(Screen[None]):
         # Transition to FLY_READY if currently in CHART_REVIEW
         journey = self.project.journey
         if journey and journey.state == JourneyState.CHART_REVIEW:
-            self.project.transition_journey(JourneyState.FLY_READY)
+            self.coordinator.transition(
+                JourneyState.FLY_READY,
+                reason="chart.forward",
+            )
 
         self.app.switch_screen(
             FlyScreen(

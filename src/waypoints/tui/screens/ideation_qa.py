@@ -128,7 +128,10 @@ class IdeationQAScreen(BaseDialogueScreen):
         self.waypoints_app.set_project_for_metrics(self.project)
 
         # Transition journey state: SPARK_ENTERING -> SHAPE_QA
-        self.project.transition_journey(JourneyState.SHAPE_QA)
+        self.coordinator.transition(
+            JourneyState.SHAPE_QA,
+            reason="ideation_qa.start",
+        )
 
         self._start_qa()
 
