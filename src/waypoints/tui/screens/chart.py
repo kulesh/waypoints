@@ -783,8 +783,29 @@ class ChartScreen(Screen[None]):
             self.notify(f"Fix issues: {errors[0]}", severity="error")
             return
 
-        # Transition journey state: CHART_REVIEW -> FLY_READY
-        self.project.transition_journey(JourneyState.FLY_READY)
+        # Transition journey state to FLY_READY when valid.
+        journey = self.project.journey
+        if journey:
+            if journey.can_transition(JourneyState.FLY_READY):
+                self.project.transition_journey(JourneyState.FLY_READY)
+            elif journey.state in (
+                JourneyState.FLY_READY,
+                JourneyState.FLY_EXECUTING,
+                JourneyState.FLY_PAUSED,
+                JourneyState.FLY_INTERVENTION,
+            ):
+                logger.info(
+                    "Skipping journey transition: already in fly state %s",
+                    journey.state,
+                )
+            else:
+                self.notify(
+                    f"Cannot proceed to fly from {journey.state.value}",
+                    severity="error",
+                )
+                return
+        else:
+            self.project.transition_journey(JourneyState.FLY_READY)
 
         # Transition to FLY phase
         self.waypoints_app.switch_phase(
