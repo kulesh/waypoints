@@ -321,6 +321,7 @@ class ReceiptBuilder:
         )
         self.evidence: dict[str, CapturedEvidence] = {}
         self.criteria: dict[int, CriterionVerification] = {}
+        self.skipped: dict[str, str] = {}
 
     def capture(self, category: str, evidence: CapturedEvidence) -> None:
         """Capture evidence for a checklist category.
@@ -347,6 +348,10 @@ class ReceiptBuilder:
             verification.status,
         )
 
+    def capture_skipped(self, category: str, reason: str) -> None:
+        """Record a skipped checklist item with a reason."""
+        self.skipped[category] = reason
+
     def build(self) -> ChecklistReceipt:
         """Build receipt from captured evidence.
 
@@ -367,6 +372,15 @@ class ReceiptBuilder:
                 )
             )
 
+        for category, reason in self.skipped.items():
+            checklist_items.append(
+                ChecklistItem(
+                    item=category,
+                    status="skipped",
+                    reason=reason,
+                )
+            )
+
         # Sort criteria by index for consistent output
         criteria_list = sorted(self.criteria.values(), key=lambda c: c.index)
 
@@ -380,4 +394,4 @@ class ReceiptBuilder:
 
     def has_evidence(self) -> bool:
         """Check if any evidence has been captured."""
-        return len(self.evidence) > 0
+        return len(self.evidence) > 0 or len(self.skipped) > 0

@@ -55,6 +55,11 @@ from waypoints.llm.client import (
     extract_reset_time,
 )
 from waypoints.llm.prompts import build_execution_prompt, build_verification_prompt
+from waypoints.llm.providers.base import (
+    BUDGET_PATTERNS,
+    RATE_LIMIT_PATTERNS,
+    UNAVAILABLE_PATTERNS,
+)
 from waypoints.models.project import Project
 from waypoints.models.waypoint import Waypoint
 
@@ -228,6 +233,7 @@ class WaypointExecutor:
         on_progress: ProgressCallback | None = None,
         max_iterations: int = MAX_ITERATIONS,
         metrics_collector: "MetricsCollector | None" = None,
+        host_validations_enabled: bool = True,
     ) -> None:
         self.project = project
         self.waypoint = waypoint
@@ -235,6 +241,7 @@ class WaypointExecutor:
         self.on_progress = on_progress
         self.max_iterations = max_iterations
         self.metrics_collector = metrics_collector
+        self.host_validations_enabled = host_validations_enabled
         self.steps: list[ExecutionStep] = []
         self._cancelled = False
         self._log_writer: ExecutionLogWriter | None = None
@@ -336,7 +343,16 @@ class WaypointExecutor:
                 async for chunk in agent_query(
                     prompt=iter_prompt,
                     system_prompt=self._get_system_prompt(),
-                    allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+                    allowed_tools=[
+                        "Read",
+                        "Write",
+                        "Edit",
+                        "Bash",
+                        "Glob",
+                        "Grep",
+                        "WebSearch",
+                        "WebFetch",
+                    ],
                     cwd=str(project_path),
                     metrics_collector=self.metrics_collector,
                     phase="fly",
@@ -410,6 +426,7 @@ class WaypointExecutor:
                                 captured_criteria,
                                 self._validation_commands,
                                 reported_validation_commands,
+                                host_validations_enabled=self.host_validations_enabled,
                             )
 
                             if receipt_valid:
@@ -490,6 +507,23 @@ class WaypointExecutor:
 
                 # Classify the error for better user feedback
                 api_error_type = classify_api_error(e)
+                # If output mentions budget/rate-limit issues, override classification
+                lower_output = full_output.lower()
+                if api_error_type == APIErrorType.UNKNOWN:
+                    for pattern in BUDGET_PATTERNS:
+                        if pattern in lower_output:
+                            api_error_type = APIErrorType.BUDGET_EXCEEDED
+                            break
+                    if api_error_type == APIErrorType.UNKNOWN:
+                        for pattern in RATE_LIMIT_PATTERNS:
+                            if pattern in lower_output:
+                                api_error_type = APIErrorType.RATE_LIMITED
+                                break
+                        if api_error_type == APIErrorType.UNKNOWN:
+                            for pattern in UNAVAILABLE_PATTERNS:
+                                if pattern in lower_output:
+                                    api_error_type = APIErrorType.API_UNAVAILABLE
+                                    break
 
                 # Map API error type to intervention type
                 intervention_type = {
@@ -773,6 +807,21 @@ When complete, output the completion marker specified in the instructions."""
         if not commands:
             return evidence
 
+        # Build environment honoring user shell PATH (e.g., mise, cargo shims)
+        env = os.environ.copy()
+        path_parts = env.get("PATH", "").split(os.pathsep) if env.get("PATH") else []
+        extra_paths = [
+            Path.home() / ".local" / "share" / "mise" / "shims",
+            Path.home() / ".local" / "bin",
+            Path.home() / ".cargo" / "bin",
+        ]
+        for extra in extra_paths:
+            extra_str = str(extra)
+            if extra.exists() and extra_str not in path_parts:
+                path_parts.append(extra_str)
+        env["PATH"] = os.pathsep.join(path_parts)
+        shell_executable = env.get("SHELL") or "/bin/sh"
+
         def _decode_output(data: bytes | str | None) -> str:
             if isinstance(data, bytes):
                 return data.decode(errors="replace")
@@ -787,6 +836,8 @@ When complete, output the completion marker specified in the instructions."""
                     capture_output=True,
                     text=True,
                     cwd=project_path,
+                    env=env,
+                    executable=shell_executable,
                     timeout=300,
                 )
                 stdout = _decode_output(result.stdout)
@@ -836,6 +887,7 @@ When complete, output the completion marker specified in the instructions."""
         captured_criteria: dict[int, CriterionVerification],
         validation_commands: list[ValidationCommand],
         reported_validation_commands: list[str],
+        host_validations_enabled: bool = True,
     ) -> bool:
         """Build receipt from host-captured evidence and verify with LLM.
 
@@ -847,6 +899,8 @@ When complete, output the completion marker specified in the instructions."""
                 stack detection and checklist overrides.
             reported_validation_commands: Commands reported by the model in
                 <validation> blocks (used as fallback when no stack commands).
+            host_validations_enabled: Whether to run host validations or skip
+                and rely on model-provided evidence only.
 
         Returns:
             True if receipt is valid, False otherwise.
@@ -861,7 +915,6 @@ When complete, output the completion marker specified in the instructions."""
             "Running host validations and building receipt...",
         )
 
-        # Build receipt with waypoint context
         receipt_builder = ReceiptBuilder(
             waypoint_id=self.waypoint.id,
             title=self.waypoint.title,
@@ -872,6 +925,55 @@ When complete, output the completion marker specified in the instructions."""
         commands_to_run = validation_commands or (
             self._fallback_validation_commands_from_model(reported_validation_commands)
         )
+
+        # If host validations are disabled, record skips and return early with a
+        # soft receipt.
+        if not host_validations_enabled:
+            self._report_progress(
+                self.max_iterations,
+                self.max_iterations,
+                "finalizing",
+                "Host validations OFF (LLM-as-judge only)...",
+            )
+
+            if commands_to_run:
+                for cmd in commands_to_run:
+                    reason = "Host validation skipped (LLM-as-judge only)"
+                    receipt_builder.capture_skipped(cmd.name or cmd.command, reason)
+            else:
+                receipt_builder.capture_skipped(
+                    "host_validations",
+                    "Host validation skipped (LLM-as-judge only)",
+                )
+
+            for idx, criterion in captured_criteria.items():
+                logger.info(
+                    "Adding criterion verification: [%d] %s",
+                    idx,
+                    criterion.status,
+                )
+                receipt_builder.capture_criterion(criterion)
+                self._log_writer.log_finalize_tool_call(
+                    "CapturedCriterion",
+                    {"index": idx, "criterion": criterion.criterion},
+                    criterion.status,
+                )
+
+            receipt = receipt_builder.build()
+            receipts_dir = self.project.get_path() / "receipts"
+            receipts_dir.mkdir(parents=True, exist_ok=True)
+            safe_wp_id = self.waypoint.id.lower().replace("-", "")
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            receipt_path = receipts_dir / f"{safe_wp_id}-{timestamp}.json"
+            receipt.save(receipt_path)
+
+            self._log_writer.log_finalize_end()
+            self._log_writer.log_receipt_validated(
+                str(receipt_path),
+                True,
+                "Host validation skipped (LLM-as-judge only)",
+            )
+            return True
 
         if not commands_to_run:
             logger.warning("No validation commands available to run for receipt")
@@ -1038,6 +1140,7 @@ async def execute_waypoint(
     on_progress: ProgressCallback | None = None,
     max_iterations: int = MAX_ITERATIONS,
     metrics_collector: "MetricsCollector | None" = None,
+    host_validations_enabled: bool = True,
 ) -> ExecutionResult:
     """Convenience function to execute a single waypoint.
 
@@ -1048,6 +1151,7 @@ async def execute_waypoint(
         on_progress: Optional callback for progress updates
         max_iterations: Maximum iterations before intervention (default 10)
         metrics_collector: Optional collector for recording LLM metrics
+        host_validations_enabled: Whether to run host validations in finalize
 
     Returns:
         ExecutionResult indicating success, failure, or other outcomes
@@ -1062,5 +1166,6 @@ async def execute_waypoint(
         on_progress,
         max_iterations=max_iterations,
         metrics_collector=metrics_collector,
+        host_validations_enabled=host_validations_enabled,
     )
     return await executor.execute()

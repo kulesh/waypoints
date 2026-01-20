@@ -55,7 +55,10 @@ from waypoints.tui.utils import (
 from waypoints.tui.widgets.file_preview import FilePreviewModal
 from waypoints.tui.widgets.flight_plan import FlightPlanTree
 from waypoints.tui.widgets.header import StatusHeader
-from waypoints.tui.widgets.resizable_split import ResizableSplit
+from waypoints.tui.widgets.resizable_split import (
+    ResizableSplit,
+    ResizableSplitVertical,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -367,9 +370,8 @@ class WaypointDetailPanel(Vertical):
     }
 
     WaypointDetailPanel .criteria-section {
-        height: auto;
         padding: 1 1 1 0;
-        border-bottom: solid $surface-lighten-1;
+        border-bottom: none;
     }
 
     WaypointDetailPanel .section-label {
@@ -377,6 +379,10 @@ class WaypointDetailPanel(Vertical):
     }
 
     WaypointDetailPanel .log-section {
+        height: 100%;
+    }
+
+    WaypointDetailPanel .detail-split {
         height: 1fr;
     }
     """
@@ -398,11 +404,21 @@ class WaypointDetailPanel(Vertical):
             yield Static("", classes="wp-objective", id="wp-objective")
             yield Static("Status: Pending", classes="wp-status", id="wp-status")
             yield Static("", classes="wp-status", id="iteration-label")
-        with Vertical(classes="criteria-section", id="criteria-section"):
-            yield Static("Acceptance Criteria", classes="section-label")
-            yield AcceptanceCriteriaList(id="criteria-list")
-        with Vertical(classes="log-section"):
-            yield ExecutionLog(id="execution-log")
+            yield ResizableSplitVertical(
+                top=Vertical(
+                    Static("Acceptance Criteria", classes="section-label"),
+                    AcceptanceCriteriaList(id="criteria-list"),
+                    classes="criteria-section",
+                    id="criteria-section",
+                ),
+                bottom=Vertical(
+                    ExecutionLog(id="execution-log"),
+                    classes="log-section",
+                    id="log-section",
+                ),
+                top_pct=45,
+                classes="detail-split",
+            )
 
     def show_waypoint(
         self,
@@ -478,7 +494,10 @@ class WaypointDetailPanel(Vertical):
 
         # If this is the active waypoint, keep showing live output
         if waypoint.id == active_waypoint_id:
-            # Don't clear - live output is being streamed
+            # If we weren't already showing this waypoint live, clear first
+            if self._showing_output_for != waypoint.id or not self._is_live_output:
+                log.clear_log()
+                self.clear_iteration()
             self._showing_output_for = waypoint.id
             self._is_live_output = True
             return
@@ -1053,6 +1072,7 @@ class FlyScreen(Screen[None]):
         Binding("r", "start", "Run", show=True),
         Binding("p", "pause", "Pause", show=True),
         Binding("s", "skip", "Skip", show=True),
+        Binding("h", "toggle_host_validations", "HostVal", show=True),
         Binding("escape", "back", "Back", show=True),
         Binding("ctrl+f", "forward", "Forward", show=False),
         Binding("comma", "shrink_left", "< Pane", show=True),
@@ -1148,6 +1168,12 @@ class FlyScreen(Screen[None]):
 
         # Set up metrics collection for this project
         self.waypoints_app.set_project_for_metrics(self.project)
+        # Load persisted host validation preference for this project
+        self.waypoints_app.host_validations_enabled = (
+            self.waypoints_app.load_host_validation_preference(self.project)
+        )
+        # Reflect initial state in status bar
+        self._update_status_bar(self.execution_state)
 
         # Clean up stale IN_PROGRESS from previous sessions (via coordinator)
         self.coordinator.reset_stale_in_progress()
@@ -1345,12 +1371,16 @@ class FlyScreen(Screen[None]):
 
         status_bar = self.query_one("#status-bar", Static)
         message = self._get_state_message(self.execution_state)
-        status_bar.update(f"⏱ {minutes}:{seconds:02d} | ${cost:.2f}    {message}")
+        host_label = self._host_validation_label()
+        status_bar.update(
+            f"{host_label}    ⏱ {minutes}:{seconds:02d} | ${cost:.2f}    {message}"
+        )
 
     def _update_status_bar(self, state: ExecutionState) -> None:
         """Update the status bar with state message and optional cost."""
         status_bar = self.query_one("#status-bar", Static)
         message = self._get_state_message(state)
+        host_label = self._host_validation_label()
 
         # Update action hint in left panel
         list_panel = self.query_one(WaypointListPanel)
@@ -1367,9 +1397,15 @@ class FlyScreen(Screen[None]):
             else 0.0
         )
         if cost > 0:
-            status_bar.update(f"${cost:.2f}    {message}")
+            status_bar.update(f"{host_label}    ${cost:.2f}    {message}")
         else:
-            status_bar.update(message)
+            status_bar.update(f"{host_label}    {message}")
+
+    def _host_validation_label(self) -> str:
+        """Return a short label for host validation mode."""
+        if self.waypoints_app.host_validations_enabled:
+            return "HostVal: ON"
+        return "HostVal: OFF (LLM-as-judge)"
 
     def watch_execution_state(self, state: ExecutionState) -> None:
         """Update UI when execution state changes."""
@@ -1480,6 +1516,24 @@ class FlyScreen(Screen[None]):
         self.execution_state = ExecutionState.RUNNING
         self._execute_current_waypoint()
 
+    def action_toggle_host_validations(self) -> None:
+        """Toggle host validations for the next execution."""
+        app = self.waypoints_app
+        app.host_validations_enabled = not app.host_validations_enabled
+        state = (
+            "ON" if app.host_validations_enabled else "OFF (LLM-as-judge only)"
+        )
+        app.save_host_validation_preference(self.project)
+        try:
+            detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
+            detail_panel.execution_log.log_heading(f"Host validation {state}")
+        except Exception:
+            # Log pane may not be mounted yet
+            pass
+        self.notify(f"Host validation {state}")
+        self.app.bell()
+        logger.info("Host validations toggled to %s", state)
+
     def action_pause(self) -> None:
         """Pause execution after current waypoint."""
         if self.execution_state == ExecutionState.RUNNING:
@@ -1563,6 +1617,12 @@ class FlyScreen(Screen[None]):
         log.clear_log()
         wp_title = f"{self.current_waypoint.id}: {self.current_waypoint.title}"
         log.log_heading(f"Starting {wp_title}")
+        host_state = (
+            "ON"
+            if self.waypoints_app.host_validations_enabled
+            else "OFF (LLM-as-judge only)"
+        )
+        log.log_success(f"Host validation: {host_state}")
         detail_panel.clear_iteration()
 
         # Refresh the waypoint list to show blinking status
@@ -1582,6 +1642,7 @@ class FlyScreen(Screen[None]):
             on_progress=self._on_execution_progress,
             max_iterations=max_iters,
             metrics_collector=self.waypoints_app.metrics_collector,
+            host_validations_enabled=self.waypoints_app.host_validations_enabled,
         )
 
         # Run execution in background worker

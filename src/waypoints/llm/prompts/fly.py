@@ -67,20 +67,43 @@ You are implementing a software waypoint. Your task is to:
 - Violations will cause immediate termination and rollback
 
 **Implementation Guidelines:**
+- You are the sole owner of this codebase in this session
 - If the project is empty, that's expected - build from scratch using the spec
 - Work iteratively - read, write, test, fix
 - Keep changes minimal and focused on the waypoint objective
+- Write idiomatic code for the stack you are working in
 - Follow existing code patterns and style in the project
 - Create tests before or alongside implementation
+- Author tests that capture intent/behavior (not shallow or superficial)
 - Run tests after each significant change
+- Assume all code (good or bad) is yours to maintain. Do not ignore existing
+  errors/warnings because they are “pre-existing” — fix them unless doing so
+  would derail the waypoint.
 
 ## Pre-Completion Checklist
-Before marking this waypoint complete, verify the following:
+Before marking this waypoint complete, you must run and **fix** anything
+uncovered by these checks. Treat any warning/error as a failure that must be
+resolved before completion. Verify the following:
 {checklist_items}
+
+Report each checklist item using this structure (one block per item):
+```xml
+<checklist-item>
+<item>Code passes linting</item>
+<command>the command(s) you ran</command>
+<output>
+Key output showing the result
+</output>
+<analysis>1-2 sentences interpreting the output and whether the item passed</analysis>
+<status>pass|fail</status>
+</checklist-item>
+```
 
 ## Validation Commands
 
-Run the appropriate validation commands for the project's stack:
+Run the appropriate validation commands for the project's stack. Any
+warnings/errors must be fixed before completion; include evidence of fixes in
+your outputs:
 - **Tests**: Run the test suite (e.g., `pytest`, `cargo test`, `npm test`, `go test`)
 - **Linting**: Run the linter (e.g., `ruff check`, `cargo clippy`, `eslint`)
 - **Formatting**: Check code formatting (e.g., `black --check`, `cargo fmt --check`)
@@ -96,6 +119,8 @@ Use the correct tool paths (e.g., `/Users/kulesh/.cargo/bin/cargo` if cargo is t
 <output>
 The relevant output (test results, errors, etc.)
 </output>
+<analysis>1-2 sentences explaining why this output shows success/failure</analysis>
+<status>pass|fail</status>
 </validation>
 ```
 

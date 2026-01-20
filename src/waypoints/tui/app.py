@@ -1,6 +1,8 @@
 """Main Waypoints TUI application."""
 
+import json
 import logging
+from pathlib import Path
 from typing import Any, cast
 
 from textual.app import App
@@ -84,6 +86,41 @@ class WaypointsApp(App[None]):
         self._current_project_slug: str | None = None
         # Track theme before toggling so we can restore it
         self._previous_theme: str | None = None
+        # Host validation toggle (default ON; can be disabled per project)
+        self.host_validations_enabled: bool = True
+
+    def _host_validation_state_path(self, project: Project) -> Path:
+        """Path to persist host validation preference for a project."""
+        return project.get_path() / ".waypoints" / "app-state.json"
+
+    def load_host_validation_preference(self, project: Project) -> bool:
+        """Load host validation preference for the given project."""
+        path = self._host_validation_state_path(project)
+        try:
+            if path.exists():
+                data = json.loads(path.read_text())
+                return bool(data.get("host_validations_enabled", True))
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(
+                "Failed to load host validation state for %s: %s", project.slug, e
+            )
+        return True
+
+    def save_host_validation_preference(self, project: Project) -> None:
+        """Persist host validation preference for the given project."""
+        path = self._host_validation_state_path(project)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(
+                    {"host_validations_enabled": self.host_validations_enabled},
+                    indent=2,
+                )
+            )
+        except OSError as e:
+            logger.warning(
+                "Failed to save host validation state for %s: %s", project.slug, e
+            )
 
     @property
     def metrics_collector(self) -> MetricsCollector | None:
