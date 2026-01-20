@@ -16,6 +16,7 @@ from uuid import uuid4
 from waypoints.models.schema import migrate_if_needed, write_schema_fields
 
 if TYPE_CHECKING:
+    from waypoints.fly.protocol import StageReport
     from waypoints.models.project import Project
     from waypoints.models.waypoint import Waypoint
 
@@ -347,6 +348,20 @@ class ExecutionLogWriter:
         entry = {
             "type": "completion_detected",
             "iteration": iteration,
+            "timestamp": datetime.now().isoformat(),
+        }
+        self._append(entry)
+
+    def log_stage_report(self, iteration: int, report: "StageReport") -> None:
+        """Log a structured execution stage report."""
+        entry = {
+            "type": "stage_report",
+            "iteration": iteration,
+            "stage": report.stage.value,
+            "success": report.success,
+            "output": report.output,
+            "artifacts": report.artifacts,
+            "next_stage": report.next_stage.value if report.next_stage else None,
             "timestamp": datetime.now().isoformat(),
         }
         self._append(entry)

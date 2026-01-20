@@ -48,6 +48,8 @@ from waypoints.llm.validation import (
 from waypoints.models import (
     DialogueHistory,
     FlightPlan,
+    JourneyState,
+    JourneyStateManager,
     MessageRole,
     Project,
     SessionWriter,
@@ -109,6 +111,7 @@ class JourneyCoordinator:
         self._dialogue_history: DialogueHistory | None = None
         self._session_writer: SessionWriter | None = None
         self._idea: str | None = None
+        self._state_manager = JourneyStateManager(project)
 
     # ─── Properties ──────────────────────────────────────────────────────
 
@@ -133,6 +136,14 @@ class JourneyCoordinator:
     def current_waypoint(self, waypoint: Waypoint | None) -> None:
         """Set the currently selected waypoint."""
         self._current_waypoint = waypoint
+
+    def can_transition(self, target: JourneyState) -> bool:
+        """Check if the project can transition to the target state."""
+        return self._state_manager.is_transition_allowed(target)
+
+    def transition(self, target: JourneyState, reason: str | None = None) -> None:
+        """Transition the project journey to the target state."""
+        self._state_manager.transition(target, reason=reason)
 
     def is_epic(self, waypoint_id: str) -> bool:
         """Check if a waypoint is an epic (has children)."""

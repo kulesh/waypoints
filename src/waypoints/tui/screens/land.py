@@ -27,6 +27,7 @@ from waypoints.llm.metrics import MetricsCollector
 from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader
 from waypoints.models.waypoint import WaypointStatus
+from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.utils import format_duration
 from waypoints.tui.widgets.content_viewer import ContentViewer
 from waypoints.tui.widgets.header import StatusHeader
@@ -1383,6 +1384,18 @@ class LandScreen(Screen[None]):
         self.project = project
         self.flight_plan = flight_plan or FlightPlanReader.load(project)
         self.spec = spec
+        self._coordinator: JourneyCoordinator | None = None
+        self.current_activity: LandActivity = LandActivity.DEBRIEF
+
+    @property
+    def coordinator(self) -> JourneyCoordinator:
+        """Get the coordinator, creating if needed."""
+        if self._coordinator is None:
+            self._coordinator = JourneyCoordinator(
+                project=self.project,
+                flight_plan=self.flight_plan,
+            )
+        return self._coordinator
         self.current_activity = LandActivity.DEBRIEF
 
     @property
@@ -1500,7 +1513,10 @@ class LandScreen(Screen[None]):
     def action_fix_issues(self) -> None:
         """Return to Fly screen to fix issues."""
         # Transition back to FLY_READY
-        self.project.transition_journey(JourneyState.FLY_READY)
+        self.coordinator.transition(
+            JourneyState.FLY_READY,
+            reason="land.fix_issues",
+        )
         self.waypoints_app.switch_phase(
             "fly",
             {
@@ -1513,7 +1529,10 @@ class LandScreen(Screen[None]):
     def action_new_iteration(self) -> None:
         """Start a new V2 iteration."""
         # Transition to SPARK_IDLE for new ideation
-        self.project.transition_journey(JourneyState.SPARK_IDLE)
+        self.coordinator.transition(
+            JourneyState.SPARK_IDLE,
+            reason="land.start_v2",
+        )
         self.notify("Starting V2 iteration...")
         from waypoints.tui.screens.ideation import IdeationScreen
 

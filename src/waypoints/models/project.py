@@ -155,7 +155,11 @@ class Project:
                     pass  # Skip invalid projects
         return sorted(projects, key=lambda p: p.updated_at, reverse=True)
 
-    def transition_journey(self, target: JourneyState) -> None:
+    def transition_journey(
+        self,
+        target: JourneyState,
+        reason: str | None = None,
+    ) -> None:
         """Transition the journey to a new state and save.
 
         If the project doesn't have a journey yet, one will be created.
@@ -176,7 +180,7 @@ class Project:
         if self.journey.state == target:
             return
 
-        self.journey = self.journey.transition(target)
+        self.journey = self.journey.transition(target, reason=reason)
         self.save()
 
         # Commit at milestone states (domain layer, not UX layer)

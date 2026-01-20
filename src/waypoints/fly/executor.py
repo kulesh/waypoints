@@ -26,12 +26,14 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from waypoints.config.app_root import dangerous_app_root
 from waypoints.fly.execution_log import ExecutionLogWriter
 from waypoints.fly.intervention import (
     Intervention,
     InterventionNeededError,
     InterventionType,
 )
+from waypoints.fly.protocol import parse_stage_reports
 from waypoints.fly.stack import (
     STACK_COMMANDS,
     StackConfig,
@@ -246,6 +248,7 @@ class WaypointExecutor:
         self._cancelled = False
         self._log_writer: ExecutionLogWriter | None = None
         self._validation_commands: list[ValidationCommand] = []
+        self._file_operations: list[FileOperation] = []
 
     def cancel(self) -> None:
         """Cancel the execution."""
@@ -257,6 +260,12 @@ class WaypointExecutor:
         Returns the execution result (success, failed, max_iterations, etc.)
         """
         project_path = self.project.get_path()
+        app_root = dangerous_app_root()
+        if project_path.resolve().is_relative_to(app_root):
+            raise RuntimeError(
+                "Project directory resolves inside the Waypoints app directory; "
+                "refusing to execute."
+            )
 
         # Defense in depth: ensure we're in the project directory
         original_cwd = os.getcwd()
@@ -265,7 +274,7 @@ class WaypointExecutor:
             result = await self._execute_impl(project_path)
 
             # Post-execution validation: check for escapes
-            violations = self._validate_no_external_changes()
+            violations = self._validate_no_external_changes(project_path)
             if violations:
                 logger.error(
                     "SECURITY: Agent escaped project directory! Violations:\n%s",
@@ -316,6 +325,7 @@ class WaypointExecutor:
         reported_validation_commands: list[str] = []
         # Criteria verification evidence
         captured_criteria: dict[int, CriterionVerification] = {}
+        logged_stage_reports: set[tuple[object, ...]] = set()
         completion_marker = f"<waypoint-complete>{self.waypoint.id}</waypoint-complete>"
 
         while iteration < self.max_iterations:
@@ -398,6 +408,30 @@ class WaypointExecutor:
                                     idx,
                                     status,
                                 )
+
+                        # Parse structured execution stage reports
+                        for report in parse_stage_reports(full_output):
+                            key = (
+                                report.stage,
+                                report.success,
+                                report.output,
+                                tuple(report.artifacts),
+                                report.next_stage,
+                            )
+                            if key in logged_stage_reports:
+                                continue
+                            logged_stage_reports.add(key)
+                            self._log_writer.log_stage_report(iteration, report)
+                            output = report.output.strip()
+                            if len(output) > 400:
+                                output = output[:400] + "..."
+                            summary = f"{report.stage.value}: {output}".strip()
+                            self._report_progress(
+                                iteration,
+                                self.max_iterations,
+                                "stage",
+                                summary,
+                            )
 
                         # Check for completion marker
                         if completion_marker in full_output:
@@ -485,6 +519,7 @@ class WaypointExecutor:
                         )
                         if file_op:
                             iteration_file_ops.append(file_op)
+                            self._file_operations.append(file_op)
                             # Report progress with updated file operations
                             self._report_progress(
                                 iteration,
@@ -1100,35 +1135,30 @@ When complete, output the completion marker specified in the instructions."""
             )
             return True
 
-    def _validate_no_external_changes(self) -> list[str]:
+    def _validate_no_external_changes(self, project_path: Path) -> list[str]:
         """Check if any files were modified outside the project directory.
 
         Returns a list of violation descriptions. Empty list means no violations.
         """
-        violations = []
+        violations: list[str] = []
+        project_root = project_path.resolve()
 
-        # Get the waypoints app directory (where this code lives)
-        waypoints_app_dir = Path(__file__).parent.parent.parent.parent
-
-        try:
-            # Check git status of waypoints app directory
-            result = subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=waypoints_app_dir,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.stdout.strip():
-                # There are changes in the waypoints app
-                changed_files = result.stdout.strip()
-                violations.append(f"Waypoints app directory modified:\n{changed_files}")
-                logger.warning(
-                    "Agent modified files outside project! Changes:\n%s",
-                    changed_files,
+        for file_op in self._file_operations:
+            if file_op.tool_name not in ("Edit", "Write", "Read"):
+                continue
+            if not file_op.file_path:
+                continue
+            try:
+                candidate = Path(file_op.file_path)
+                resolved = (
+                    candidate.resolve()
+                    if candidate.is_absolute()
+                    else (project_root / candidate).resolve()
                 )
-        except subprocess.SubprocessError as e:
-            logger.debug("Could not check waypoints app git status: %s", e)
+                if not resolved.is_relative_to(project_root):
+                    violations.append(str(file_op.file_path))
+            except OSError:
+                violations.append(str(file_op.file_path))
 
         return violations
 

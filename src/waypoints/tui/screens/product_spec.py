@@ -165,7 +165,10 @@ class ProductSpecScreen(Screen[None]):
         self.waypoints_app.set_project_for_metrics(self.project)
 
         # Transition journey state: SHAPE_BRIEF_REVIEW -> SHAPE_SPEC_GENERATING
-        self.project.transition_journey(JourneyState.SHAPE_SPEC_GENERATING)
+        self.coordinator.transition(
+            JourneyState.SHAPE_SPEC_GENERATING,
+            reason="product_spec.generate",
+        )
 
         self._generate_spec()
 
@@ -225,7 +228,10 @@ class ProductSpecScreen(Screen[None]):
         self.query_one("#file-path", Static).update(str(file_path))
 
         # Transition journey state: SHAPE_SPEC_GENERATING -> SHAPE_SPEC_REVIEW
-        self.project.transition_journey(JourneyState.SHAPE_SPEC_REVIEW)
+        self.coordinator.transition(
+            JourneyState.SHAPE_SPEC_REVIEW,
+            reason="product_spec.review",
+        )
 
         self.notify(f"Saved to {file_path.name}", severity="information")
         logger.info("Spec generation complete: %d chars", len(self.spec_content))

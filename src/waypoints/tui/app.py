@@ -11,7 +11,7 @@ from textual.command import DiscoveryHit, Hit, Hits, Provider
 
 from waypoints.config import settings
 from waypoints.llm.metrics import MetricsCollector
-from waypoints.models import PHASE_TO_STATE, Project
+from waypoints.models import PHASE_TO_STATE, JourneyStateManager, Project
 from waypoints.models.dialogue import DialogueHistory
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader
 from waypoints.tui.screens.chart import ChartScreen
@@ -169,15 +169,15 @@ class WaypointsApp(App[None]):
             return
 
         # Recover to a safe state if needed
-        journey = project.journey.recover()
-        if journey != project.journey:
+        state_manager = JourneyStateManager(project)
+        previous_state = project.journey.state
+        journey = state_manager.recover()
+        if journey.state != previous_state:
             logger.info(
                 "Recovered journey from %s to %s",
-                project.journey.state.value,
+                previous_state.value,
                 journey.state.value,
             )
-            project.journey = journey
-            project.save()
 
         phase = journey.phase
         logger.info("Resuming project %s at phase: %s", project.slug, phase)
