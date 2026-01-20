@@ -1,12 +1,13 @@
-"""Resizable split container widget.
+"""Resizable split container widgets.
 
-Provides a horizontal container with a draggable divider to resize panes.
+Provides horizontal and vertical containers with a draggable divider
+to resize panes.
 """
 
 from typing import Any
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.events import MouseDown, MouseMove, MouseUp
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -190,3 +191,135 @@ class _Divider(Widget):
         parent = self.parent
         if isinstance(parent, ResizableSplit):
             parent._on_divider_drag_start(event.screen_x)
+
+
+class ResizableSplitVertical(Vertical):
+    """Vertical container with draggable divider between two panes."""
+
+    DEFAULT_CSS = """
+    ResizableSplitVertical {
+        width: 100%;
+        height: 100%;
+    }
+
+    ResizableSplitVertical > .resizable-top {
+        width: 100%;
+    }
+
+    ResizableSplitVertical > .resizable-bottom {
+        width: 100%;
+    }
+
+    ResizableSplitVertical > .resizable-divider-vertical {
+        height: 1;
+        width: 100%;
+        background: $surface;
+    }
+
+    ResizableSplitVertical > .resizable-divider-vertical:hover {
+        background: $surface-lighten-2;
+    }
+
+    ResizableSplitVertical > .resizable-divider-vertical.dragging {
+        background: $primary;
+    }
+    """
+
+    top_pct: reactive[int] = reactive(50)
+
+    def __init__(
+        self,
+        top: Widget,
+        bottom: Widget,
+        top_pct: int = 50,
+        top_min: int = 20,
+        top_max: int = 80,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._top = top
+        self._bottom = bottom
+        self._top_min = top_min
+        self._top_max = top_max
+        self._dragging = False
+        self._drag_start_y = 0
+        self._drag_start_pct = 0
+        self.top_pct = top_pct
+
+    def compose(self) -> ComposeResult:
+        self._top.add_class("resizable-top")
+        yield self._top
+
+        yield _VerticalDivider(classes="resizable-divider-vertical")
+
+        self._bottom.add_class("resizable-bottom")
+        yield self._bottom
+
+    def on_mount(self) -> None:
+        self._apply_sizes()
+
+    def watch_top_pct(self, value: int) -> None:
+        self._apply_sizes()
+
+    def _apply_sizes(self) -> None:
+        pct = max(self._top_min, min(self._top_max, self.top_pct))
+        if pct != self.top_pct:
+            self.top_pct = pct
+            return
+        self._top.styles.height = f"{pct}%"
+        self._bottom.styles.height = f"{100 - pct - 1}%"  # -1 for divider
+
+    def _on_divider_drag_start(self, y: int) -> None:
+        self._dragging = True
+        self._drag_start_y = y
+        self._drag_start_pct = self.top_pct
+        self.capture_mouse()
+        divider = self.query_one(".resizable-divider-vertical")
+        divider.add_class("dragging")
+
+    def _on_divider_drag_move(self, y: int) -> None:
+        if not self._dragging:
+            return
+        container_height = self.size.height
+        if container_height <= 0:
+            return
+        delta_px = y - self._drag_start_y
+        delta_pct = int((delta_px / container_height) * 100)
+        new_pct = self._drag_start_pct + delta_pct
+        new_pct = max(self._top_min, min(self._top_max, new_pct))
+        if new_pct != self.top_pct:
+            self.top_pct = new_pct
+
+    def _on_divider_drag_end(self) -> None:
+        if not self._dragging:
+            return
+        self._dragging = False
+        self.release_mouse()
+        divider = self.query_one(".resizable-divider-vertical")
+        divider.remove_class("dragging")
+
+    def on_mouse_move(self, event: MouseMove) -> None:
+        if self._dragging:
+            self._on_divider_drag_move(event.screen_y)
+
+    def on_mouse_up(self, event: MouseUp) -> None:
+        self._on_divider_drag_end()
+
+    def action_resize_up(self) -> None:
+        self.top_pct = max(self._top_min, self.top_pct - 5)
+
+    def action_resize_down(self) -> None:
+        self.top_pct = min(self._top_max, self.top_pct + 5)
+
+
+class _VerticalDivider(Widget):
+    """Draggable horizontal divider widget."""
+
+    def render(self) -> str:
+        return ""
+
+    def on_mouse_down(self, event: MouseDown) -> None:
+        event.stop()
+        parent = self.parent
+        if isinstance(parent, ResizableSplitVertical):
+            parent._on_divider_drag_start(event.screen_y)

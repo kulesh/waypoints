@@ -33,6 +33,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Map the model-facing tool names to the executor's expected handlers
+TOOL_NAME_MAP: dict[str, str] = {
+    "read": "read_file",
+    "read_file": "read_file",
+    "write": "write_file",
+    "write_file": "write_file",
+    "edit": "edit_file",
+    "edit_file": "edit_file",
+    "bash": "bash",
+    "glob": "glob",
+    "grep": "grep",
+}
+
 
 class AnthropicProvider(LLMProvider):
     """Anthropic provider using Claude Agent SDK.
@@ -233,9 +246,10 @@ class AnthropicProvider(LLMProvider):
                                 yield StreamChunk(text=block.text)
                             elif isinstance(block, ToolUseBlock):
                                 has_yielded = True
-                                tool_output = execute_tool(
-                                    block.name, block.input, cwd
+                                tool_name = TOOL_NAME_MAP.get(
+                                    block.name.lower(), block.name
                                 )
+                                tool_output = execute_tool(tool_name, block.input, cwd)
                                 yield StreamToolUse(
                                     tool_name=block.name,
                                     tool_input=block.input,
@@ -264,6 +278,19 @@ class AnthropicProvider(LLMProvider):
                 return
 
             except Exception as e:
+                # The SDK can raise generic runtime errors (e.g., cancel scope) when the
+                # CLI exits with code 1. Try to enrich/normalize for classification.
+                err_str = str(e)
+                if isinstance(e, RuntimeError) and "cancel scope" in err_str:
+                    # Preserve quota/rate-limit hints from accumulated text if present
+                    if "out of extra usage" in full_text.lower():
+                        err_str = (
+                            err_str
+                            + " | quota exhaustion detected in stream:"
+                            " out of extra usage"
+                        )
+                    e = RuntimeError(err_str)
+
                 last_error = e
                 error_type = classify_api_error(e)
 

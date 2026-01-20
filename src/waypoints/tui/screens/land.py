@@ -1351,6 +1351,7 @@ class LandScreen(Screen[None]):
         Binding("g", "generate_release", "Generate", show=False),
         Binding("t", "create_tag", "Tag", show=False),
         Binding("e", "export_genspec", "Export", show=False),
+        Binding("h", "toggle_host_validations", "HostVal", show=True),
         Binding("r", "regenerate", "Regenerate", show=True),
     ]
 
@@ -1406,6 +1407,10 @@ class LandScreen(Screen[None]):
 
         # Set up metrics collection
         self.waypoints_app.set_project_for_metrics(self.project)
+        # Load persisted host validation preference for this project
+        self.waypoints_app.host_validations_enabled = (
+            self.waypoints_app.load_host_validation_preference(self.project)
+        )
 
         # Show only debrief panel initially
         self._show_activity(LandActivity.DEBRIEF)
@@ -1460,6 +1465,18 @@ class LandScreen(Screen[None]):
         """Show the Gen Spec panel."""
         self._show_activity(LandActivity.GENSPEC)
         self._select_activity_option("genspec")
+
+    def action_toggle_host_validations(self) -> None:
+        """Toggle host validations (used in Fly phase) from Land."""
+        app = self.waypoints_app
+        app.host_validations_enabled = not app.host_validations_enabled
+        state = (
+            "ON" if app.host_validations_enabled else "OFF (LLM-as-judge only)"
+        )
+        app.save_host_validation_preference(self.project)
+        self.notify(f"Host validations {state}")
+        self.app.bell()
+        logger.info("Host validations toggled to %s from Land", state)
 
     def _select_activity_option(self, option_id: str) -> None:
         """Select the specified option in the activity list."""

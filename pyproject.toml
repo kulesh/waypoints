@@ -20,7 +20,8 @@ dev = [
     "pytest-cov", 
     "black",
     "ruff",
-    "mypy"
+    "mypy",
+    "types-jsonschema",
 ]
 
 [project.scripts]
@@ -52,4 +53,5 @@ dev = [
     "pytest-cov>=7.0.0",
     "ruff>=0.14.10",
     "types-pyyaml>=6.0.12.20250915",
+    "types-jsonschema>=4.23.0.20241208",
 ]
