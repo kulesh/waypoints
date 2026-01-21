@@ -2,6 +2,7 @@
 
 Supports multiple providers (Anthropic, OpenAI) with a unified interface.
 """
+from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Iterator

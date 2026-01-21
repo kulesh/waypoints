@@ -5,6 +5,8 @@ commands and code captures actual outputs as evidence. The receipt is then
 verified by an LLM to ensure the evidence indicates success.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from dataclasses import dataclass, field
@@ -18,7 +20,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)
 class WaypointContext:
     """Context about the waypoint this receipt is for."""
 
@@ -44,7 +46,7 @@ class WaypointContext:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class CriterionVerification:
     """Verification result for a single acceptance criterion."""
 
@@ -76,7 +78,7 @@ class CriterionVerification:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class ChecklistItem:
     """A single checklist item with captured evidence."""
 
@@ -116,8 +118,8 @@ class ChecklistItem:
     def from_dict(cls, data: dict[str, Any]) -> "ChecklistItem":
         """Create from dictionary."""
         captured_at = None
-        if data.get("captured_at"):
-            captured_at = datetime.fromisoformat(data["captured_at"])
+        if (captured_at_raw := data.get("captured_at")) is not None:
+            captured_at = datetime.fromisoformat(captured_at_raw)
         return cls(
             item=data["item"],
             status=data["status"],
@@ -131,7 +133,7 @@ class ChecklistItem:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class ChecklistReceipt:
     """Proof of work with captured evidence for a waypoint."""
 

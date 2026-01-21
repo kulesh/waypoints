@@ -3,6 +3,7 @@
 This module provides explicit state tracking with transition validation
 for the Waypoints journey from idea to working software.
 """
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime

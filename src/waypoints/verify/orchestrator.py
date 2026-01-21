@@ -7,6 +7,7 @@ Runs the full verification pipeline:
 4. Compare to reference plan
 5. (Optional) Execute and compare products
 """
+from __future__ import annotations
 
 import json
 import logging

@@ -18,6 +18,7 @@ Examples:
     python scripts/test_git_integration.py
     python scripts/test_git_integration.py /tmp/git-test
 """
+from __future__ import annotations
 
 import json
 import shutil

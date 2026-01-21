@@ -1,4 +1,5 @@
 """Waypoints - AI-native software development environment."""
+from __future__ import annotations
 
 from .main import main
 

@@ -1,4 +1,5 @@
 """LLM provider implementations."""
+from __future__ import annotations
 
 from waypoints.llm.providers.base import (
     LLMProvider,

@@ -3,6 +3,7 @@
 Provides horizontal and vertical containers with a draggable divider
 to resize panes.
 """
+from __future__ import annotations
 
 from typing import Any
 

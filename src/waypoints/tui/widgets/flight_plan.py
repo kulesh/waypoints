@@ -1,4 +1,5 @@
 """Flight plan widgets for CHART phase."""
+from __future__ import annotations
 
 from typing import Any
 

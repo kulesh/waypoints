@@ -3,6 +3,7 @@
 This module provides comprehensive metrics tracking for all LLM interactions,
 including cost tracking, latency measurement, and optional budget enforcement.
 """
+from __future__ import annotations
 
 import json
 import logging

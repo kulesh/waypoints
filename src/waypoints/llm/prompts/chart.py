@@ -1,4 +1,5 @@
 """CHART phase prompts for waypoint generation and management."""
+from __future__ import annotations
 
 # System prompt for all CHART operations
 CHART_SYSTEM_PROMPT = (

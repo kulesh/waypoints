@@ -11,6 +11,7 @@ Usage:
     result = await coordinator.execute_waypoint(next_wp)
     action = coordinator.handle_execution_result(next_wp, result)
 """
+from __future__ import annotations
 
 from waypoints.orchestration.coordinator import JourneyCoordinator
 from waypoints.orchestration.types import (

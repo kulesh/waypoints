@@ -5,6 +5,8 @@ needed to reproduce a waypoints project. This enables shipping "recipes" instead
 of compiled software - anyone can regenerate functionally equivalent software.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -48,7 +50,7 @@ class ArtifactType(Enum):
     FLIGHT_PLAN = "flight_plan"
 
 
-@dataclass
+@dataclass(slots=True)
 class StepInput:
     """Input for a generative step.
 
@@ -84,7 +86,7 @@ class StepInput:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class StepOutput:
     """Output from a generative step.
 
@@ -115,7 +117,7 @@ class StepOutput:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class StepMetadata:
     """Metadata about a generative step."""
 
@@ -152,7 +154,7 @@ class StepMetadata:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class GenerativeStep:
     """A single generative step in the specification.
 
@@ -194,7 +196,7 @@ class GenerativeStep:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class UserDecision:
     """A user decision about generated content.
 
@@ -232,7 +234,7 @@ class UserDecision:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class Artifact:
     """A generated artifact (brief, spec, flight plan).
 
@@ -269,7 +271,7 @@ class Artifact:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class GenerativeSpec:
     """Complete generative specification for a project.
 
@@ -337,7 +339,9 @@ class GenerativeSpec:
             phase_counts[phase_name] = phase_counts.get(phase_name, 0) + 1
 
         total_cost = sum(
-            s.metadata.cost_usd for s in self.steps if s.metadata.cost_usd
+            s.metadata.cost_usd
+            for s in self.steps
+            if s.metadata.cost_usd is not None
         )
 
         return {

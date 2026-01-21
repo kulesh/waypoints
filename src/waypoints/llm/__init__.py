@@ -1,4 +1,5 @@
 """LLM clients for Waypoints."""
+from __future__ import annotations
 
 from .client import (
     AnthropicClient,

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Test waypoint generation prompt with a product spec file."""
+from __future__ import annotations
 
 import json
 import re

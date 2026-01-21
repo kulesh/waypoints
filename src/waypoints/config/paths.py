@@ -6,6 +6,7 @@ Follows XDG Base Directory Specification:
 - State: $XDG_STATE_HOME/waypoints (default: ~/.local/state/waypoints)
 - Cache: $XDG_CACHE_HOME/waypoints (default: ~/.cache/waypoints)
 """
+from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field

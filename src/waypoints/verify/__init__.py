@@ -12,6 +12,7 @@ Usage:
     waypoints verify ./my-genspec              # Compare to reference
     waypoints compare spec-a.md spec-b.md      # Direct comparison
 """
+from __future__ import annotations
 
 from waypoints.verify.models import (
     ComparisonResult,

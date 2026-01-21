@@ -14,6 +14,7 @@ Model-centric architecture ("Pilot and Dog"):
 - Model runs conceptual checklist, produces receipt
 - Code validates receipt before allowing commit
 """
+from __future__ import annotations
 
 import logging
 import os

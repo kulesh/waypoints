@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Test ChartScreen directly with a product spec file."""
+from __future__ import annotations
 
 import sys
 from pathlib import Path

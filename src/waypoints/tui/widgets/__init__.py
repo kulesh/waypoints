@@ -1,4 +1,5 @@
 """TUI widgets for Waypoints."""
+from __future__ import annotations
 
 from .dialogue import DialoguePanel, DialogueView, InputBar, MessageWidget
 from .file_preview import FilePreviewModal

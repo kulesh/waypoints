@@ -1,4 +1,5 @@
 """Ideation Q&A screen for refining ideas through dialogue."""
+from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any, cast

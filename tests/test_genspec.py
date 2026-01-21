@@ -1,4 +1,5 @@
 """Tests for genspec module (generative specifications)."""
+from __future__ import annotations
 
 import json
 from datetime import datetime

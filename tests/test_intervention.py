@@ -1,4 +1,5 @@
 """Tests for the Intervention protocol."""
+from __future__ import annotations
 
 import pytest
 

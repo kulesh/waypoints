@@ -13,6 +13,7 @@ Usage:
 Output:
     JSONL execution events (to stdout)
 """
+from __future__ import annotations
 
 import argparse
 import asyncio

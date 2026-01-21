@@ -3,6 +3,7 @@
 Compares two artifacts (product specs, flight plans) for semantic equivalence.
 Uses structured prompts to get consistent, parseable verdicts.
 """
+from __future__ import annotations
 
 import json
 import logging

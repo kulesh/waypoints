@@ -1,4 +1,5 @@
 """Tests for shared LLM tool execution helpers."""
+from __future__ import annotations
 
 from waypoints.llm.tools import execute_tool
 

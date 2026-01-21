@@ -6,6 +6,7 @@ Hub screen with four activities:
 - Iterate: Next steps, V2 planning, project close
 - Gen Spec: View generative spec details and export to file
 """
+from __future__ import annotations
 
 import logging
 from enum import Enum

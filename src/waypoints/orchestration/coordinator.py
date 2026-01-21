@@ -10,6 +10,7 @@ Benefits:
 - Clear separation of concerns
 - Single source of truth for journey state
 """
+from __future__ import annotations
 
 import logging
 from collections.abc import Callable

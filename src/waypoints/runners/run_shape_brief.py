@@ -10,6 +10,7 @@ Usage:
 Output:
     Markdown idea brief (to stdout)
 """
+from __future__ import annotations
 
 import argparse
 import json

@@ -1,4 +1,5 @@
 """Product Specification screen for generating detailed spec from idea brief."""
+from __future__ import annotations
 
 import logging
 from datetime import datetime

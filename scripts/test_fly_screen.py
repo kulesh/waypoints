@@ -15,6 +15,7 @@ Examples:
     python scripts/test_fly_screen.py .waypoints/src2 avaiator
     python scripts/test_fly_screen.py ~/my-workspace my-project
 """
+from __future__ import annotations
 
 import os
 import sys

@@ -3,6 +3,7 @@
 Collects all prompts, dialogues, and artifacts from a project
 and bundles them into a structured genspec.jsonl file.
 """
+from __future__ import annotations
 
 import json
 import logging

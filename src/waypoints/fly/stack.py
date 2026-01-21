@@ -3,6 +3,7 @@
 Detects project stack from manifest files and provides stack-specific
 validation commands for linting, testing, type checking, and formatting.
 """
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum

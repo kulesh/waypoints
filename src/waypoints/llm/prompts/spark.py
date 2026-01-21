@@ -1,4 +1,5 @@
 """SPARK phase prompts for ideation Q&A dialogue."""
+from __future__ import annotations
 
 QA_SYSTEM_PROMPT = """\
 You are a product design assistant helping crystallize an idea through dialogue.

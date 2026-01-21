@@ -1,4 +1,5 @@
 """Unit tests for core models: Waypoint, FlightPlan, Project."""
+from __future__ import annotations
 
 import json
 from datetime import datetime

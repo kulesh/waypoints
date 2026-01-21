@@ -3,6 +3,7 @@
 This module defines data classes and type aliases used by the JourneyCoordinator
 to communicate with UI layers and external callers.
 """
+from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field

@@ -1,4 +1,5 @@
 """Tests for @waypoints mention parsing and processing."""
+from __future__ import annotations
 
 import json
 import tempfile

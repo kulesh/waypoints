@@ -1,4 +1,5 @@
 """Content viewer widget with file-type-aware rendering."""
+from __future__ import annotations
 
 from pathlib import Path
 

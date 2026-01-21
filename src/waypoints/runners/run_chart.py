@@ -10,6 +10,7 @@ Usage:
 Output:
     JSON flight plan (to stdout)
 """
+from __future__ import annotations
 
 import argparse
 import json

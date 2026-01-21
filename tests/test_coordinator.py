@@ -1,4 +1,5 @@
 """Tests for JourneyCoordinator business logic."""
+from __future__ import annotations
 
 from pathlib import Path
 

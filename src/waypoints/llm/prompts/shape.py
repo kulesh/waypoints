@@ -1,4 +1,5 @@
 """SHAPE phase prompts for idea brief and product spec generation."""
+from __future__ import annotations
 
 # System prompt for brief generation
 BRIEF_SYSTEM_PROMPT = (

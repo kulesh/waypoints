@@ -1,4 +1,5 @@
 """Custom header widget with model status indicator."""
+from __future__ import annotations
 
 from typing import Any
 

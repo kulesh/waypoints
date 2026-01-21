@@ -3,6 +3,7 @@
 Reusable modal that can be used across the app to preview files
 before optionally opening them in an external editor.
 """
+from __future__ import annotations
 
 import logging
 import subprocess

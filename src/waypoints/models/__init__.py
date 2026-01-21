@@ -1,4 +1,5 @@
 """Data models for Waypoints."""
+from __future__ import annotations
 
 from .dialogue import DialogueHistory, Message, MessageRole
 from .flight_plan import FlightPlan, FlightPlanReader, FlightPlanWriter

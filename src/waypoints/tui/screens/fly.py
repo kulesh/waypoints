@@ -1,4 +1,5 @@
 """FLY screen for waypoint implementation."""
+from __future__ import annotations
 
 import logging
 import re

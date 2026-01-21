@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 
 from claude_agent_sdk import ClaudeAgentOptions, query

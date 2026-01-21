@@ -1,4 +1,5 @@
 """Base dialogue screen for phase screens."""
+from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 

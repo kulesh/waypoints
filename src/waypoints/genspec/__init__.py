@@ -4,6 +4,7 @@ Provides functionality for exporting, importing, and executing
 generative specifications - structured prompt sequences that can
 reproduce waypoints projects.
 """
+from __future__ import annotations
 
 from waypoints.genspec.executor import (
     ExecutionMode,

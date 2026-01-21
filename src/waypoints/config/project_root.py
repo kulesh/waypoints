@@ -1,4 +1,5 @@
 """Utilities for resolving the projects root directory."""
+from __future__ import annotations
 
 from pathlib import Path
 

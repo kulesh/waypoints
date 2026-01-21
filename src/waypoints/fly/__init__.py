@@ -1,4 +1,5 @@
 """FLY phase - waypoint execution via agentic AI."""
+from __future__ import annotations
 
 from .execution_log import (
     ExecutionEntry,

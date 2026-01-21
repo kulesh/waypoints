@@ -8,6 +8,8 @@ Checklists are per-project artifacts:
 - {project_dir}/checklist.yaml
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from dataclasses import dataclass, field
@@ -32,7 +34,7 @@ DEFAULT_CHECKLIST = [
 ]
 
 
-@dataclass
+@dataclass(slots=True)
 class GitConfig:
     """Git configuration settings."""
 
@@ -109,7 +111,7 @@ class GitConfig:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class Checklist:
     """Conceptual checklist for a project.
 
@@ -139,12 +141,34 @@ class Checklist:
             return checklist
 
         try:
-            data = yaml.safe_load(checklist_path.read_text())
-            items = data.get("checklist", DEFAULT_CHECKLIST)
+            raw_data = yaml.safe_load(checklist_path.read_text())
+            if raw_data is None:
+                raise ValueError("Checklist file is empty")
+            if not isinstance(raw_data, dict):
+                raise ValueError("Checklist file must contain a mapping")
+            data: dict[str, object] = raw_data
+            items_raw = data.get("checklist")
+            if items_raw is None:
+                items = list(DEFAULT_CHECKLIST)
+            elif isinstance(items_raw, list) and all(
+                isinstance(item, str) for item in items_raw
+            ):
+                items = items_raw
+            else:
+                raise ValueError("Checklist items must be a list of strings")
 
             # Parse validation command overrides
             validation = data.get("validation", {})
-            overrides = validation.get("commands", {})
+            overrides = (
+                validation.get("commands", {})
+                if isinstance(validation, dict)
+                else {}
+            )
+            if not isinstance(overrides, dict) or not all(
+                isinstance(key, str) and isinstance(value, str)
+                for key, value in overrides.items()
+            ):
+                raise ValueError("Validation overrides must be a mapping of strings")
 
             logger.debug(
                 "Loaded checklist from %s: %d items, %d overrides",
@@ -153,7 +177,7 @@ class Checklist:
                 len(overrides),
             )
             return cls(items=items, validation_overrides=overrides)
-        except (yaml.YAMLError, OSError) as e:
+        except (ValueError, yaml.YAMLError, OSError) as e:
             logger.warning("Failed to load checklist from %s: %s", checklist_path, e)
             return cls()
 

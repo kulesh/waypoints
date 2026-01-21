@@ -1,4 +1,5 @@
 """Project selection screen - first screen shown on app startup."""
+from __future__ import annotations
 
 import logging
 from collections.abc import Iterable

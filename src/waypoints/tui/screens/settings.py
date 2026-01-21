@@ -1,4 +1,5 @@
 """Settings modal for application configuration."""
+from __future__ import annotations
 
 import logging
 

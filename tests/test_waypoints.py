@@ -1,4 +1,5 @@
 """Tests for waypoints."""
+from __future__ import annotations
 
 from waypoints.models.dialogue import DialogueHistory, Message, MessageRole
 

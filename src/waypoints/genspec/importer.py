@@ -3,6 +3,7 @@
 Reads a genspec.jsonl file and creates a new waypoints project
 with the artifacts and dialogue history from the specification.
 """
+from __future__ import annotations
 
 import json
 import logging

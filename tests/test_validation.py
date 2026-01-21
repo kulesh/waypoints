@@ -1,4 +1,5 @@
 """Tests for LLM output validation."""
+from __future__ import annotations
 
 import json
 

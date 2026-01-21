@@ -6,6 +6,7 @@ enabling:
 - Consistent prompt management
 - Easy testing and verification
 """
+from __future__ import annotations
 
 # SPARK phase prompts
 # CHART phase prompts

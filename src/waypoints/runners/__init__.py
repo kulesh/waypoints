@@ -11,3 +11,5 @@ Each runner:
 4. Progress/errors to stderr
 5. Exit code: 0 = success, 1 = error
 """
+from __future__ import annotations
+

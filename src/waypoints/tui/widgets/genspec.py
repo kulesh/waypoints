@@ -1,4 +1,5 @@
 """TUI widgets for viewing and interacting with generative specifications."""
+from __future__ import annotations
 
 import logging
 from datetime import datetime

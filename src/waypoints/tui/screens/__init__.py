@@ -1,4 +1,5 @@
 """TUI screens for Waypoints phases."""
+from __future__ import annotations
 
 from .base import BaseDialogueScreen
 from .chart import ChartScreen

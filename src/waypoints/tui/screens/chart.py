@@ -1,4 +1,5 @@
 """Chart screen for waypoint planning (CHART phase)."""
+from __future__ import annotations
 
 import logging
 import tempfile

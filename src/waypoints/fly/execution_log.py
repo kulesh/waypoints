@@ -5,6 +5,7 @@ similar to dialogue history but with execution-specific metadata.
 
 Each execution creates a log file: fly-{waypoint_id}-{timestamp}.jsonl
 """
+from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field

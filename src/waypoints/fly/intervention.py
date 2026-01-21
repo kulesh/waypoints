@@ -3,6 +3,7 @@
 This module provides structured intervention types and actions when
 waypoint execution fails or needs human input.
 """
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime

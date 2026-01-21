@@ -1,4 +1,5 @@
 """Tests for the Journey state machine."""
+from __future__ import annotations
 
 from datetime import UTC, datetime
 

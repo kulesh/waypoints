@@ -1,4 +1,5 @@
 """Right panel widgets for phase-specific content."""
+from __future__ import annotations
 
 from typing import Any
 

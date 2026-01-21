@@ -10,6 +10,7 @@ Key components:
 - GitConfig: Configuration for git behavior
 - Checklist: Conceptual checklist items for model interpretation
 """
+from __future__ import annotations
 
 from waypoints.git.config import Checklist, GitConfig
 from waypoints.git.receipt import (

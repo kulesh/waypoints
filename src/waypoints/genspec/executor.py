@@ -5,6 +5,7 @@ Supports three execution modes:
 - REGENERATE: Call LLM with stored prompts (creates new outputs)
 - COMPARE: Do both and show differences
 """
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field

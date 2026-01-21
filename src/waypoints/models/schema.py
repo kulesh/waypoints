@@ -12,6 +12,7 @@ Schema Types:
 - metrics: LLM call metrics
 - genspec: Generative specification (prompt sequences)
 """
+from __future__ import annotations
 
 import json
 import logging

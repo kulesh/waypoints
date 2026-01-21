@@ -3,6 +3,7 @@
 This modal appears when waypoint execution fails or needs human input,
 providing the user with clear options to proceed.
 """
+from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.binding import Binding

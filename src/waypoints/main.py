@@ -1,4 +1,5 @@
 """Main module for waypoints."""
+from __future__ import annotations
 
 import argparse
 import logging

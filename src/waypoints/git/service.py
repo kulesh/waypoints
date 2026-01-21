@@ -4,6 +4,7 @@ Handles git init, staging, commits, and tags. This is the "dog" layer -
 it executes git commands but relies on receipt validation to decide
 whether to proceed.
 """
+from __future__ import annotations
 
 import logging
 import subprocess

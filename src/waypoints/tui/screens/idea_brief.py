@@ -1,4 +1,5 @@
 """Idea Brief screen for displaying and editing the generated brief."""
+from __future__ import annotations
 
 import logging
 from datetime import datetime

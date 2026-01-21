@@ -1,4 +1,5 @@
 """Ideation screen for initial idea entry."""
+from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.binding import Binding

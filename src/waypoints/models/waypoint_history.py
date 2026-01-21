@@ -5,6 +5,7 @@ in JSONL format for debugging and potential future undo/history features.
 
 Storage: sessions/chart/waypoint_history.jsonl
 """
+from __future__ import annotations
 
 import json
 from dataclasses import dataclass

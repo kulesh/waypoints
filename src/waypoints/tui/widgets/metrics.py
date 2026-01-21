@@ -2,6 +2,7 @@
 
 Shows running cost total in the header/status bar.
 """
+from __future__ import annotations
 
 from textual.reactive import reactive
 from textual.widgets import Static
