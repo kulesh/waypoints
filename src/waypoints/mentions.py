@@ -11,7 +11,7 @@ import logging
 import re
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -248,7 +248,7 @@ def mark_mention_resolved(document: str, mention: Mention) -> str:
 
     indent = match.group(1)
     instruction = match.group(2)
-    timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
 
     # Create resolved format
     resolved_line = f"{indent}[resolved]: # (@waypoints: {instruction} - {timestamp})"
@@ -426,7 +426,7 @@ def save_document_version(
     """
     docs_path.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     filename = f"{document_type}-{timestamp}.md"
     file_path = docs_path / filename
 

@@ -1,7 +1,7 @@
 """TUI widgets for viewing and interacting with generative specifications."""
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -156,9 +156,7 @@ class RegenerateModal(ModalScreen[str | None]):
                 with Vertical(classes="start-from-section", id="start-from-section"):
                     yield Label("Start from:", classes="modal-label")
                     with RadioSet(id="start-from-select"):
-                        yield RadioButton(
-                            "Shape Q&A", id="start-qa", value=True
-                        )
+                        yield RadioButton("Shape Q&A", id="start-qa", value=True)
                         yield RadioButton(
                             "Idea Brief (use cached Q&A)", id="start-brief"
                         )
@@ -366,7 +364,7 @@ class ExportModal(ModalScreen[tuple[str, str] | None]):
 
     def _generate_filename(self) -> str:
         """Generate default filename with timestamp."""
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         return f"{self.project_slug}-{timestamp}.genspec.jsonl"
 
     def compose(self) -> ComposeResult:

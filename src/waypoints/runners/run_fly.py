@@ -18,7 +18,7 @@ import argparse
 import asyncio
 import json
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from waypoints.fly.executor import ExecutionResult
@@ -31,7 +31,7 @@ from waypoints.orchestration import JourneyCoordinator
 def log_event(event_type: str, data: dict[str, Any]) -> None:
     """Write an event to stdout as JSONL."""
     event = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "type": event_type,
         **data,
     }

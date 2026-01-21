@@ -8,7 +8,7 @@ verified by an LLM to ensure the evidence indicates success.
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -195,13 +195,13 @@ class ChecklistReceipt:
     def save(self, path: Path) -> None:
         """Save receipt to JSON file."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.to_dict(), indent=2))
+        path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
         logger.info("Saved receipt to %s", path)
 
     @classmethod
     def load(cls, path: Path) -> "ChecklistReceipt":
         """Load receipt from JSON file."""
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         return cls.from_dict(data)
 
 
@@ -386,7 +386,7 @@ class ReceiptBuilder:
 
         return ChecklistReceipt(
             waypoint_id=self.waypoint_id,
-            completed_at=datetime.now(),
+            completed_at=datetime.now(UTC),
             context=self.context,
             checklist=checklist_items,
             criteria_verification=criteria_list,
