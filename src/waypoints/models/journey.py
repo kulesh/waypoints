@@ -4,10 +4,12 @@ This module provides explicit state tracking with transition validation
 for the Waypoints journey from idea to working software.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Self
 
 
 class JourneyState(Enum):
@@ -155,7 +157,7 @@ RECOVERY_MAP: dict[JourneyState, JourneyState] = {
 }
 
 
-@dataclass
+@dataclass(slots=True)
 class Journey:
     """Tracks the current state of a project's journey.
 
@@ -179,7 +181,7 @@ class Journey:
         """
         return target in VALID_TRANSITIONS.get(self.state, set())
 
-    def transition(self, target: JourneyState, reason: str | None = None) -> "Journey":
+    def transition(self, target: JourneyState, reason: str | None = None) -> Self:
         """Transition to a new state, returning a new Journey.
 
         This method is immutable - it returns a new Journey instance
@@ -187,6 +189,7 @@ class Journey:
 
         Args:
             target: The state to transition to.
+            reason: Optional reason for the transition.
 
         Returns:
             A new Journey instance in the target state.
@@ -208,14 +211,14 @@ class Journey:
             entry["reason"] = reason
         new_history.append(entry)
 
-        return Journey(
+        return type(self)(
             state=target,
             project_slug=self.project_slug,
             updated_at=now,
             state_history=new_history,
         )
 
-    def recover(self) -> "Journey":
+    def recover(self) -> Self:
         """Recover to nearest safe state if current state is non-recoverable.
 
         Returns:
@@ -236,7 +239,7 @@ class Journey:
             }
         )
 
-        return Journey(
+        return type(self)(
             state=target,
             project_slug=self.project_slug,
             updated_at=now,
@@ -263,7 +266,7 @@ class Journey:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Journey":
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         """Create Journey from dictionary.
 
         Args:
@@ -285,7 +288,7 @@ class Journey:
         )
 
     @classmethod
-    def new(cls, project_slug: str) -> "Journey":
+    def new(cls, project_slug: str) -> Self:
         """Create a new journey for a project.
 
         Args:

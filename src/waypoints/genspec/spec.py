@@ -5,10 +5,12 @@ needed to reproduce a waypoints project. This enables shipping "recipes" instead
 of compiled software - anyone can regenerate functionally equivalent software.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Self
 
 
 class Phase(Enum):
@@ -48,7 +50,7 @@ class ArtifactType(Enum):
     FLIGHT_PLAN = "flight_plan"
 
 
-@dataclass
+@dataclass(slots=True)
 class StepInput:
     """Input for a generative step.
 
@@ -74,7 +76,7 @@ class StepInput:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "StepInput":
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         """Create from dictionary."""
         return cls(
             system_prompt=data.get("system_prompt"),
@@ -84,7 +86,7 @@ class StepInput:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class StepOutput:
     """Output from a generative step.
 
@@ -106,7 +108,7 @@ class StepOutput:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "StepOutput":
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         """Create from dictionary."""
         return cls(
             content=data["content"],
@@ -115,7 +117,7 @@ class StepOutput:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class StepMetadata:
     """Metadata about a generative step."""
 
@@ -141,7 +143,7 @@ class StepMetadata:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "StepMetadata":
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         """Create from dictionary."""
         return cls(
             tokens_in=data.get("tokens_in"),
@@ -152,7 +154,7 @@ class StepMetadata:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class GenerativeStep:
     """A single generative step in the specification.
 
@@ -182,7 +184,7 @@ class GenerativeStep:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "GenerativeStep":
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         """Create from dictionary."""
         return cls(
             step_id=data["step_id"],
@@ -194,7 +196,7 @@ class GenerativeStep:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class UserDecision:
     """A user decision about generated content.
 
@@ -221,7 +223,7 @@ class UserDecision:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "UserDecision":
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         """Create from dictionary."""
         return cls(
             step_id=data["step_id"],
@@ -232,7 +234,7 @@ class UserDecision:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class Artifact:
     """A generated artifact (brief, spec, flight plan).
 
@@ -257,7 +259,7 @@ class Artifact:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Artifact":
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         """Create from dictionary."""
         return cls(
             artifact_type=ArtifactType(data["artifact_type"]),
@@ -269,7 +271,7 @@ class Artifact:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class GenerativeSpec:
     """Complete generative specification for a project.
 
@@ -306,7 +308,7 @@ class GenerativeSpec:
         return result
 
     @classmethod
-    def from_header_dict(cls, data: dict[str, Any]) -> "GenerativeSpec":
+    def from_header_dict(cls, data: dict[str, Any]) -> Self:
         """Create from header dictionary (without steps/decisions/artifacts)."""
         return cls(
             version=data.get("_version", "1.0"),
@@ -336,9 +338,7 @@ class GenerativeSpec:
             phase_name = step.phase.value
             phase_counts[phase_name] = phase_counts.get(phase_name, 0) + 1
 
-        total_cost = sum(
-            s.metadata.cost_usd for s in self.steps if s.metadata.cost_usd
-        )
+        total_cost = sum(s.metadata.cost_usd for s in self.steps if s.metadata.cost_usd)
 
         return {
             "source_project": self.source_project,

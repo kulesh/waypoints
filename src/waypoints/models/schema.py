@@ -13,13 +13,15 @@ Schema Types:
 - genspec: Generative specification (prompt sequences)
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +61,7 @@ class InvalidSchemaError(SchemaError):
         super().__init__(f"Invalid schema in {path}: {message}")
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class SchemaHeader:
     """Parsed schema header from JSONL file."""
 

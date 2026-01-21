@@ -4,6 +4,8 @@ This module provides structured intervention types and actions when
 waypoint execution fails or needs human input.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -52,7 +54,7 @@ SUGGESTED_ACTIONS: dict[InterventionType, InterventionAction] = {
 }
 
 
-@dataclass
+@dataclass(slots=True)
 class Intervention:
     """Captures context when intervention is needed.
 
@@ -88,7 +90,7 @@ class Intervention:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class InterventionResult:
     """Result of user's intervention decision."""
 

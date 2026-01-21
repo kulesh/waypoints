@@ -15,6 +15,8 @@ Model-centric architecture ("Pilot and Dog"):
 - Code validates receipt before allowing commit
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import re
@@ -109,7 +111,7 @@ class ExecutionResult(Enum):
     INTERVENTION_NEEDED = "intervention_needed"
 
 
-@dataclass
+@dataclass(slots=True)
 class ExecutionStep:
     """A single step in waypoint execution."""
 
@@ -119,7 +121,7 @@ class ExecutionStep:
     timestamp: datetime = field(default_factory=datetime.now)
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class FileOperation:
     """A file operation performed by the agent."""
 
@@ -128,7 +130,7 @@ class FileOperation:
     line_number: int | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class ExecutionContext:
     """Context passed to callbacks during execution."""
 

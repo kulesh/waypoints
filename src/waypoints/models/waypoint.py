@@ -1,9 +1,11 @@
 """Waypoint data model for flight plan."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Self
 
 
 class WaypointStatus(Enum):
@@ -16,7 +18,7 @@ class WaypointStatus(Enum):
     COMPLETE = "complete"
 
 
-@dataclass
+@dataclass(slots=True)
 class Waypoint:
     """A single waypoint in the flight plan."""
 
@@ -47,7 +49,7 @@ class Waypoint:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Waypoint":
+    def from_dict(cls, data: dict[str, Any]) -> Self:
         """Create from dictionary."""
         return cls(
             id=data["id"],

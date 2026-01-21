@@ -1,5 +1,7 @@
 """Base class for LLM providers."""
 
+from __future__ import annotations
+
 import re
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
@@ -11,14 +13,14 @@ if TYPE_CHECKING:
     from waypoints.llm.metrics import MetricsCollector
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class StreamChunk:
     """A chunk of streamed text from the LLM."""
 
     text: str
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class StreamToolUse:
     """LLM is requesting to use a tool."""
 
@@ -27,7 +29,7 @@ class StreamToolUse:
     tool_output: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class StreamComplete:
     """Stream completion with metadata."""
 
