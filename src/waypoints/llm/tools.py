@@ -52,13 +52,17 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
 
         if name == "bash":
             command = arguments["command"]
+            raw_timeout = arguments.get("timeout")
+            timeout: float = 120.0
+            if isinstance(raw_timeout, (int, float)):
+                timeout = raw_timeout / 1000 if raw_timeout > 1000 else raw_timeout
             result = subprocess.run(
                 command,
                 shell=True,
                 capture_output=True,
                 text=True,
                 cwd=cwd,
-                timeout=120,
+                timeout=timeout,
             )
             output = result.stdout
             if result.stderr:
