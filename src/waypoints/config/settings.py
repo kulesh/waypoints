@@ -68,7 +68,7 @@ class Settings:
         path = get_settings_path()
         if path.exists():
             try:
-                self._data = json.loads(path.read_text())
+                self._data = json.loads(path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 self._data = {}
         else:
@@ -78,7 +78,7 @@ class Settings:
         """Save settings to disk."""
         path = get_settings_path()
         try:
-            path.write_text(json.dumps(self._data, indent=2))
+            path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
             logger.info("Saved settings to %s: %s", path, self._data)
         except OSError as e:
             logger.error("Failed to save settings: %s", e)

@@ -8,7 +8,7 @@ Supports three execution modes:
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Callable
 
@@ -115,7 +115,7 @@ def _execute_replay(
 ) -> ExecutionResult:
     """Execute in replay mode - use cached outputs."""
     result = ExecutionResult(mode=ExecutionMode.REPLAY)
-    start_time = datetime.now()
+    start_time = datetime.now(UTC)
 
     if on_progress:
         on_progress("Creating project from cached artifacts...", 0, 1)
@@ -149,7 +149,8 @@ def _execute_replay(
         if on_progress:
             on_progress(f"Error: {e}", 1, 1)
 
-    result.total_duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+    elapsed = (datetime.now(UTC) - start_time).total_seconds()
+    result.total_duration_ms = int(elapsed * 1000)
     return result
 
 
@@ -168,7 +169,7 @@ def _execute_regenerate(
         skip_qa: If True, skip Shape Q&A steps and use cached outputs
     """
     result = ExecutionResult(mode=ExecutionMode.REGENERATE)
-    start_time = datetime.now()
+    start_time = datetime.now(UTC)
 
     try:
         # First create the project structure without artifacts
@@ -245,7 +246,8 @@ def _execute_regenerate(
         if on_progress:
             on_progress(f"Error: {e}", 0, 1)
 
-    result.total_duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+    elapsed = (datetime.now(UTC) - start_time).total_seconds()
+    result.total_duration_ms = int(elapsed * 1000)
     return result
 
 
@@ -257,7 +259,7 @@ def _regenerate_step(step: GenerativeStep, project: "Project") -> StepResult:
     """
     from waypoints.llm.client import ChatClient, StreamChunk, StreamComplete
 
-    step_start = datetime.now()
+    step_start = datetime.now(UTC)
 
     try:
         # Build messages from step input
@@ -295,7 +297,7 @@ def _regenerate_step(step: GenerativeStep, project: "Project") -> StepResult:
         elif content.strip().startswith("#"):
             output_type = OutputType.MARKDOWN
 
-        duration_ms = int((datetime.now() - step_start).total_seconds() * 1000)
+        duration_ms = int((datetime.now(UTC) - step_start).total_seconds() * 1000)
 
         return StepResult(
             step_id=step.step_id,
@@ -308,7 +310,7 @@ def _regenerate_step(step: GenerativeStep, project: "Project") -> StepResult:
 
     except Exception as e:
         logger.exception("Step %s failed: %s", step.step_id, e)
-        duration_ms = int((datetime.now() - step_start).total_seconds() * 1000)
+        duration_ms = int((datetime.now(UTC) - step_start).total_seconds() * 1000)
         return StepResult(
             step_id=step.step_id,
             phase=step.phase,
@@ -325,7 +327,7 @@ def _create_artifacts_from_steps(
 ) -> None:
     """Create artifacts from regenerated step outputs."""
     docs_path = project.get_docs_path()
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
 
     # Find the last successful output for each artifact type
     brief_content = None
@@ -375,7 +377,7 @@ def _create_artifacts_from_steps(
             version=spec.version,
             waypoints_version=spec.waypoints_version,
             source_project=spec.source_project,
-            created_at=datetime.now(),
+            created_at=datetime.now(UTC),
             artifacts=[flight_plan],
         )
         try:
@@ -393,7 +395,7 @@ def _execute_compare(
 ) -> ExecutionResult:
     """Execute in compare mode - run both replay and regenerate, then diff."""
     result = ExecutionResult(mode=ExecutionMode.COMPARE)
-    start_time = datetime.now()
+    start_time = datetime.now(UTC)
 
     if on_progress:
         on_progress("Running comparison (replay + regenerate)...", 0, 2)
@@ -442,5 +444,6 @@ def _execute_compare(
         if on_progress:
             on_progress(f"Error: {e}", 0, 2)
 
-    result.total_duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+    elapsed = (datetime.now(UTC) - start_time).total_seconds()
+    result.total_duration_ms = int(elapsed * 1000)
     return result

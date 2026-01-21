@@ -8,7 +8,7 @@ Storage: sessions/chart/waypoint_history.jsonl
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -63,7 +63,7 @@ class WaypointHistoryWriter:
 
     def _append(self, entry: dict[str, Any]) -> None:
         """Append an entry to the JSONL file."""
-        with open(self.file_path, "a") as f:
+        with open(self.file_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 
     def log_generated(self, waypoints: list[dict[str, Any]]) -> None:
@@ -74,7 +74,7 @@ class WaypointHistoryWriter:
         """
         entry = WaypointHistoryEntry(
             event_type="generated",
-            timestamp=datetime.now(),
+            timestamp=datetime.now(UTC),
             data={"waypoints": waypoints},
         )
         self._append(entry.to_dict())
@@ -92,7 +92,7 @@ class WaypointHistoryWriter:
         """
         entry = WaypointHistoryEntry(
             event_type="added",
-            timestamp=datetime.now(),
+            timestamp=datetime.now(UTC),
             data={
                 "waypoint": waypoint,
                 "insert_after": insert_after,
@@ -109,7 +109,7 @@ class WaypointHistoryWriter:
         """
         entry = WaypointHistoryEntry(
             event_type="deleted",
-            timestamp=datetime.now(),
+            timestamp=datetime.now(UTC),
             data={
                 "waypoint_id": waypoint_id,
                 "waypoint": waypoint_data,
@@ -132,7 +132,7 @@ class WaypointHistoryWriter:
         """
         entry = WaypointHistoryEntry(
             event_type="updated",
-            timestamp=datetime.now(),
+            timestamp=datetime.now(UTC),
             data={
                 "waypoint_id": waypoint_id,
                 "before": before,
@@ -154,7 +154,7 @@ class WaypointHistoryWriter:
         """
         entry = WaypointHistoryEntry(
             event_type="broken_down",
-            timestamp=datetime.now(),
+            timestamp=datetime.now(UTC),
             data={
                 "parent_id": parent_id,
                 "sub_waypoints": sub_waypoints,
@@ -179,7 +179,7 @@ class WaypointHistoryWriter:
         """
         entry = WaypointHistoryEntry(
             event_type="reprioritized",
-            timestamp=datetime.now(),
+            timestamp=datetime.now(UTC),
             data={
                 "previous_order": previous_order,
                 "new_order": new_order,
@@ -208,7 +208,7 @@ class WaypointHistoryReader:
             return []
 
         entries: list[WaypointHistoryEntry] = []
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -219,9 +219,7 @@ class WaypointHistoryReader:
         return entries
 
     @classmethod
-    def get_initial_waypoints(
-        cls, project: "Project"
-    ) -> list[dict[str, Any]] | None:
+    def get_initial_waypoints(cls, project: "Project") -> list[dict[str, Any]] | None:
         """Get the initially generated waypoints.
 
         Args:

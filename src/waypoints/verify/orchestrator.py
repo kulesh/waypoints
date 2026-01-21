@@ -13,7 +13,7 @@ import logging
 import shutil
 import sys
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from waypoints.models import Project
@@ -141,7 +141,7 @@ def _run_bootstrap(
     reference_dir.mkdir(parents=True, exist_ok=True)
 
     # Create temporary project for generation
-    project_name = f"verify-bootstrap-{datetime.now().strftime('%H%M%S')}"
+    project_name = f"verify-bootstrap-{datetime.now(UTC).strftime('%H%M%S')}"
     project = Project.create(project_name, idea=brief_content[:200])
 
     try:
@@ -245,7 +245,7 @@ def _run_verify(
     )
 
     # Create temporary project for generation
-    project_name = f"verify-{datetime.now().strftime('%H%M%S')}"
+    project_name = f"verify-{datetime.now(UTC).strftime('%H%M%S')}"
     project = Project.create(project_name, idea=brief_content[:200])
 
     try:

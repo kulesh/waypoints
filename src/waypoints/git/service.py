@@ -122,12 +122,14 @@ class GitService:
         gitignore_path = self.working_dir / ".gitignore"
         if gitignore_path.exists():
             # Append our entries if not already present
-            content = gitignore_path.read_text()
+            content = gitignore_path.read_text(encoding="utf-8")
             if ".waypoints/debug.log" not in content:
-                gitignore_path.write_text(content + "\n" + DEFAULT_GITIGNORE)
+                gitignore_path.write_text(
+                    content + "\n" + DEFAULT_GITIGNORE, encoding="utf-8"
+                )
                 logger.info("Appended waypoints entries to .gitignore")
         else:
-            gitignore_path.write_text(DEFAULT_GITIGNORE)
+            gitignore_path.write_text(DEFAULT_GITIGNORE, encoding="utf-8")
             logger.info("Created .gitignore")
 
     def stage_files(self, *patterns: str) -> GitResult:

@@ -7,7 +7,7 @@ with the artifacts and dialogue history from the specification.
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -328,14 +328,14 @@ def create_project_from_spec(
     # Ensure unique slug
     project_path = projects_root / slug
     if project_path.exists():
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
         slug = f"{slug}-{timestamp}"
         project_path = projects_root / slug
 
     logger.info("Creating project: %s at %s", project_name, project_path)
 
     # Create project metadata
-    now = datetime.now()
+    now = datetime.now(UTC)
     project = Project(
         name=project_name,
         slug=slug,
@@ -403,7 +403,7 @@ def _create_journey_at_state(project_slug: str, target_state: str) -> Journey:
 def _restore_artifacts(project: Project, spec: GenerativeSpec) -> None:
     """Restore artifacts from spec to project directory."""
     docs_path = project.get_docs_path()
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
 
     # Restore idea brief
     brief = spec.get_artifact(ArtifactType.IDEA_BRIEF)
@@ -433,7 +433,7 @@ def _restore_artifacts(project: Project, spec: GenerativeSpec) -> None:
                     parent_id=wp.get("parent_id"),
                     dependencies=wp.get("dependencies", []),
                     status=WaypointStatus.PENDING,  # Reset status for new project
-                    created_at=datetime.now(),
+                    created_at=datetime.now(UTC),
                 )
                 for wp in waypoints_data
             ]

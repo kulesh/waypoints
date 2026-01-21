@@ -6,7 +6,7 @@ of compiled software - anyone can regenerate functionally equivalent software.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -204,7 +204,7 @@ class UserDecision:
     step_id: str
     phase: Phase
     decision: DecisionType
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     edits: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -242,7 +242,7 @@ class Artifact:
     artifact_type: ArtifactType
     content: str
     file_path: str | None = None
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -264,7 +264,7 @@ class Artifact:
             content=data["content"],
             file_path=data.get("file_path"),
             timestamp=datetime.fromisoformat(
-                data.get("timestamp", datetime.now().isoformat())
+                data.get("timestamp", datetime.now(UTC).isoformat())
             ),
         )
 
@@ -336,9 +336,7 @@ class GenerativeSpec:
             phase_name = step.phase.value
             phase_counts[phase_name] = phase_counts.get(phase_name, 0) + 1
 
-        total_cost = sum(
-            s.metadata.cost_usd for s in self.steps if s.metadata.cost_usd
-        )
+        total_cost = sum(s.metadata.cost_usd for s in self.steps if s.metadata.cost_usd)
 
         return {
             "source_project": self.source_project,

@@ -6,7 +6,7 @@ and bundles them into a structured genspec.jsonl file.
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -252,7 +252,7 @@ def export_project(project: "Project") -> GenerativeSpec:
         version="1.0",
         waypoints_version=waypoints_version,
         source_project=project.slug,
-        created_at=datetime.now(),
+        created_at=datetime.now(UTC),
         initial_idea=project.initial_idea or "",
     )
 
@@ -263,7 +263,7 @@ def export_project(project: "Project") -> GenerativeSpec:
         spark_step = GenerativeStep(
             step_id="step-001",
             phase=Phase.SPARK,
-            timestamp=project.created_at or datetime.now(),
+            timestamp=project.created_at or datetime.now(UTC),
             input=StepInput(
                 system_prompt=None,
                 user_prompt=project.initial_idea,
@@ -421,7 +421,7 @@ def _create_generation_step(
 
     # Find the last assistant message as the output
     output_content = ""
-    output_timestamp = datetime.now()
+    output_timestamp = datetime.now(UTC)
     for msg in reversed(messages):
         if msg.role == MessageRole.ASSISTANT:
             output_content = msg.content
