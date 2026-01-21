@@ -153,7 +153,13 @@ class Project:
                     projects.append(cls.load(project_dir.name))
                 except (FileNotFoundError, json.JSONDecodeError):
                     pass  # Skip invalid projects
-        return sorted(projects, key=lambda p: p.updated_at, reverse=True)
+        # Normalize datetimes for comparison (handle mix of naive and aware)
+        def sort_key(p: "Project") -> datetime:
+            dt = p.updated_at
+            # Strip timezone for comparison if present
+            return dt.replace(tzinfo=None) if dt.tzinfo else dt
+
+        return sorted(projects, key=sort_key, reverse=True)
 
     def transition_journey(
         self,
