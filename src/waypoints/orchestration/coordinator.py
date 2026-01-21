@@ -13,7 +13,7 @@ Benefits:
 
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -668,9 +668,7 @@ class JourneyCoordinator:
 
         # Parse sub-waypoints (pass existing IDs for validation)
         existing_ids = (
-            {wp.id for wp in self.flight_plan.waypoints}
-            if self.flight_plan
-            else set()
+            {wp.id for wp in self.flight_plan.waypoints} if self.flight_plan else set()
         )
         sub_waypoints = self._parse_waypoints(full_response, existing_ids)
 
@@ -1208,9 +1206,7 @@ class JourneyCoordinator:
         conversation_text = self._format_conversation(dialogue)
         prompt = BRIEF_GENERATION_PROMPT.format(conversation=conversation_text)
 
-        logger.info(
-            "Generating idea brief from %d messages", len(dialogue.messages)
-        )
+        logger.info("Generating idea brief from %d messages", len(dialogue.messages))
 
         # Stream response from LLM
         brief_content = ""
@@ -1295,7 +1291,7 @@ class JourneyCoordinator:
         Returns:
             Path to saved file
         """
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         docs_dir = self.project.get_docs_path()
         docs_dir.mkdir(parents=True, exist_ok=True)
         file_path = docs_dir / f"{doc_type}-{timestamp}.md"

@@ -6,7 +6,7 @@ import json
 import re
 import shutil
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -54,7 +54,7 @@ class Project:
         from waypoints.models.journey import Journey
 
         slug = slugify(name)
-        now = datetime.now()
+        now = datetime.now(UTC)
         project = cls(
             name=name,
             slug=slug,
@@ -93,10 +93,10 @@ class Project:
 
     def save(self) -> None:
         """Save project metadata to project.json."""
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(UTC)
         self._ensure_directories()
         metadata_path = self.get_path() / "project.json"
-        metadata_path.write_text(json.dumps(self.to_dict(), indent=2))
+        metadata_path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -137,7 +137,7 @@ class Project:
         metadata_path = cls._get_projects_dir() / slug / "project.json"
         if not metadata_path.exists():
             raise FileNotFoundError(f"Project not found: {slug}")
-        data = json.loads(metadata_path.read_text())
+        data = json.loads(metadata_path.read_text(encoding="utf-8"))
         return cls.from_dict(data)
 
     @classmethod
@@ -153,7 +153,13 @@ class Project:
                     projects.append(cls.load(project_dir.name))
                 except (FileNotFoundError, json.JSONDecodeError):
                     pass  # Skip invalid projects
-        return sorted(projects, key=lambda p: p.updated_at, reverse=True)
+        # Normalize datetimes for comparison (handle mix of naive and aware)
+        def sort_key(p: "Project") -> datetime:
+            dt = p.updated_at
+            # Strip timezone for comparison if present
+            return dt.replace(tzinfo=None) if dt.tzinfo else dt
+
+        return sorted(projects, key=sort_key, reverse=True)
 
     def transition_journey(
         self,
@@ -271,7 +277,7 @@ class Project:
         if not spec_files:
             return []
 
-        spec_content = spec_files[0].read_text()
+        spec_content = spec_files[0].read_text(encoding="utf-8")
 
         # Look for Features section (various heading formats)
         # Match: ## Features, ## 5. Features, ## Key Features, etc.

@@ -69,7 +69,7 @@ class GitConfig:
     def _from_file(cls, path: Path) -> "GitConfig":
         """Load from JSON file."""
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             logger.debug("Loaded git config from %s", path)
             return cls(
                 auto_commit=data.get("auto_commit", True),
@@ -95,7 +95,7 @@ class GitConfig:
             path = paths.global_git_config
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self._to_dict(), indent=2))
+        path.write_text(json.dumps(self._to_dict(), indent=2), encoding="utf-8")
         logger.info("Saved git config to %s", path)
 
     def _to_dict(self) -> dict[str, bool]:
@@ -139,7 +139,7 @@ class Checklist:
             return checklist
 
         try:
-            data = yaml.safe_load(checklist_path.read_text())
+            data = yaml.safe_load(checklist_path.read_text(encoding="utf-8"))
             items = data.get("checklist", DEFAULT_CHECKLIST)
 
             # Parse validation command overrides
@@ -169,7 +169,7 @@ class Checklist:
             data["validation"] = {"commands": self.validation_overrides}
 
         content = yaml.dump(data, default_flow_style=False, sort_keys=False)
-        checklist_path.write_text(content)
+        checklist_path.write_text(content, encoding="utf-8")
         logger.info("Saved checklist to %s", checklist_path)
 
     def to_prompt(self) -> str:

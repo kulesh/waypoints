@@ -398,6 +398,104 @@ class TestFlightPlan:
         assert len(data["waypoints"]) == 1
         assert data["waypoints"][0]["id"] == "WP-1"
 
+    def test_insert_waypoint_at_beginning(self) -> None:
+        """Insert waypoint at beginning (after_id=None)."""
+        plan = FlightPlan()
+        wp1 = Waypoint(id="WP-1", title="First", objective="First")
+        wp2 = Waypoint(id="WP-2", title="Second", objective="Second")
+        plan.add_waypoint(wp1)
+        plan.add_waypoint(wp2)
+
+        wp0 = Waypoint(id="WP-0", title="Zero", objective="Zero")
+        plan.insert_waypoint_at(wp0, after_id=None)
+
+        assert plan.waypoints[0].id == "WP-0"
+        assert plan.waypoints[1].id == "WP-1"
+        assert plan.waypoints[2].id == "WP-2"
+
+    def test_insert_waypoint_at_middle(self) -> None:
+        """Insert waypoint after specific waypoint."""
+        plan = FlightPlan()
+        wp1 = Waypoint(id="WP-1", title="First", objective="First")
+        wp3 = Waypoint(id="WP-3", title="Third", objective="Third")
+        plan.add_waypoint(wp1)
+        plan.add_waypoint(wp3)
+
+        wp2 = Waypoint(id="WP-2", title="Second", objective="Second")
+        plan.insert_waypoint_at(wp2, after_id="WP-1")
+
+        assert plan.waypoints[0].id == "WP-1"
+        assert plan.waypoints[1].id == "WP-2"
+        assert plan.waypoints[2].id == "WP-3"
+
+    def test_insert_waypoint_at_nonexistent(self) -> None:
+        """Insert after nonexistent waypoint appends at end."""
+        plan = FlightPlan()
+        wp1 = Waypoint(id="WP-1", title="First", objective="First")
+        plan.add_waypoint(wp1)
+
+        wp2 = Waypoint(id="WP-2", title="Second", objective="Second")
+        plan.insert_waypoint_at(wp2, after_id="WP-999")
+
+        assert plan.waypoints[-1].id == "WP-2"
+
+    def test_remove_waypoint_with_children(self) -> None:
+        """Remove waypoint recursively removes children."""
+        plan = FlightPlan()
+        wp1 = Waypoint(id="WP-1", title="Parent", objective="Parent")
+        wp1a = Waypoint(id="WP-1a", title="Child", objective="Child", parent_id="WP-1")
+        wp1a1 = Waypoint(
+            id="WP-1a1", title="Grandchild", objective="Grand", parent_id="WP-1a"
+        )
+        wp2 = Waypoint(id="WP-2", title="Other", objective="Other")
+        plan.add_waypoint(wp1)
+        plan.add_waypoint(wp1a)
+        plan.add_waypoint(wp1a1)
+        plan.add_waypoint(wp2)
+
+        plan.remove_waypoint("WP-1")
+
+        assert len(plan.waypoints) == 1
+        assert plan.waypoints[0].id == "WP-2"
+        assert plan.get_waypoint("WP-1") is None
+        assert plan.get_waypoint("WP-1a") is None
+        assert plan.get_waypoint("WP-1a1") is None
+
+    def test_reorder_waypoints(self) -> None:
+        """Reorder root waypoints preserves children."""
+        plan = FlightPlan()
+        wp1 = Waypoint(id="WP-1", title="First", objective="First")
+        wp1a = Waypoint(id="WP-1a", title="Child 1", objective="C1", parent_id="WP-1")
+        wp2 = Waypoint(id="WP-2", title="Second", objective="Second")
+        wp2a = Waypoint(id="WP-2a", title="Child 2", objective="C2", parent_id="WP-2")
+        wp3 = Waypoint(id="WP-3", title="Third", objective="Third")
+        plan.add_waypoint(wp1)
+        plan.add_waypoint(wp1a)
+        plan.add_waypoint(wp2)
+        plan.add_waypoint(wp2a)
+        plan.add_waypoint(wp3)
+
+        # Reorder: WP-3, WP-1, WP-2
+        plan.reorder_waypoints(["WP-3", "WP-1", "WP-2"])
+
+        # Children should follow their parents
+        ids = [wp.id for wp in plan.waypoints]
+        assert ids == ["WP-3", "WP-1", "WP-1a", "WP-2", "WP-2a"]
+
+    def test_reorder_waypoints_with_missing_ids(self) -> None:
+        """Reorder handles IDs not in the plan."""
+        plan = FlightPlan()
+        wp1 = Waypoint(id="WP-1", title="First", objective="First")
+        wp2 = Waypoint(id="WP-2", title="Second", objective="Second")
+        plan.add_waypoint(wp1)
+        plan.add_waypoint(wp2)
+
+        # Include a nonexistent ID - it should be ignored
+        plan.reorder_waypoints(["WP-2", "WP-999", "WP-1"])
+
+        ids = [wp.id for wp in plan.waypoints]
+        assert ids == ["WP-2", "WP-1"]
+
 
 class TestFlightPlanPersistence:
     """Tests for FlightPlan read/write operations."""
@@ -490,6 +588,30 @@ class TestFlightPlanPersistence:
         # Reload and verify
         loaded = FlightPlanReader.load(mock_project)
         assert len(loaded.waypoints) == 2
+
+    def test_load_with_empty_lines(self, mock_project) -> None:
+        """Load handles files with empty lines."""
+        plan = FlightPlan()
+        wp = Waypoint(id="WP-1", title="Test", objective="Test objective")
+        plan.add_waypoint(wp)
+
+        writer = FlightPlanWriter(mock_project)
+        writer.save(plan)
+
+        # Add empty lines to the file manually
+        file_path = mock_project.get_path() / "flight-plan.jsonl"
+        content = file_path.read_text()
+        # Insert empty lines between entries
+        lines = content.split("\n")
+        modified = "\n\n".join(lines)  # Double newlines
+        file_path.write_text(modified + "\n\n")
+
+        # Load should still work
+        loaded = FlightPlanReader.load(mock_project)
+
+        assert loaded is not None
+        assert len(loaded.waypoints) == 1
+        assert loaded.waypoints[0].id == "WP-1"
 
 
 class TestSlugify:

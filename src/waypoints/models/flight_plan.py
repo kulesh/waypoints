@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Iterator
 
 from waypoints.models.schema import migrate_if_needed, write_schema_fields
@@ -17,8 +17,8 @@ class FlightPlan:
     """Container for all waypoints in a project."""
 
     waypoints: list[Waypoint] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def get_waypoint(self, waypoint_id: str) -> Waypoint | None:
         """Get a waypoint by ID."""
@@ -46,7 +46,7 @@ class FlightPlan:
     def add_waypoint(self, waypoint: Waypoint) -> None:
         """Add a waypoint to the plan."""
         self.waypoints.append(waypoint)
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(UTC)
 
     def insert_waypoints_after(self, parent_id: str, waypoints: list[Waypoint]) -> None:
         """Insert waypoints immediately after a parent waypoint.
@@ -69,7 +69,7 @@ class FlightPlan:
             # Insert after parent
             for i, wp in enumerate(waypoints):
                 self.waypoints.insert(parent_idx + 1 + i, wp)
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(UTC)
 
     def insert_waypoint_at(self, waypoint: Waypoint, after_id: str | None) -> None:
         """Insert a single waypoint at a specific position.
@@ -90,7 +90,7 @@ class FlightPlan:
                 self.waypoints.append(waypoint)
             else:
                 self.waypoints.insert(idx + 1, waypoint)
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(UTC)
 
     def update_waypoint(self, waypoint: Waypoint) -> bool:
         """Update an existing waypoint.
@@ -104,7 +104,7 @@ class FlightPlan:
         for i, wp in enumerate(self.waypoints):
             if wp.id == waypoint.id:
                 self.waypoints[i] = waypoint
-                self.updated_at = datetime.now()
+                self.updated_at = datetime.now(UTC)
                 return True
         return False
 
@@ -124,7 +124,7 @@ class FlightPlan:
         # Update any waypoints that depended on this one
         for wp in self.waypoints:
             wp.dependencies = [d for d in wp.dependencies if d != waypoint_id]
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(UTC)
 
     def reorder_waypoints(self, new_order: list[str]) -> None:
         """Reorder root waypoints to match new_order, preserving children.
@@ -155,7 +155,7 @@ class FlightPlan:
                 new_waypoints.append(wp)
 
         self.waypoints = new_waypoints
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(UTC)
 
     def _get_all_descendants(self, waypoint_id: str) -> list[Waypoint]:
         """Get all descendants of a waypoint in tree order.
@@ -247,12 +247,12 @@ class FlightPlanWriter:
     def save(self, flight_plan: FlightPlan) -> None:
         """Save entire flight plan (overwrites file)."""
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.file_path, "w") as f:
+        with open(self.file_path, "w", encoding="utf-8") as f:
             # Header line with schema version
             header = {
                 **write_schema_fields("flight_plan"),
                 "created_at": flight_plan.created_at.isoformat(),
-                "updated_at": datetime.now().isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             }
             f.write(json.dumps(header) + "\n")
             # Waypoint lines
@@ -261,7 +261,7 @@ class FlightPlanWriter:
 
     def append_waypoint(self, waypoint: Waypoint) -> None:
         """Append a single waypoint (for streaming generation)."""
-        with open(self.file_path, "a") as f:
+        with open(self.file_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(waypoint.to_dict()) + "\n")
 
 
@@ -289,7 +289,7 @@ class FlightPlanReader:
 
         flight_plan = FlightPlan()
 
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             for line_num, line in enumerate(f):
                 line = line.strip()
                 if not line:

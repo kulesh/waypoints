@@ -325,6 +325,6 @@ class MentionProcessingMixin:
 
 def _get_timestamp() -> str:
     """Get current timestamp in ISO format."""
-    from datetime import datetime
+    from datetime import UTC, datetime
 
-    return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")

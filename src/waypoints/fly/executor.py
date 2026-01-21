@@ -21,7 +21,7 @@ import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -401,7 +401,7 @@ class WaypointExecutor:
                                     criterion=text.strip(),
                                     status=status,
                                     evidence=evidence.strip(),
-                                    verified_at=datetime.now(),
+                                    verified_at=datetime.now(UTC),
                                 )
                                 logger.info(
                                     "Captured criterion verification: [%d] %s",
@@ -863,7 +863,7 @@ When complete, output the completion marker specified in the instructions."""
             return data or ""
 
         for cmd in commands:
-            start_time = datetime.now()
+            start_time = datetime.now(UTC)
             try:
                 result = subprocess.run(
                     cmd.command,
@@ -998,7 +998,7 @@ When complete, output the completion marker specified in the instructions."""
             receipts_dir = self.project.get_path() / "receipts"
             receipts_dir.mkdir(parents=True, exist_ok=True)
             safe_wp_id = self.waypoint.id.lower().replace("-", "")
-            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
             receipt_path = receipts_dir / f"{safe_wp_id}-{timestamp}.json"
             receipt.save(receipt_path)
 
@@ -1049,7 +1049,7 @@ When complete, output the completion marker specified in the instructions."""
         receipts_dir = self.project.get_path() / "receipts"
         receipts_dir.mkdir(parents=True, exist_ok=True)
         safe_wp_id = self.waypoint.id.lower().replace("-", "")
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         receipt_path = receipts_dir / f"{safe_wp_id}-{timestamp}.json"
         receipt.save(receipt_path)
 

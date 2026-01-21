@@ -1,7 +1,7 @@
 """Waypoint data model for flight plan."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -27,7 +27,7 @@ class Waypoint:
     parent_id: str | None = None
     dependencies: list[str] = field(default_factory=list)
     status: WaypointStatus = WaypointStatus.PENDING
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -60,7 +60,7 @@ class Waypoint:
             created_at=(
                 datetime.fromisoformat(data["created_at"])
                 if "created_at" in data
-                else datetime.now()
+                else datetime.now(UTC)
             ),
             completed_at=(
                 datetime.fromisoformat(data["completed_at"])

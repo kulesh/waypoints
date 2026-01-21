@@ -4,7 +4,7 @@ import logging
 import os
 import shutil
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -44,12 +44,16 @@ def format_relative_time(dt: datetime) -> str:
     """Format datetime as relative time string.
 
     Args:
-        dt: The datetime to format
+        dt: The datetime to format (naive datetimes are assumed to be UTC)
 
     Returns:
         Relative time string like "5m ago", "2h ago", "3d ago"
     """
-    total_seconds = (datetime.now() - dt).total_seconds()
+    now = datetime.now(UTC)
+    # Handle naive datetimes (assumed to be UTC) for backwards compatibility
+    if dt.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    total_seconds = (now - dt).total_seconds()
 
     thresholds = [
         (365 * 24 * 3600, 365 * 24 * 3600, "y ago"),
