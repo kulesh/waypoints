@@ -1,7 +1,7 @@
 """Data models for the verification system."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -109,7 +109,7 @@ class VerificationReport:
 
     def finalize(self) -> None:
         """Finalize the report with completion time and overall status."""
-        self.completed_at = datetime.now()
+        self.completed_at = datetime.now(UTC)
 
         # Determine overall status from steps
         statuses = [s.status for s in self.steps]

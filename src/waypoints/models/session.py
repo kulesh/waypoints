@@ -1,7 +1,7 @@
 """Session persistence for dialogue history in JSONL format."""
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -36,7 +36,7 @@ class SessionWriter:
 
     def _generate_path(self) -> Path:
         """Generate the JSONL file path for this session."""
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         return self.project.get_sessions_path() / f"{self.phase}-{timestamp}.jsonl"
 
     def _write_header(self) -> None:
@@ -45,16 +45,16 @@ class SessionWriter:
             **write_schema_fields("session"),
             "session_id": self.session_id,
             "phase": self.phase,
-            "created_at": datetime.now().isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "project_slug": self.project.slug,
         }
         self.project.get_sessions_path().mkdir(parents=True, exist_ok=True)
-        with open(self.file_path, "w") as f:
+        with open(self.file_path, "w", encoding="utf-8") as f:
             f.write(json.dumps(header) + "\n")
 
     def append_message(self, message: Message) -> None:
         """Append a single message to the JSONL file."""
-        with open(self.file_path, "a") as f:
+        with open(self.file_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(message.to_dict()) + "\n")
 
 
@@ -78,7 +78,7 @@ class SessionReader:
 
         history = DialogueHistory()
 
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             for line_num, line in enumerate(f):
                 line = line.strip()
                 if not line:

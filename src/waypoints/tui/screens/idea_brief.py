@@ -1,7 +1,7 @@
 """Idea Brief screen for displaying and editing the generated brief."""
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -139,7 +139,7 @@ class IdeaBriefScreen(Screen[None]):
         if matching_files:
             return matching_files[0]
         else:
-            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
             return docs_dir / f"idea-brief-{timestamp}.md"
 
     def compose(self) -> ComposeResult:
@@ -433,7 +433,7 @@ class IdeaBriefResumeScreen(Screen[None], MentionProcessingMixin):
         if matching_files:
             return matching_files[0]
         else:
-            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
             return docs_dir / f"idea-brief-{timestamp}.md"
 
     def action_edit_external(self) -> None:

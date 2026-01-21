@@ -8,7 +8,7 @@ Each execution creates a log file: fly-{waypoint_id}-{timestamp}.jsonl
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -27,7 +27,7 @@ class ExecutionEntry:
 
     entry_type: str  # "iteration", "tool_call", "output", "result", "error"
     content: str
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     iteration: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -61,7 +61,7 @@ class ExecutionLog:
     waypoint_title: str
     entries: list[ExecutionEntry] = field(default_factory=list)
     execution_id: str = field(default_factory=lambda: str(uuid4()))
-    started_at: datetime = field(default_factory=datetime.now)
+    started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     result: str | None = None  # "success", "failed", "max_iterations", etc.
     total_cost_usd: float = 0.0
@@ -137,7 +137,7 @@ class ExecutionLogWriter:
         self.project = project
         self.waypoint = waypoint
         self.execution_id = str(uuid4())
-        self.started_at = datetime.now()
+        self.started_at = datetime.now(UTC)
         self.file_path = self._generate_path()
         self.total_cost_usd = 0.0
         self._write_header()
@@ -147,7 +147,7 @@ class ExecutionLogWriter:
         fly_dir = self.project.get_sessions_path() / "fly"
         fly_dir.mkdir(parents=True, exist_ok=True)
 
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         wp_id = self.waypoint.id.lower().replace("-", "")
         return fly_dir / f"{wp_id}-{timestamp}.jsonl"
 
@@ -164,7 +164,7 @@ class ExecutionLogWriter:
             "started_at": self.started_at.isoformat(),
             "project_slug": self.project.slug,
         }
-        with open(self.file_path, "w") as f:
+        with open(self.file_path, "w", encoding="utf-8") as f:
             f.write(json.dumps(header) + "\n")
 
     def log_iteration_start(self, iteration: int, prompt: str) -> None:
@@ -173,7 +173,7 @@ class ExecutionLogWriter:
             "type": "iteration_start",
             "iteration": iteration,
             "prompt": prompt,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
 
@@ -188,7 +188,7 @@ class ExecutionLogWriter:
             "type": "output",
             "iteration": iteration,
             "content": output,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         if criteria_completed:
             entry["criteria_completed"] = sorted(criteria_completed)
@@ -208,7 +208,7 @@ class ExecutionLogWriter:
             "tool_name": tool_name,
             "tool_input": tool_input,
             "tool_output": tool_output,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
 
@@ -226,7 +226,7 @@ class ExecutionLogWriter:
             "iteration": iteration,
             "cost_usd": cost_usd,
             "cumulative_cost_usd": self.total_cost_usd,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
 
@@ -236,7 +236,7 @@ class ExecutionLogWriter:
             "type": "error",
             "iteration": iteration,
             "error": error,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
 
@@ -247,8 +247,8 @@ class ExecutionLogWriter:
             "result": result,
             "total_cost_usd": self.total_cost_usd,
             "started_at": self.started_at.isoformat(),
-            "completed_at": datetime.now().isoformat(),
-            "duration_seconds": (datetime.now() - self.started_at).total_seconds(),
+            "completed_at": datetime.now(UTC).isoformat(),
+            "duration_seconds": (datetime.now(UTC) - self.started_at).total_seconds(),
         }
         self._append(entry)
 
@@ -261,7 +261,7 @@ class ExecutionLogWriter:
             "iteration": iteration,
             "intervention_type": intervention_type,
             "reason": reason,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
 
@@ -270,7 +270,7 @@ class ExecutionLogWriter:
         entry: dict[str, Any] = {
             "type": "intervention_resolved",
             "action": action,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         if params:
             entry["params"] = params
@@ -284,7 +284,7 @@ class ExecutionLogWriter:
             "type": "state_transition",
             "from_state": from_state,
             "to_state": to_state,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         if reason:
             entry["reason"] = reason
@@ -296,7 +296,7 @@ class ExecutionLogWriter:
             "type": "receipt_validated",
             "path": path,
             "valid": valid,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         if message:
             entry["message"] = message
@@ -309,7 +309,7 @@ class ExecutionLogWriter:
         entry: dict[str, Any] = {
             "type": "git_commit",
             "success": success,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         if commit_hash:
             entry["commit_hash"] = commit_hash
@@ -321,7 +321,7 @@ class ExecutionLogWriter:
         """Log execution paused."""
         entry = {
             "type": "pause",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
 
@@ -329,7 +329,7 @@ class ExecutionLogWriter:
         """Log execution resumed."""
         entry = {
             "type": "resume",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
 
@@ -339,7 +339,7 @@ class ExecutionLogWriter:
             "type": "security_violation",
             "iteration": iteration,
             "details": details,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
 
@@ -348,7 +348,7 @@ class ExecutionLogWriter:
         entry = {
             "type": "completion_detected",
             "iteration": iteration,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
 
@@ -362,7 +362,7 @@ class ExecutionLogWriter:
             "output": report.output,
             "artifacts": report.artifacts,
             "next_stage": report.next_stage.value if report.next_stage else None,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
 
@@ -370,7 +370,7 @@ class ExecutionLogWriter:
         """Log the start of the finalize phase (receipt verification)."""
         entry = {
             "type": "finalize_start",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
 
@@ -383,7 +383,7 @@ class ExecutionLogWriter:
             "type": "finalize_end",
             "cost_usd": cost_usd,
             "cumulative_cost_usd": self.total_cost_usd,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
 
@@ -392,7 +392,7 @@ class ExecutionLogWriter:
         entry = {
             "type": "finalize_output",
             "content": output,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
 
@@ -408,13 +408,13 @@ class ExecutionLogWriter:
             "tool_name": tool_name,
             "tool_input": tool_input,
             "tool_output": tool_output,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
 
     def _append(self, entry: dict[str, Any]) -> None:
         """Append an entry to the JSONL file."""
-        with open(self.file_path, "a") as f:
+        with open(self.file_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 
 
@@ -433,7 +433,7 @@ class ExecutionLogReader:
         log: ExecutionLog | None = None
         entries: list[ExecutionEntry] = []
 
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -549,7 +549,7 @@ class ExecutionLogReader:
             return set()
 
         completed: set[int] = set()
-        with open(logs[0]) as f:
+        with open(logs[0], encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:

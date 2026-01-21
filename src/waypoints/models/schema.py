@@ -36,8 +36,6 @@ CURRENT_VERSIONS: dict[str, str] = {
 class SchemaError(Exception):
     """Base exception for schema-related errors."""
 
-    pass
-
 
 class MigrationNotFoundError(SchemaError):
     """Raised when no migration path exists."""
@@ -95,7 +93,7 @@ def read_schema_header(path: Path, expected_type: str) -> SchemaHeader:
         raise InvalidSchemaError(path, "File does not exist")
 
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             first_line = f.readline().strip()
             if not first_line:
                 # Empty file - treat as legacy
@@ -228,7 +226,7 @@ def _atomic_rewrite(path: Path, transform: Callable[[list[str]], list[str]]) -> 
         transform: Function that takes list of lines and returns transformed lines.
     """
     # Read all lines
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         lines = f.readlines()
 
     # Transform
@@ -237,7 +235,7 @@ def _atomic_rewrite(path: Path, transform: Callable[[list[str]], list[str]]) -> 
     # Write to temp file, then rename (atomic on most filesystems)
     temp_path = Path(tempfile.mktemp(dir=path.parent, suffix=".tmp"))
     try:
-        with open(temp_path, "w") as f:
+        with open(temp_path, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
         temp_path.replace(path)
     except Exception:

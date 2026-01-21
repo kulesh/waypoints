@@ -1521,9 +1521,7 @@ class FlyScreen(Screen[None]):
         """Toggle host validations for the next execution."""
         app = self.waypoints_app
         app.host_validations_enabled = not app.host_validations_enabled
-        state = (
-            "ON" if app.host_validations_enabled else "OFF (LLM-as-judge only)"
-        )
+        state = "ON" if app.host_validations_enabled else "OFF (LLM-as-judge only)"
         app.save_host_validation_preference(self.project)
         try:
             detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
@@ -1775,7 +1773,7 @@ class FlyScreen(Screen[None]):
             # Mark complete
             if self.current_waypoint:
                 self.current_waypoint.status = WaypointStatus.COMPLETE
-                self.current_waypoint.completed_at = datetime.now()
+                self.current_waypoint.completed_at = datetime.now(UTC)
                 log.log_success(f"Waypoint {self.current_waypoint.id} complete!")
 
                 self._live_criteria_completed = (
