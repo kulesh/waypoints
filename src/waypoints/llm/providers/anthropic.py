@@ -230,16 +230,20 @@ class AnthropicProvider(LLMProvider):
                     if isinstance(message, AssistantMessage):
                         usage_in, usage_out = _extract_usage_from_message(message)
                         if usage_in is not None:
-                            tokens_in = usage_in
+                            tokens_in = (tokens_in or 0) + usage_in
                         if usage_out is not None:
-                            tokens_out = usage_out
+                            tokens_out = (tokens_out or 0) + usage_out
                         for block in message.content:
                             if isinstance(block, TextBlock):
                                 chunks.append(block.text)
                                 logger.debug("Got chunk: %d chars", len(block.text))
                     elif isinstance(message, ResultMessage):
                         cost = message.total_cost_usd
-                        tokens_in, tokens_out = _extract_token_usage(message)
+                        total_in, total_out = _extract_token_usage(message)
+                        if total_in is not None:
+                            tokens_in = total_in
+                        if total_out is not None:
+                            tokens_out = total_out
                         logger.info("Query complete, cost: $%.4f", cost or 0)
                 return chunks, cost, tokens_in, tokens_out
 
@@ -319,9 +323,9 @@ class AnthropicProvider(LLMProvider):
                     if isinstance(message, AssistantMessage):
                         usage_in, usage_out = _extract_usage_from_message(message)
                         if usage_in is not None:
-                            tokens_in = usage_in
+                            tokens_in = (tokens_in or 0) + usage_in
                         if usage_out is not None:
-                            tokens_out = usage_out
+                            tokens_out = (tokens_out or 0) + usage_out
                         for block in message.content:
                             if isinstance(block, TextBlock):
                                 full_text += block.text
@@ -340,7 +344,11 @@ class AnthropicProvider(LLMProvider):
                                 )
                     elif isinstance(message, ResultMessage):
                         cost = message.total_cost_usd
-                        tokens_in, tokens_out = _extract_token_usage(message)
+                        total_in, total_out = _extract_token_usage(message)
+                        if total_in is not None:
+                            tokens_in = total_in
+                        if total_out is not None:
+                            tokens_out = total_out
 
                 final_cost = cost
                 final_tokens_in = tokens_in
