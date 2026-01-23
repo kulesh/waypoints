@@ -166,6 +166,22 @@ TOOL_NAME_MAP = {
 }
 
 
+def _extract_usage_tokens(usage: Any) -> tuple[int | None, int | None]:
+    """Extract prompt/completion tokens from OpenAI usage payloads."""
+    if usage is None:
+        return None, None
+    tokens_in = getattr(usage, "prompt_tokens", None)
+    tokens_out = getattr(usage, "completion_tokens", None)
+    if tokens_in is None:
+        tokens_in = getattr(usage, "input_tokens", None)
+    if tokens_out is None:
+        tokens_out = getattr(usage, "output_tokens", None)
+    return (
+        int(tokens_in) if tokens_in is not None else None,
+        int(tokens_out) if tokens_out is not None else None,
+    )
+
+
 class OpenAIProvider(LLMProvider):
     """OpenAI provider using the openai Python SDK.
 
@@ -229,6 +245,8 @@ class OpenAIProvider(LLMProvider):
 
         start_time = time.perf_counter()
         cost: float | None = None
+        tokens_in: int | None = None
+        tokens_out: int | None = None
         success = True
         error_msg: str | None = None
 
@@ -248,6 +266,7 @@ class OpenAIProvider(LLMProvider):
                 messages=api_messages,
                 max_tokens=max_tokens,
                 stream=True,
+                stream_options={"include_usage": True},
             )
 
             for chunk in stream:
@@ -255,10 +274,15 @@ class OpenAIProvider(LLMProvider):
                     text = chunk.choices[0].delta.content
                     full_text += text
                     yield StreamChunk(text=text)
+                if getattr(chunk, "usage", None):
+                    tokens_in, tokens_out = _extract_usage_tokens(chunk.usage)
 
-            # OpenAI doesn't provide cost in streaming responses
-            # Would need to calculate from token counts
-            yield StreamComplete(full_text=full_text, cost_usd=None)
+            yield StreamComplete(
+                full_text=full_text,
+                cost_usd=None,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+            )
 
         except Exception as e:
             logger.exception("Error in stream_message: %s", e)
@@ -272,11 +296,13 @@ class OpenAIProvider(LLMProvider):
 
                 call = LLMCall.create(
                     phase=phase,
-                    cost_usd=cost or 0.0,
+                    cost_usd=cost,
                     latency_ms=elapsed_ms,
                     model=self.model,
                     success=success,
                     error=error_msg,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
                 )
                 metrics_collector.record(call)
 
@@ -299,6 +325,8 @@ class OpenAIProvider(LLMProvider):
         error_msg: str | None = None
         last_error: Exception | None = None
         full_text = ""
+        tokens_in_total: int | None = None
+        tokens_out_total: int | None = None
 
         # Filter tools based on allowed_tools
         tools: list[dict[str, Any]] = []
@@ -348,6 +376,10 @@ class OpenAIProvider(LLMProvider):
                         tools=tools if tools else None,
                         max_tokens=16000,
                     )
+                    tokens_in, tokens_out = _extract_usage_tokens(response.usage)
+                    if tokens_in is not None or tokens_out is not None:
+                        tokens_in_total = (tokens_in_total or 0) + (tokens_in or 0)
+                        tokens_out_total = (tokens_out_total or 0) + (tokens_out or 0)
 
                     choice = response.choices[0]
                     message = choice.message
@@ -396,7 +428,12 @@ class OpenAIProvider(LLMProvider):
                         break
 
                 # Success
-                yield StreamComplete(full_text=full_text, cost_usd=None)
+                yield StreamComplete(
+                    full_text=full_text,
+                    cost_usd=None,
+                    tokens_in=tokens_in_total,
+                    tokens_out=tokens_out_total,
+                )
 
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
                 if metrics_collector is not None:
@@ -405,11 +442,13 @@ class OpenAIProvider(LLMProvider):
                     call = LLMCall.create(
                         phase=phase,
                         waypoint_id=waypoint_id,
-                        cost_usd=0.0,  # Would need token counting for cost
+                        cost_usd=None,
                         latency_ms=elapsed_ms,
                         model=self.model,
                         success=True,
                         error=None,
+                        tokens_in=tokens_in_total,
+                        tokens_out=tokens_out_total,
                     )
                     metrics_collector.record(call)
                 return
@@ -428,11 +467,13 @@ class OpenAIProvider(LLMProvider):
                         call = LLMCall.create(
                             phase=phase,
                             waypoint_id=waypoint_id,
-                            cost_usd=0.0,
+                            cost_usd=None,
                             latency_ms=elapsed_ms,
                             model=self.model,
                             success=False,
                             error=error_msg,
+                            tokens_in=tokens_in_total,
+                            tokens_out=tokens_out_total,
                         )
                         metrics_collector.record(call)
                     raise
@@ -453,11 +494,13 @@ class OpenAIProvider(LLMProvider):
                 call = LLMCall.create(
                     phase=phase,
                     waypoint_id=waypoint_id,
-                    cost_usd=0.0,
+                    cost_usd=None,
                     latency_ms=elapsed_ms,
                     model=self.model,
                     success=False,
                     error=error_msg,
+                    tokens_in=tokens_in_total,
+                    tokens_out=tokens_out_total,
                 )
                 metrics_collector.record(call)
             raise last_error

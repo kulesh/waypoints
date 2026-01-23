@@ -33,6 +33,8 @@ class StreamComplete:
 
     full_text: str
     cost_usd: float | None = None
+    tokens_in: int | None = None
+    tokens_out: int | None = None
 
 
 class APIErrorType(Enum):
