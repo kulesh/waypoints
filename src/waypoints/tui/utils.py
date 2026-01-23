@@ -69,6 +69,11 @@ def format_relative_time(dt: datetime) -> str:
     return "just now"
 
 
+def format_token_count(tokens: int) -> str:
+    """Format token counts with separators for readability."""
+    return f"{tokens:,}"
+
+
 # =============================================================================
 # Waypoint Status Display
 # =============================================================================
