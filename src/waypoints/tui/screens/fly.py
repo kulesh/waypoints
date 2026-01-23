@@ -1649,6 +1649,7 @@ class FlyScreen(Screen[None]):
             self._run_executor(),
             name="waypoint_executor",
             exclusive=True,
+            thread=True,
         )
 
     async def _run_executor(self) -> ExecutionResult:
