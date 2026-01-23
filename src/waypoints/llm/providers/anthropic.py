@@ -47,6 +47,57 @@ TOOL_NAME_MAP: dict[str, str] = {
 }
 
 
+def _extract_token_usage(message: ResultMessage) -> tuple[int | None, int | None]:
+    """Best-effort extraction of token usage from SDK result messages."""
+    tokens_in = getattr(message, "total_input_tokens", None)
+    tokens_out = getattr(message, "total_output_tokens", None)
+
+    if tokens_in is None:
+        tokens_in = getattr(message, "input_tokens", None)
+    if tokens_out is None:
+        tokens_out = getattr(message, "output_tokens", None)
+
+    usage = getattr(message, "usage", None)
+    if usage is not None:
+        tokens_in = tokens_in or getattr(usage, "input_tokens", None)
+        tokens_out = tokens_out or getattr(usage, "output_tokens", None)
+
+    return (
+        int(tokens_in) if tokens_in is not None else None,
+        int(tokens_out) if tokens_out is not None else None,
+    )
+
+
+def _extract_usage_from_message(message: object) -> tuple[int | None, int | None]:
+    """Extract token usage from messages that expose a usage attribute."""
+    usage = getattr(message, "usage", None)
+    if usage is None:
+        return None, None
+
+    tokens_in = getattr(usage, "input_tokens", None)
+    tokens_out = getattr(usage, "output_tokens", None)
+
+    if tokens_in is None and isinstance(usage, dict):
+        tokens_in = usage.get("input_tokens")
+    if tokens_out is None and isinstance(usage, dict):
+        tokens_out = usage.get("output_tokens")
+
+    if tokens_in is None:
+        tokens_in = getattr(usage, "prompt_tokens", None)
+    if tokens_out is None:
+        tokens_out = getattr(usage, "completion_tokens", None)
+
+    if tokens_in is None and isinstance(usage, dict):
+        tokens_in = usage.get("prompt_tokens")
+    if tokens_out is None and isinstance(usage, dict):
+        tokens_out = usage.get("completion_tokens")
+
+    return (
+        int(tokens_in) if tokens_in is not None else None,
+        int(tokens_out) if tokens_out is not None else None,
+    )
+
+
 class AnthropicProvider(LLMProvider):
     """Anthropic provider using Claude Agent SDK.
 
@@ -94,6 +145,8 @@ class AnthropicProvider(LLMProvider):
 
         start_time = time.perf_counter()
         cost: float | None = None
+        tokens_in: int | None = None
+        tokens_out: int | None = None
         success = True
         error_msg: str | None = None
 
@@ -101,6 +154,8 @@ class AnthropicProvider(LLMProvider):
             for result in self._run_agent_query(prompt, system):
                 if isinstance(result, StreamComplete):
                     cost = result.cost_usd
+                    tokens_in = result.tokens_in
+                    tokens_out = result.tokens_out
                     yield result
                 else:
                     yield result
@@ -116,11 +171,13 @@ class AnthropicProvider(LLMProvider):
 
                 call = LLMCall.create(
                     phase=phase,
-                    cost_usd=cost or 0.0,
+                    cost_usd=cost,
                     latency_ms=elapsed_ms,
                     model=self.model,
                     success=success,
                     error=error_msg,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
                 )
                 metrics_collector.record(call)
 
@@ -157,9 +214,13 @@ class AnthropicProvider(LLMProvider):
         loop = asyncio.new_event_loop()
         try:
 
-            async def collect_results() -> tuple[list[str], float | None]:
+            async def collect_results() -> tuple[
+                list[str], float | None, int | None, int | None
+            ]:
                 chunks: list[str] = []
                 cost: float | None = None
+                tokens_in: int | None = None
+                tokens_out: int | None = None
                 options = ClaudeAgentOptions(
                     allowed_tools=[],
                     system_prompt=system if system else None,
@@ -167,16 +228,24 @@ class AnthropicProvider(LLMProvider):
                 logger.info("Starting agent query")
                 async for message in query(prompt=prompt, options=options):
                     if isinstance(message, AssistantMessage):
+                        usage_in, usage_out = _extract_usage_from_message(message)
+                        if usage_in is not None:
+                            tokens_in = usage_in
+                        if usage_out is not None:
+                            tokens_out = usage_out
                         for block in message.content:
                             if isinstance(block, TextBlock):
                                 chunks.append(block.text)
                                 logger.debug("Got chunk: %d chars", len(block.text))
                     elif isinstance(message, ResultMessage):
                         cost = message.total_cost_usd
+                        tokens_in, tokens_out = _extract_token_usage(message)
                         logger.info("Query complete, cost: $%.4f", cost or 0)
-                return chunks, cost
+                return chunks, cost, tokens_in, tokens_out
 
-            chunks, cost = loop.run_until_complete(collect_results())
+            chunks, cost, tokens_in, tokens_out = loop.run_until_complete(
+                collect_results()
+            )
             logger.info("Got %d chunks total", len(chunks))
 
             full_text = ""
@@ -184,7 +253,12 @@ class AnthropicProvider(LLMProvider):
                 full_text += chunk
                 yield StreamChunk(text=chunk)
 
-            yield StreamComplete(full_text=full_text, cost_usd=cost)
+            yield StreamComplete(
+                full_text=full_text,
+                cost_usd=cost,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+            )
         finally:
             loop.close()
             # Restore env var if we removed it
@@ -218,6 +292,8 @@ class AnthropicProvider(LLMProvider):
         start_time = time.perf_counter()
         error_msg: str | None = None
         final_cost: float | None = None
+        final_tokens_in: int | None = None
+        final_tokens_out: int | None = None
         last_error: Exception | None = None
 
         for attempt in range(MAX_RETRIES + 1):
@@ -234,11 +310,18 @@ class AnthropicProvider(LLMProvider):
 
             full_text = ""
             cost: float | None = None
+            tokens_in: int | None = None
+            tokens_out: int | None = None
             has_yielded = False
 
             try:
                 async for message in query(prompt=prompt, options=options):
                     if isinstance(message, AssistantMessage):
+                        usage_in, usage_out = _extract_usage_from_message(message)
+                        if usage_in is not None:
+                            tokens_in = usage_in
+                        if usage_out is not None:
+                            tokens_out = usage_out
                         for block in message.content:
                             if isinstance(block, TextBlock):
                                 full_text += block.text
@@ -257,9 +340,17 @@ class AnthropicProvider(LLMProvider):
                                 )
                     elif isinstance(message, ResultMessage):
                         cost = message.total_cost_usd
+                        tokens_in, tokens_out = _extract_token_usage(message)
 
                 final_cost = cost
-                yield StreamComplete(full_text=full_text, cost_usd=cost)
+                final_tokens_in = tokens_in
+                final_tokens_out = tokens_out
+                yield StreamComplete(
+                    full_text=full_text,
+                    cost_usd=cost,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                )
 
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
                 if metrics_collector is not None:
@@ -268,11 +359,13 @@ class AnthropicProvider(LLMProvider):
                     call = LLMCall.create(
                         phase=phase,
                         waypoint_id=waypoint_id,
-                        cost_usd=cost or 0.0,
+                        cost_usd=cost,
                         latency_ms=elapsed_ms,
                         model=self.model,
                         success=True,
                         error=None,
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
                     )
                     metrics_collector.record(call)
                 return
@@ -305,11 +398,13 @@ class AnthropicProvider(LLMProvider):
                         call = LLMCall.create(
                             phase=phase,
                             waypoint_id=waypoint_id,
-                            cost_usd=cost or 0.0,
+                            cost_usd=cost,
                             latency_ms=elapsed_ms,
                             model=self.model,
                             success=False,
                             error=error_msg,
+                            tokens_in=tokens_in,
+                            tokens_out=tokens_out,
                         )
                         metrics_collector.record(call)
                     raise
@@ -329,11 +424,13 @@ class AnthropicProvider(LLMProvider):
                 call = LLMCall.create(
                     phase=phase,
                     waypoint_id=waypoint_id,
-                    cost_usd=final_cost or 0.0,
+                    cost_usd=final_cost,
                     latency_ms=elapsed_ms,
                     model=self.model,
                     success=False,
                     error=error_msg,
+                    tokens_in=final_tokens_in,
+                    tokens_out=final_tokens_out,
                 )
                 metrics_collector.record(call)
             raise last_error
