@@ -47,6 +47,7 @@ from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.screens.intervention import InterventionModal
 from waypoints.tui.utils import (
+    format_token_count,
     get_status_color,
     get_status_icon,
     get_status_label,
@@ -369,6 +370,10 @@ class WaypointDetailPanel(Vertical):
         color: $text-muted;
     }
 
+    WaypointDetailPanel .wp-metrics {
+        color: $text-muted;
+    }
+
     WaypointDetailPanel .criteria-section {
         padding: 1 1 1 0;
         border-bottom: none;
@@ -395,6 +400,7 @@ class WaypointDetailPanel(Vertical):
         self._flight_plan = flight_plan
         self._waypoint: Waypoint | None = None
         self._waypoint_cost: float | None = None
+        self._waypoint_tokens: tuple[int, int] | None = None
         self._showing_output_for: str | None = None  # Track which waypoint's output
         self._is_live_output: bool = False  # True if showing live streaming output
 
@@ -403,6 +409,7 @@ class WaypointDetailPanel(Vertical):
             yield Static("Select a waypoint", classes="wp-title", id="wp-title")
             yield Static("", classes="wp-objective", id="wp-objective")
             yield Static("Status: Pending", classes="wp-status", id="wp-status")
+            yield Static("", classes="wp-metrics", id="wp-metrics")
             yield Static("", classes="wp-status", id="iteration-label")
             yield ResizableSplitVertical(
                 top=Vertical(
@@ -426,6 +433,7 @@ class WaypointDetailPanel(Vertical):
         project: "Project | None" = None,
         active_waypoint_id: str | None = None,
         cost: float | None = None,
+        tokens: tuple[int, int] | None = None,
     ) -> None:
         """Display waypoint details.
 
@@ -437,10 +445,12 @@ class WaypointDetailPanel(Vertical):
         """
         self._waypoint = waypoint
         self._waypoint_cost = cost
+        self._waypoint_tokens = tokens
 
         title = self.query_one("#wp-title", Static)
         objective = self.query_one("#wp-objective", Static)
         status = self.query_one("#wp-status", Static)
+        metrics = self.query_one("#wp-metrics", Static)
 
         # Criteria list might not exist yet if called before compose
         try:
@@ -459,6 +469,7 @@ class WaypointDetailPanel(Vertical):
             icon = get_status_markup(waypoint.status)
             label = get_status_label(waypoint.status)
             status.update(Text.from_markup(f"{icon} {label}"))
+            metrics.update(self._format_metrics_line(cost, tokens))
 
             # Load completed criteria from execution log for completed waypoints
             completed: set[int] | None = None
@@ -479,12 +490,38 @@ class WaypointDetailPanel(Vertical):
             title.update("Select a waypoint")
             objective.update("")
             status.update("–")
+            metrics.update("")
             if criteria_list:
                 criteria_list.set_criteria([])
             self.clear_iteration()
             self.execution_log.clear_log()
             self._showing_output_for = None
             self._is_live_output = False
+
+    def update_metrics(
+        self, cost: float | None, tokens: tuple[int, int] | None
+    ) -> None:
+        """Update the metrics line without reloading the waypoint."""
+        self._waypoint_cost = cost
+        self._waypoint_tokens = tokens
+        metrics = self.query_one("#wp-metrics", Static)
+        metrics.update(self._format_metrics_line(cost, tokens))
+
+    def _format_metrics_line(
+        self, cost: float | None, tokens: tuple[int, int] | None
+    ) -> str:
+        """Format the metrics line for a waypoint detail panel."""
+        metrics_parts: list[str] = []
+        if tokens:
+            tokens_in, tokens_out = tokens
+            metrics_parts.append(
+                "Tokens: "
+                f"{format_token_count(tokens_in)} in / "
+                f"{format_token_count(tokens_out)} out"
+            )
+        if cost is not None and cost > 0:
+            metrics_parts.append(f"Cost: ${cost:.2f}")
+        return " · ".join(metrics_parts)
 
     def _update_output_for_waypoint(
         self, waypoint: Waypoint, active_waypoint_id: str | None
@@ -949,16 +986,30 @@ class WaypointListPanel(Vertical):
         """Update the git status indicator."""
         self.query_one("#git-status", Static).update(message)
 
-    def update_project_metrics(self, cost: float, time_seconds: int) -> None:
+    def update_project_metrics(
+        self,
+        cost: float,
+        time_seconds: int,
+        tokens_in: int | None = None,
+        tokens_out: int | None = None,
+    ) -> None:
         """Update the project metrics display (cost and time).
 
         Args:
             cost: Total cost in USD.
             time_seconds: Total execution time in seconds.
+            tokens_in: Total input tokens for the project.
+            tokens_out: Total output tokens for the project.
         """
         parts = []
         if cost > 0:
             parts.append(f"${cost:.2f}")
+        if tokens_in or tokens_out:
+            parts.append(
+                "Tokens: "
+                f"{format_token_count(tokens_in or 0)} in / "
+                f"{format_token_count(tokens_out or 0)} out"
+            )
         if time_seconds > 0:
             mins, secs = divmod(time_seconds, 60)
             if mins >= 60:
@@ -1222,11 +1273,15 @@ class FlyScreen(Screen[None]):
     def _update_project_metrics(self) -> None:
         """Update project-wide cost and time metrics in the left panel."""
         cost = 0.0
+        tokens_in: int | None = None
+        tokens_out: int | None = None
         if self.waypoints_app.metrics_collector:
             cost = self.waypoints_app.metrics_collector.total_cost
+            tokens_in = self.waypoints_app.metrics_collector.total_tokens_in
+            tokens_out = self.waypoints_app.metrics_collector.total_tokens_out
         time_seconds = self._calculate_total_execution_time()
         list_panel = self.query_one(WaypointListPanel)
-        list_panel.update_project_metrics(cost, time_seconds)
+        list_panel.update_project_metrics(cost, time_seconds, tokens_in, tokens_out)
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted[Waypoint]) -> None:
         """Update detail panel when tree selection changes."""
@@ -1240,8 +1295,13 @@ class FlyScreen(Screen[None]):
                 else None
             )
             cost = self._get_waypoint_cost(waypoint.id)
+            tokens = self._get_waypoint_tokens(waypoint.id)
             detail_panel.show_waypoint(
-                waypoint, project=self.project, active_waypoint_id=active_id, cost=cost
+                waypoint,
+                project=self.project,
+                active_waypoint_id=active_id,
+                cost=cost,
+                tokens=tokens,
             )
 
     def _get_waypoint_cost(self, waypoint_id: str) -> float | None:
@@ -1256,6 +1316,15 @@ class FlyScreen(Screen[None]):
         if self.waypoints_app.metrics_collector:
             cost_by_waypoint = self.waypoints_app.metrics_collector.cost_by_waypoint()
             return cost_by_waypoint.get(waypoint_id)
+        return None
+
+    def _get_waypoint_tokens(self, waypoint_id: str) -> tuple[int, int] | None:
+        """Get the token totals for a waypoint from the metrics collector."""
+        if self.waypoints_app.metrics_collector:
+            tokens_by_waypoint = (
+                self.waypoints_app.metrics_collector.tokens_by_waypoint()
+            )
+            return tokens_by_waypoint.get(waypoint_id)
         return None
 
     def _get_completion_status(self) -> tuple[bool, int, int, int]:
@@ -1291,8 +1360,13 @@ class FlyScreen(Screen[None]):
             logger.info("SELECTED %s via coordinator", wp.id)
             detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
             cost = self._get_waypoint_cost(wp.id)
+            tokens = self._get_waypoint_tokens(wp.id)
             detail_panel.show_waypoint(
-                wp, project=self.project, active_waypoint_id=None, cost=cost
+                wp,
+                project=self.project,
+                active_waypoint_id=None,
+                cost=cost,
+                tokens=tokens,
             )
             return
 
@@ -1455,8 +1529,13 @@ class FlyScreen(Screen[None]):
             # Update detail panel to show this waypoint
             detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
             cost = self._get_waypoint_cost(selected.id)
+            tokens = self._get_waypoint_tokens(selected.id)
             detail_panel.show_waypoint(
-                selected, project=self.project, active_waypoint_id=None, cost=cost
+                selected,
+                project=self.project,
+                active_waypoint_id=None,
+                cost=cost,
+                tokens=tokens,
             )
 
             # Transition journey state and execute
@@ -1769,6 +1848,11 @@ class FlyScreen(Screen[None]):
 
         # Update project metrics (cost and time) after execution
         self._update_project_metrics()
+
+        if self.current_waypoint:
+            cost = self._get_waypoint_cost(self.current_waypoint.id)
+            tokens = self._get_waypoint_tokens(self.current_waypoint.id)
+            detail_panel.update_metrics(cost, tokens)
 
         if result == ExecutionResult.SUCCESS:
             # Mark complete
