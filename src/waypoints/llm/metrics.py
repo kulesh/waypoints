@@ -31,13 +31,13 @@ class LLMCall:
     phase: str  # spark, shape, chart, fly
     waypoint_id: str | None  # If during FLY phase
     cost_usd: float | None
-    tokens_in: int | None
-    tokens_out: int | None
     latency_ms: int
     model: str
     timestamp: datetime
     success: bool
     error: str | None = None
+    tokens_in: int | None = None
+    tokens_out: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
