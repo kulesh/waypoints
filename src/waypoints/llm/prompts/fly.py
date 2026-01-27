@@ -32,6 +32,10 @@ def build_execution_prompt(
     )
 
     checklist_items = "\n".join(f"- {item}" for item in checklist.items)
+    resolution_notes = ""
+    if waypoint.resolution_notes:
+        notes_list = "\n".join(f"- {note}" for note in waypoint.resolution_notes)
+        resolution_notes = "\n## Resolution Notes (must honor)\n" f"{notes_list}\n"
 
     return f"""## Current Waypoint: {waypoint.id}
 {waypoint.title}
@@ -41,8 +45,10 @@ def build_execution_prompt(
 
 ## Acceptance Criteria (must all pass)
 {criteria_list}
+{resolution_notes}
 
 ## Product Spec Summary
+## TODO: We should use proper summary of the spec not prefix!
 {spec[:2000]}{"..." if len(spec) > 2000 else ""}
 
 ## Working Directory
@@ -249,6 +255,27 @@ def build_verification_prompt(receipt: "ChecklistReceipt") -> str:
         )
 
     evidence_text = "\n\n".join(evidence_sections)
+    soft_evidence_text = ""
+    if receipt.soft_checklist:
+        soft_sections = []
+        for item in receipt.soft_checklist:
+            status_emoji = "✅" if item.status == "passed" else "❌"
+            output = item.stdout or item.stderr or "(no output)"
+            if len(output) > 500:
+                output = output[:500] + "\n... (truncated)"
+            soft_sections.append(
+                f"""**{item.item}** {status_emoji}
+- Command: `{item.command}`
+- Exit code: {item.exit_code}
+- Output:
+```
+{output}
+```"""
+            )
+        soft_evidence_text = "\n\n".join(soft_sections)
+    soft_section = ""
+    if soft_evidence_text:
+        soft_section = f"\n### Soft Validation Evidence\n\n{soft_evidence_text}\n"
 
     return f"""## Receipt Verification
 
@@ -257,13 +284,16 @@ A receipt was generated for waypoint {receipt.waypoint_id}. Please verify it.
 {context_section}### Captured Evidence
 
 {evidence_text}
+{soft_section}
 
 ### Verification Task
 
 Review the captured evidence and answer:
 1. Did all checklist commands succeed (exit code 0)?
 2. Does the output indicate genuine success (not empty, no hidden errors)?
-3. Based on the evidence, is this waypoint complete?
+3. If host and soft evidence conflict, treat host evidence as authoritative and
+   mark the receipt invalid.
+4. Based on the evidence, is this waypoint complete?
 
 Output your verdict:
 <receipt-verdict status="valid|invalid">

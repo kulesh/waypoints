@@ -1,5 +1,6 @@
 """Unit tests for WaypointExecutor."""
 
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -17,7 +18,7 @@ from waypoints.fly.executor import (
 )
 from waypoints.fly.stack import ValidationCommand
 from waypoints.git.config import Checklist
-from waypoints.git.receipt import ChecklistReceipt
+from waypoints.git.receipt import CapturedEvidence, ChecklistReceipt
 from waypoints.llm.prompts import build_execution_prompt
 from waypoints.llm.providers.base import StreamChunk
 from waypoints.models.waypoint import Waypoint
@@ -640,9 +641,20 @@ async def test_finalize_runs_host_validation_commands(
     validation_commands = [
         ValidationCommand(name="tests", command=command, category="test")
     ]
+    tool_evidence = CapturedEvidence(
+        command=command,
+        exit_code=0,
+        stdout="host evidence",
+        stderr="",
+        captured_at=datetime.now(),
+    )
 
     result = await executor._finalize_and_verify_receipt(
-        tmp_path, {}, validation_commands, []
+        tmp_path,
+        {},
+        validation_commands,
+        [],
+        tool_validation_categories={"tests": tool_evidence},
     )
 
     assert result is True
@@ -652,6 +664,59 @@ async def test_finalize_runs_host_validation_commands(
     receipt = ChecklistReceipt.load(receipts[0])
     outputs = [item.stdout for item in receipt.checklist]
     assert any("host evidence" in out for out in outputs)
+
+
+@pytest.mark.anyio
+async def test_finalize_host_validation_records_soft_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Host validation should also record tool evidence for soft validation."""
+
+    async def fake_agent_query(**_: object):
+        yield StreamChunk(
+            text='<receipt-verdict status="valid">looks good</receipt-verdict>'
+        )
+
+    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+
+    project = SimpleNamespace(get_path=lambda: tmp_path)
+    waypoint = Waypoint(
+        id="WP-124",
+        title="Soft evidence",
+        objective="Record tool output",
+        acceptance_criteria=[],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+    executor._log_writer = DummyLogWriter()
+
+    command = "python -c \"print('host evidence')\""
+    validation_commands = [
+        ValidationCommand(name="tests", command=command, category="test")
+    ]
+    tool_evidence = CapturedEvidence(
+        command="cargo clippy -- -D warnings",
+        exit_code=0,
+        stdout="tool linting output",
+        stderr="",
+        captured_at=datetime.now(),
+    )
+
+    result = await executor._finalize_and_verify_receipt(
+        tmp_path,
+        {},
+        validation_commands,
+        [],
+        tool_validation_categories={"linting": tool_evidence},
+    )
+
+    assert result is True
+    receipts = list((tmp_path / "receipts").glob("*.json"))
+    assert len(receipts) == 1
+
+    receipt = ChecklistReceipt.load(receipts[0])
+    assert receipt.soft_checklist
+    item = next(item for item in receipt.soft_checklist if item.item == "linting")
+    assert "tool linting output" in item.stdout
 
 
 @pytest.mark.anyio
@@ -678,9 +743,20 @@ async def test_finalize_falls_back_to_model_commands(
     executor._log_writer = DummyLogWriter()
 
     reported_commands = ["python -c \"print('fallback evidence')\""]
+    tool_evidence = CapturedEvidence(
+        command=reported_commands[0],
+        exit_code=0,
+        stdout="fallback evidence",
+        stderr="",
+        captured_at=datetime.now(),
+    )
 
     result = await executor._finalize_and_verify_receipt(
-        tmp_path, {}, [], reported_commands
+        tmp_path,
+        {},
+        [],
+        reported_commands,
+        tool_validation_evidence={reported_commands[0]: tool_evidence},
     )
 
     assert result is True
@@ -690,3 +766,86 @@ async def test_finalize_falls_back_to_model_commands(
     receipt = ChecklistReceipt.load(receipts[0])
     outputs = [item.stdout for item in receipt.checklist]
     assert any("fallback evidence" in out for out in outputs)
+
+
+@pytest.mark.anyio
+async def test_finalize_soft_validation_uses_tool_evidence(
+    tmp_path: Path,
+) -> None:
+    """Soft validation should reuse tool evidence when available."""
+    project = SimpleNamespace(get_path=lambda: tmp_path)
+    waypoint = Waypoint(
+        id="WP-789",
+        title="Soft validation",
+        objective="Capture tool evidence",
+        acceptance_criteria=[],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+    executor._log_writer = DummyLogWriter()
+
+    command = "python -c \"print('tool evidence')\""
+    validation_commands = [
+        ValidationCommand(name="tests", command=command, category="test")
+    ]
+    tool_evidence = {
+        command: CapturedEvidence(
+            command=command,
+            exit_code=0,
+            stdout="tool evidence",
+            stderr="",
+            captured_at=datetime.now(),
+        )
+    }
+
+    result = await executor._finalize_and_verify_receipt(
+        tmp_path,
+        {},
+        validation_commands,
+        [],
+        tool_validation_evidence=tool_evidence,
+        host_validations_enabled=False,
+    )
+
+    assert result is True
+    receipts = list((tmp_path / "receipts").glob("*.json"))
+    assert len(receipts) == 1
+
+    receipt = ChecklistReceipt.load(receipts[0])
+    item = next(item for item in receipt.checklist if item.item == "tests")
+    assert item.status == "passed"
+    assert "tool evidence" in item.stdout
+
+
+@pytest.mark.anyio
+async def test_finalize_requires_soft_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Receipt should be invalid when soft evidence is missing."""
+
+    async def fake_agent_query(**_: object):
+        yield StreamChunk(
+            text='<receipt-verdict status="valid">looks good</receipt-verdict>'
+        )
+
+    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+
+    project = SimpleNamespace(get_path=lambda: tmp_path)
+    waypoint = Waypoint(
+        id="WP-790",
+        title="Soft missing",
+        objective="Require soft validation",
+        acceptance_criteria=[],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+    executor._log_writer = DummyLogWriter()
+
+    command = "python -c \"print('host evidence')\""
+    validation_commands = [
+        ValidationCommand(name="tests", command=command, category="test")
+    ]
+
+    result = await executor._finalize_and_verify_receipt(
+        tmp_path, {}, validation_commands, []
+    )
+
+    assert result is False

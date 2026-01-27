@@ -20,6 +20,7 @@ from textual.widgets import Footer, RichLog, Static, Tree
 from textual.worker import Worker, WorkerFailed
 
 if TYPE_CHECKING:
+    from waypoints.git.receipt import ChecklistReceipt
     from waypoints.tui.app import WaypointsApp
 
 from waypoints.fly.execution_log import (
@@ -489,6 +490,7 @@ class WaypointDetailPanel(Vertical):
         else:
             title.update("Select a waypoint")
             objective.update("")
+            notes.update("")
             status.update("–")
             metrics.update("")
             if criteria_list:
@@ -718,6 +720,7 @@ class WaypointDetailPanel(Vertical):
         """Log a tool call entry with clickable file paths for file operations."""
         tool_name = entry.metadata.get("tool_name", "unknown")
         tool_input = entry.metadata.get("tool_input", {})
+        tool_output = entry.metadata.get("tool_output", "")
 
         # Show clickable paths for file operations
         if tool_name in ("Edit", "Write", "Read") and isinstance(tool_input, dict):
@@ -1275,13 +1278,24 @@ class FlyScreen(Screen[None]):
         cost = 0.0
         tokens_in: int | None = None
         tokens_out: int | None = None
+        tokens_known = False
         if self.waypoints_app.metrics_collector:
             cost = self.waypoints_app.metrics_collector.total_cost
             tokens_in = self.waypoints_app.metrics_collector.total_tokens_in
             tokens_out = self.waypoints_app.metrics_collector.total_tokens_out
+            tokens_known = any(
+                call.tokens_in is not None or call.tokens_out is not None
+                for call in self.waypoints_app.metrics_collector._calls
+            )
         time_seconds = self._calculate_total_execution_time()
         list_panel = self.query_one(WaypointListPanel)
-        list_panel.update_project_metrics(cost, time_seconds, tokens_in, tokens_out)
+        list_panel.update_project_metrics(
+            cost,
+            time_seconds,
+            tokens_in,
+            tokens_out,
+            tokens_known,
+        )
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted[Waypoint]) -> None:
         """Update detail panel when tree selection changes."""

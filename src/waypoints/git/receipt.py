@@ -7,6 +7,7 @@ verified by an LLM to ensure the evidence indicates success.
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,16 +54,20 @@ class CriterionVerification:
     status: Literal["verified", "failed"]
     evidence: str
     verified_at: datetime
+    evidence_path: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
-        return {
+        result = {
             "index": self.index,
             "criterion": self.criterion,
             "status": self.status,
             "evidence": self.evidence,
             "verified_at": self.verified_at.isoformat(),
         }
+        if self.evidence_path:
+            result["evidence_path"] = self.evidence_path
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CriterionVerification":
@@ -72,6 +77,7 @@ class CriterionVerification:
             criterion=data["criterion"],
             status=data["status"],
             evidence=data["evidence"],
+            evidence_path=data.get("evidence_path", ""),
             verified_at=datetime.fromisoformat(data["verified_at"]),
         )
 
@@ -86,6 +92,8 @@ class ChecklistItem:
     exit_code: int | None = None  # Command exit code
     stdout: str = ""  # Captured stdout
     stderr: str = ""  # Captured stderr
+    stdout_path: str = ""  # Path to full stdout output
+    stderr_path: str = ""  # Path to full stderr output
     captured_at: datetime | None = None  # When evidence was captured
     evidence: str = ""  # Legacy: model-written prose (for backwards compat)
     reason: str = ""  # Why it was skipped (for skipped items)
@@ -104,6 +112,10 @@ class ChecklistItem:
             result["stdout"] = self.stdout
         if self.stderr:
             result["stderr"] = self.stderr
+        if self.stdout_path:
+            result["stdout_path"] = self.stdout_path
+        if self.stderr_path:
+            result["stderr_path"] = self.stderr_path
         if self.captured_at:
             result["captured_at"] = self.captured_at.isoformat()
         if self.evidence:
@@ -125,6 +137,8 @@ class ChecklistItem:
             exit_code=data.get("exit_code"),
             stdout=data.get("stdout", ""),
             stderr=data.get("stderr", ""),
+            stdout_path=data.get("stdout_path", ""),
+            stderr_path=data.get("stderr_path", ""),
             captured_at=captured_at,
             evidence=data.get("evidence", ""),
             reason=data.get("reason", ""),
@@ -139,6 +153,7 @@ class ChecklistReceipt:
     completed_at: datetime
     context: WaypointContext | None = None  # Waypoint context for traceability
     checklist: list[ChecklistItem] = field(default_factory=list)
+    soft_checklist: list[ChecklistItem] = field(default_factory=list)
     criteria_verification: list[CriterionVerification] = field(default_factory=list)
 
     def is_valid(self) -> bool:
@@ -164,6 +179,8 @@ class ChecklistReceipt:
             "completed_at": self.completed_at.isoformat(),
             "checklist": [item.to_dict() for item in self.checklist],
         }
+        if self.soft_checklist:
+            result["soft_checklist"] = [item.to_dict() for item in self.soft_checklist]
         if self.context:
             result["context"] = self.context.to_dict()
         if self.criteria_verification:
@@ -188,6 +205,9 @@ class ChecklistReceipt:
             context=context,
             checklist=[
                 ChecklistItem.from_dict(item) for item in data.get("checklist", [])
+            ],
+            soft_checklist=[
+                ChecklistItem.from_dict(item) for item in data.get("soft_checklist", [])
             ],
             criteria_verification=criteria_verification,
         )
@@ -299,6 +319,38 @@ class CapturedEvidence:
     captured_at: datetime
 
 
+def _build_output_snippet(output: str, max_snippet: int) -> str:
+    if not output:
+        return ""
+    if len(output) <= max_snippet:
+        return output
+    separator = "\n...snip...\n"
+    head_len = max_snippet // 2
+    tail_len = max_snippet - head_len - len(separator)
+    if tail_len < 0:
+        head_len = max(0, max_snippet - len(separator))
+        tail_len = 0
+    return f"{output[:head_len]}{separator}{output[-tail_len:] if tail_len else ''}"
+
+
+def _write_output_file(
+    output_dir: Path,
+    output_prefix: str,
+    category: str,
+    stream: str,
+    content: str,
+) -> str:
+    if not content:
+        return ""
+    safe_category = re.sub(r"[^A-Za-z0-9._-]+", "-", category).strip("-").lower()
+    safe_category = safe_category or "validation"
+    filename = f"{output_prefix}-{safe_category}.{stream}.txt"
+    path = output_dir / filename
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return filename
+
+
 class ReceiptBuilder:
     """Builds receipts from captured evidence during waypoint execution.
 
@@ -352,7 +404,13 @@ class ReceiptBuilder:
         """Record a skipped checklist item with a reason."""
         self.skipped[category] = reason
 
-    def build(self) -> ChecklistReceipt:
+    def build(
+        self,
+        output_dir: Path | None = None,
+        output_prefix: str | None = None,
+        max_snippet: int = 2000,
+        soft_evidence: dict[str, CapturedEvidence] | None = None,
+    ) -> ChecklistReceipt:
         """Build receipt from captured evidence.
 
         Returns:
@@ -360,14 +418,25 @@ class ReceiptBuilder:
         """
         checklist_items = []
         for category, ev in self.evidence.items():
+            stdout_path = ""
+            stderr_path = ""
+            if output_dir and output_prefix:
+                stdout_path = _write_output_file(
+                    output_dir, output_prefix, category, "stdout", ev.stdout
+                )
+                stderr_path = _write_output_file(
+                    output_dir, output_prefix, category, "stderr", ev.stderr
+                )
             checklist_items.append(
                 ChecklistItem(
                     item=category,
                     status="passed" if ev.exit_code == 0 else "failed",
                     command=ev.command,
                     exit_code=ev.exit_code,
-                    stdout=ev.stdout[:2000] if ev.stdout else "",  # Truncate
-                    stderr=ev.stderr[:2000] if ev.stderr else "",  # Truncate
+                    stdout=_build_output_snippet(ev.stdout, max_snippet),
+                    stderr=_build_output_snippet(ev.stderr, max_snippet),
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
                     captured_at=ev.captured_at,
                 )
             )
@@ -381,14 +450,71 @@ class ReceiptBuilder:
                 )
             )
 
+        soft_items = []
+        if soft_evidence:
+            for label, ev in sorted(soft_evidence.items()):
+                stdout_path = ""
+                stderr_path = ""
+                if output_dir and output_prefix:
+                    stdout_path = _write_output_file(
+                        output_dir,
+                        output_prefix,
+                        f"soft-{label}",
+                        "stdout",
+                        ev.stdout,
+                    )
+                    stderr_path = _write_output_file(
+                        output_dir,
+                        output_prefix,
+                        f"soft-{label}",
+                        "stderr",
+                        ev.stderr,
+                    )
+                soft_items.append(
+                    ChecklistItem(
+                        item=label,
+                        status="passed" if ev.exit_code == 0 else "failed",
+                        command=ev.command,
+                        exit_code=ev.exit_code,
+                        stdout=_build_output_snippet(ev.stdout, max_snippet),
+                        stderr=_build_output_snippet(ev.stderr, max_snippet),
+                        stdout_path=stdout_path,
+                        stderr_path=stderr_path,
+                        captured_at=ev.captured_at,
+                    )
+                )
+
         # Sort criteria by index for consistent output
-        criteria_list = sorted(self.criteria.values(), key=lambda c: c.index)
+        criteria_list = []
+        for criterion in sorted(self.criteria.values(), key=lambda c: c.index):
+            evidence_path = ""
+            evidence = criterion.evidence
+            if output_dir and output_prefix and criterion.evidence:
+                evidence_path = _write_output_file(
+                    output_dir,
+                    output_prefix,
+                    f"criterion-{criterion.index}",
+                    "evidence",
+                    criterion.evidence,
+                )
+                evidence = _build_output_snippet(criterion.evidence, max_snippet)
+            criteria_list.append(
+                CriterionVerification(
+                    index=criterion.index,
+                    criterion=criterion.criterion,
+                    status=criterion.status,
+                    evidence=evidence,
+                    evidence_path=evidence_path,
+                    verified_at=criterion.verified_at,
+                )
+            )
 
         return ChecklistReceipt(
             waypoint_id=self.waypoint_id,
             completed_at=datetime.now(UTC),
             context=self.context,
             checklist=checklist_items,
+            soft_checklist=soft_items,
             criteria_verification=criteria_list,
         )
 

@@ -63,19 +63,17 @@ async def run_execution(args: argparse.Namespace) -> int:
 
     # Determine waypoints to execute
     if args.waypoint:
-        # Execute specific waypoint
         waypoint = flight_plan.get_waypoint(args.waypoint)
         if not waypoint:
             print(f"Error: Waypoint not found: {args.waypoint}", file=sys.stderr)
             return 1
         waypoints_to_execute = [waypoint]
     else:
-        # Execute all pending waypoints
         waypoints_to_execute = [
             wp
             for wp in flight_plan.waypoints
             if wp.status == WaypointStatus.PENDING
-            and not flight_plan.is_epic(wp.id)  # Skip epics
+            and not flight_plan.is_epic(wp.id)
         ]
 
     if not waypoints_to_execute:
@@ -89,7 +87,19 @@ async def run_execution(args: argparse.Namespace) -> int:
 
     # Execute each waypoint
     errors = 0
-    for waypoint in waypoints_to_execute:
+    if args.waypoint:
+        loop_targets = waypoints_to_execute
+    else:
+        loop_targets = []
+        while True:
+            next_wp = coordinator.select_next_waypoint()
+            if not next_wp:
+                break
+            if next_wp.status != WaypointStatus.PENDING:
+                break
+            loop_targets.append(next_wp)
+
+    for waypoint in loop_targets:
         log_event(
             "waypoint_started",
             {"waypoint_id": waypoint.id, "title": waypoint.title},
@@ -99,6 +109,7 @@ async def run_execution(args: argparse.Namespace) -> int:
             result = await coordinator.execute_waypoint(
                 waypoint=waypoint,
                 max_iterations=args.max_iterations,
+                host_validations_enabled=args.host_validations_enabled,
             )
 
             if result == ExecutionResult.SUCCESS:
@@ -182,6 +193,12 @@ def main() -> int:
         help="Maximum execution iterations per waypoint (default: 10)",
     )
     parser.add_argument(
+        "--no-host-validations",
+        dest="host_validations_enabled",
+        action="store_false",
+        help="Disable host validations (LLM-as-judge only)",
+    )
+    parser.add_argument(
         "--skip-intervention",
         action="store_true",
         help="Skip waypoints that require intervention",
@@ -197,6 +214,8 @@ def main() -> int:
         action="store_true",
         help="Show progress on stderr",
     )
+
+    parser.set_defaults(host_validations_enabled=True)
 
     args = parser.parse_args()
 

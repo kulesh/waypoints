@@ -220,6 +220,30 @@ def _detect_validation_category(command: str) -> str | None:
     return None
 
 
+def _normalize_command(command: str) -> str:
+    """Normalize a shell command for matching."""
+    return " ".join(command.strip().split())
+
+
+def _parse_tool_output(output: str) -> tuple[str, str, int]:
+    """Parse tool output into stdout, stderr, and exit code."""
+    if not output:
+        return "", "", 0
+
+    exit_code = 0
+    exit_match = re.search(r"\nExit code: (\d+)\s*$", output)
+    if exit_match:
+        exit_code = int(exit_match.group(1))
+        output = output[: exit_match.start()]
+
+    stdout = output
+    stderr = ""
+    if "\nSTDERR:\n" in output:
+        stdout, stderr = output.split("\nSTDERR:\n", 1)
+
+    return stdout.rstrip(), stderr.rstrip(), exit_code
+
+
 class WaypointExecutor:
     """Executes a waypoint using agentic AI.
 
@@ -325,8 +349,14 @@ class WaypointExecutor:
         reported_validation_commands: list[str] = []
         # Criteria verification evidence
         captured_criteria: dict[int, CriterionVerification] = {}
+        tool_validation_evidence: dict[str, CapturedEvidence] = {}
+        tool_validation_categories: dict[str, CapturedEvidence] = {}
         logged_stage_reports: set[tuple[object, ...]] = set()
         completion_marker = f"<waypoint-complete>{self.waypoint.id}</waypoint-complete>"
+        completion_detected = False
+        completion_iteration: int | None = None
+        completion_output: str | None = None
+        completion_criteria: set[int] | None = None
 
         while iteration < self.max_iterations:
             if self._cancelled:
@@ -372,125 +402,85 @@ class WaypointExecutor:
                         iteration_output += chunk.text
                         full_output += chunk.text
 
-                        # Parse validation evidence markers BEFORE completion check
-                        # (completion check returns early, so we need to capture first)
-                        for match in VALIDATION_PATTERN.findall(full_output):
-                            command, _, _ = match
-                            normalized_command = command.strip()
-                            if not normalized_command:
-                                continue
-                            if normalized_command in reported_validation_commands:
-                                continue
+                        if not completion_detected:
+                            # Parse validation evidence markers BEFORE completion check
+                            for match in VALIDATION_PATTERN.findall(full_output):
+                                command, _, _ = match
+                                normalized_command = command.strip()
+                                if not normalized_command:
+                                    continue
+                                if normalized_command in reported_validation_commands:
+                                    continue
 
-                            reported_validation_commands.append(normalized_command)
-                            category = _detect_validation_category(normalized_command)
-                            if category:
-                                logger.info(
-                                    "Model reported validation command for %s: %s",
-                                    category,
-                                    normalized_command,
+                                reported_validation_commands.append(normalized_command)
+                                category = _detect_validation_category(
+                                    normalized_command
                                 )
+                                if category:
+                                    logger.info(
+                                        "Model reported validation command for %s: %s",
+                                        category,
+                                        normalized_command,
+                                    )
 
-                        # Parse criterion verification markers
-                        for match in CRITERION_PATTERN.findall(full_output):
-                            index, status, text, evidence = match
-                            idx = int(index)
-                            if idx not in captured_criteria:
-                                captured_criteria[idx] = CriterionVerification(
-                                    index=idx,
-                                    criterion=text.strip(),
-                                    status=status,
-                                    evidence=evidence.strip(),
-                                    verified_at=datetime.now(UTC),
+                            # Parse criterion verification markers
+                            for match in CRITERION_PATTERN.findall(full_output):
+                                index, status, text, evidence = match
+                                idx = int(index)
+                                if idx not in captured_criteria:
+                                    captured_criteria[idx] = CriterionVerification(
+                                        index=idx,
+                                        criterion=text.strip(),
+                                        status=status,
+                                        evidence=evidence.strip(),
+                                        verified_at=datetime.now(UTC),
+                                    )
+                                    logger.info(
+                                        "Captured criterion verification: [%d] %s",
+                                        idx,
+                                        status,
+                                    )
+
+                            # Parse structured execution stage reports
+                            for report in parse_stage_reports(full_output):
+                                key = (
+                                    report.stage,
+                                    report.success,
+                                    report.output,
+                                    tuple(report.artifacts),
+                                    report.next_stage,
                                 )
-                                logger.info(
-                                    "Captured criterion verification: [%d] %s",
-                                    idx,
-                                    status,
-                                )
-
-                        # Parse structured execution stage reports
-                        for report in parse_stage_reports(full_output):
-                            key = (
-                                report.stage,
-                                report.success,
-                                report.output,
-                                tuple(report.artifacts),
-                                report.next_stage,
-                            )
-                            if key in logged_stage_reports:
-                                continue
-                            logged_stage_reports.add(key)
-                            self._log_writer.log_stage_report(iteration, report)
-                            output = report.output.strip()
-                            if len(output) > 400:
-                                output = output[:400] + "..."
-                            summary = f"{report.stage.value}: {output}".strip()
-                            self._report_progress(
-                                iteration,
-                                self.max_iterations,
-                                "stage",
-                                summary,
-                            )
-
-                        # Check for completion marker
-                        if completion_marker in full_output:
-                            logger.info("Completion marker found!")
-                            self._log_writer.log_completion_detected(iteration)
-                            self.steps.append(
-                                ExecutionStep(
-                                    iteration=iteration,
-                                    action="complete",
-                                    output=iteration_output,
-                                )
-                            )
-                            # Parse criterion markers for logging
-                            criterion_matches = CRITERION_PATTERN.findall(full_output)
-                            final_completed = {int(m[0]) for m in criterion_matches}
-                            self._log_writer.log_output(
-                                iteration, iteration_output, final_completed
-                            )
-                            self._log_writer.log_iteration_end(
-                                iteration, iteration_cost
-                            )
-
-                            # Run finalize step to verify receipt
-                            receipt_valid = await self._finalize_and_verify_receipt(
-                                project_path,
-                                captured_criteria,
-                                self._validation_commands,
-                                reported_validation_commands,
-                                host_validations_enabled=self.host_validations_enabled,
-                            )
-
-                            if receipt_valid:
+                                if key in logged_stage_reports:
+                                    continue
+                                logged_stage_reports.add(key)
+                                self._log_writer.log_stage_report(iteration, report)
+                                output = report.output.strip()
+                                if len(output) > 400:
+                                    output = output[:400] + "..."
+                                summary = f"{report.stage.value}: {output}".strip()
                                 self._report_progress(
                                     iteration,
-                                    MAX_ITERATIONS,
-                                    "complete",
-                                    "Waypoint complete with valid receipt!",
+                                    self.max_iterations,
+                                    "stage",
+                                    summary,
                                 )
-                                self._log_writer.log_completion(
-                                    ExecutionResult.SUCCESS.value
+
+                            # Check for completion marker
+                            if completion_marker in full_output:
+                                logger.info("Completion marker found!")
+                                completion_detected = True
+                                completion_iteration = iteration
+                                completion_output = iteration_output
+                                criterion_matches = CRITERION_PATTERN.findall(
+                                    full_output
                                 )
-                                return ExecutionResult.SUCCESS
-                            else:
-                                # Receipt missing/invalid - warn but still succeed
-                                # (code trusts but logs the issue)
-                                logger.warning(
-                                    "Waypoint marked complete but receipt invalid. "
-                                    "Git commit will be skipped."
-                                )
-                                self._report_progress(
-                                    iteration,
-                                    MAX_ITERATIONS,
-                                    "complete",
-                                    "Complete (receipt missing/invalid)",
-                                )
-                                self._log_writer.log_completion(
-                                    ExecutionResult.SUCCESS.value
-                                )
-                                return ExecutionResult.SUCCESS
+                                completion_criteria = {
+                                    int(m[0]) for m in criterion_matches
+                                }
+                                self._log_writer.log_completion_detected(iteration)
+
+                        if completion_detected:
+                            continue
 
                         # Parse criterion completion markers from full output
                         criterion_matches = CRITERION_PATTERN.findall(full_output)
@@ -513,6 +503,25 @@ class WaypointExecutor:
                             chunk.tool_input,
                             chunk.tool_output,
                         )
+                        if chunk.tool_name == "Bash":
+                            command = chunk.tool_input.get("command")
+                            if isinstance(command, str) and chunk.tool_output:
+                                category = _detect_validation_category(command)
+                                stdout, stderr, exit_code = _parse_tool_output(
+                                    chunk.tool_output
+                                )
+                                evidence = CapturedEvidence(
+                                    command=command,
+                                    exit_code=exit_code,
+                                    stdout=stdout,
+                                    stderr=stderr,
+                                    captured_at=datetime.now(UTC),
+                                )
+                                tool_validation_evidence[
+                                    _normalize_command(command)
+                                ] = evidence
+                                if category:
+                                    tool_validation_categories[category] = evidence
                         # Extract and track file operation
                         file_op = _extract_file_operation(
                             chunk.tool_name, chunk.tool_input
@@ -536,6 +545,55 @@ class WaypointExecutor:
                             iteration,
                             chunk.cost_usd or 0,
                         )
+
+                if completion_detected:
+                    self.steps.append(
+                        ExecutionStep(
+                            iteration=completion_iteration or iteration,
+                            action="complete",
+                            output=completion_output or iteration_output,
+                        )
+                    )
+                    final_completed = completion_criteria or set()
+                    self._log_writer.log_output(
+                        iteration,
+                        completion_output or iteration_output,
+                        final_completed,
+                    )
+                    self._log_writer.log_iteration_end(iteration, iteration_cost)
+
+                    receipt_valid = await self._finalize_and_verify_receipt(
+                        project_path,
+                        captured_criteria,
+                        self._validation_commands,
+                        reported_validation_commands,
+                        tool_validation_evidence=tool_validation_evidence,
+                        tool_validation_categories=tool_validation_categories,
+                        host_validations_enabled=self.host_validations_enabled,
+                    )
+
+                    if receipt_valid:
+                        self._report_progress(
+                            iteration,
+                            MAX_ITERATIONS,
+                            "complete",
+                            "Waypoint complete with valid receipt!",
+                        )
+                        self._log_writer.log_completion(ExecutionResult.SUCCESS.value)
+                        return ExecutionResult.SUCCESS
+
+                    logger.warning(
+                        "Waypoint marked complete but receipt invalid. "
+                        "Git commit will be skipped."
+                    )
+                    self._report_progress(
+                        iteration,
+                        MAX_ITERATIONS,
+                        "complete",
+                        "Complete (receipt missing/invalid)",
+                    )
+                    self._log_writer.log_completion(ExecutionResult.SUCCESS.value)
+                    return ExecutionResult.SUCCESS
 
             except Exception as e:
                 logger.exception("Error during iteration %d: %s", iteration, e)
@@ -922,6 +980,8 @@ When complete, output the completion marker specified in the instructions."""
         captured_criteria: dict[int, CriterionVerification],
         validation_commands: list[ValidationCommand],
         reported_validation_commands: list[str],
+        tool_validation_evidence: dict[str, CapturedEvidence] | None = None,
+        tool_validation_categories: dict[str, CapturedEvidence] | None = None,
         host_validations_enabled: bool = True,
     ) -> bool:
         """Build receipt from host-captured evidence and verify with LLM.
@@ -934,6 +994,10 @@ When complete, output the completion marker specified in the instructions."""
                 stack detection and checklist overrides.
             reported_validation_commands: Commands reported by the model in
                 <validation> blocks (used as fallback when no stack commands).
+            tool_validation_evidence: Validation outputs captured from tool calls,
+                keyed by normalized command.
+            tool_validation_categories: Validation outputs captured from tool calls,
+                keyed by detected category.
             host_validations_enabled: Whether to run host validations or skip
                 and rely on model-provided evidence only.
 
@@ -960,6 +1024,12 @@ When complete, output the completion marker specified in the instructions."""
         commands_to_run = validation_commands or (
             self._fallback_validation_commands_from_model(reported_validation_commands)
         )
+        tool_validation_evidence = tool_validation_evidence or {}
+        tool_validation_categories = tool_validation_categories or {}
+        soft_evidence: dict[str, CapturedEvidence] = (
+            tool_validation_categories or tool_validation_evidence
+        )
+        soft_missing = bool(commands_to_run) and not soft_evidence
 
         # If host validations are disabled, record skips and return early with a
         # soft receipt.
@@ -973,6 +1043,14 @@ When complete, output the completion marker specified in the instructions."""
 
             if commands_to_run:
                 for cmd in commands_to_run:
+                    normalized = _normalize_command(cmd.command)
+                    evidence = tool_validation_evidence.get(normalized)
+                    if evidence is None:
+                        key = cmd.name or cmd.category
+                        evidence = tool_validation_categories.get(key)
+                    if evidence is not None:
+                        receipt_builder.capture(cmd.name or cmd.command, evidence)
+                        continue
                     reason = "Host validation skipped (LLM-as-judge only)"
                     receipt_builder.capture_skipped(cmd.name or cmd.command, reason)
             else:
@@ -994,15 +1072,26 @@ When complete, output the completion marker specified in the instructions."""
                     criterion.status,
                 )
 
-            receipt = receipt_builder.build()
             receipts_dir = self.project.get_path() / "receipts"
             receipts_dir.mkdir(parents=True, exist_ok=True)
             safe_wp_id = self.waypoint.id.lower().replace("-", "")
             timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-            receipt_path = receipts_dir / f"{safe_wp_id}-{timestamp}.json"
+            receipt_stem = f"{safe_wp_id}-{timestamp}"
+            receipt_path = receipts_dir / f"{receipt_stem}.json"
+            receipt = receipt_builder.build(
+                output_dir=receipts_dir,
+                output_prefix=receipt_stem,
+            )
             receipt.save(receipt_path)
 
             self._log_writer.log_finalize_end()
+            if soft_missing:
+                self._log_writer.log_receipt_validated(
+                    str(receipt_path),
+                    False,
+                    "Soft validation evidence missing",
+                )
+                return False
             self._log_writer.log_receipt_validated(
                 str(receipt_path),
                 True,
@@ -1045,12 +1134,17 @@ When complete, output the completion marker specified in the instructions."""
             self._log_writer.log_receipt_validated("", False, "No evidence captured")
             return False
 
-        receipt = receipt_builder.build()
         receipts_dir = self.project.get_path() / "receipts"
         receipts_dir.mkdir(parents=True, exist_ok=True)
         safe_wp_id = self.waypoint.id.lower().replace("-", "")
         timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        receipt_path = receipts_dir / f"{safe_wp_id}-{timestamp}.json"
+        receipt_stem = f"{safe_wp_id}-{timestamp}"
+        receipt_path = receipts_dir / f"{receipt_stem}.json"
+        receipt = receipt_builder.build(
+            output_dir=receipts_dir,
+            output_prefix=receipt_stem,
+            soft_evidence=soft_evidence or None,
+        )
         receipt.save(receipt_path)
 
         logger.info("Receipt saved: %s", receipt_path)
@@ -1063,6 +1157,14 @@ When complete, output the completion marker specified in the instructions."""
             self._log_writer.log_finalize_end()
             self._log_writer.log_receipt_validated(
                 str(receipt_path), False, f"Failed: {failed_names}"
+            )
+            return False
+        if soft_missing:
+            self._log_writer.log_finalize_end()
+            self._log_writer.log_receipt_validated(
+                str(receipt_path),
+                False,
+                "Soft validation evidence missing",
             )
             return False
 

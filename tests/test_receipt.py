@@ -7,6 +7,7 @@ from waypoints.git.receipt import (
     CapturedEvidence,
     ChecklistItem,
     ChecklistReceipt,
+    CriterionVerification,
     ReceiptBuilder,
     WaypointContext,
 )
@@ -331,8 +332,8 @@ class TestReceiptBuilder:
         assert not receipt.is_valid()
         assert len(receipt.failed_items()) == 1
 
-    def test_truncates_long_output(self) -> None:
-        """Test that long outputs are truncated."""
+    def test_truncates_long_output(self, tmp_path: Path) -> None:
+        """Test that long outputs are truncated and full output is referenced."""
         builder = ReceiptBuilder(
             waypoint_id="WP-001",
             title="Test",
@@ -350,8 +351,36 @@ class TestReceiptBuilder:
             ),
         )
 
-        receipt = builder.build()
+        receipt = builder.build(output_dir=tmp_path, output_prefix="wp-001")
         assert len(receipt.checklist[0].stdout) <= 2000
+        assert receipt.checklist[0].stdout_path
+        full_path = tmp_path / receipt.checklist[0].stdout_path
+        assert full_path.exists()
+        assert full_path.read_text(encoding="utf-8") == long_output
+
+    def test_criterion_evidence_written(self, tmp_path: Path) -> None:
+        """Test acceptance criterion evidence is written and referenced."""
+        builder = ReceiptBuilder(
+            waypoint_id="WP-001",
+            title="Test",
+            objective="Testing",
+            acceptance_criteria=["Criterion"],
+        )
+        builder.capture_criterion(
+            CriterionVerification(
+                index=0,
+                criterion="Criterion",
+                status="verified",
+                evidence="All assertions passed",
+                verified_at=datetime.now(),
+            )
+        )
+
+        receipt = builder.build(output_dir=tmp_path, output_prefix="wp-001")
+        assert receipt.criteria_verification[0].evidence_path
+        full_path = tmp_path / receipt.criteria_verification[0].evidence_path
+        assert full_path.exists()
+        assert full_path.read_text(encoding="utf-8") == "All assertions passed"
 
     def test_has_evidence_empty(self) -> None:
         """Test has_evidence returns false when empty."""
