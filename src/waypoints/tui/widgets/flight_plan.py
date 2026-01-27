@@ -96,13 +96,19 @@ def _format_waypoint_label(
         complete, total = epic_progress
         progress_suffix = f" ({complete}/{total})"
 
+    debug_suffix = ""
+    if waypoint.debug_of:
+        debug_suffix = f" (debug of {waypoint.debug_of})"
+
     # Build cost suffix for completed waypoints
     cost_suffix = ""
     if cost is not None and cost > 0:
         cost_suffix = f" [${cost:.2f}]"
 
     # Calculate max title length (accounting for icon + space + id + progress + cost)
-    used_width = 2 + len(id_text) + len(progress_suffix) + len(cost_suffix)
+    used_width = (
+        2 + len(id_text) + len(progress_suffix) + len(debug_suffix) + len(cost_suffix)
+    )
     max_title_len = width - used_width
 
     title = waypoint.title
@@ -116,13 +122,21 @@ def _format_waypoint_label(
     if progress_suffix:
         result.append(progress_suffix, style="dim")
 
+    if debug_suffix:
+        result.append(debug_suffix, style="dim")
+
     # Add cost suffix (in green for visibility)
     if cost_suffix:
         result.append(cost_suffix, style="green")
 
     # Pad to full width
     current_len = (
-        2 + len(id_text) + len(title) + len(progress_suffix) + len(cost_suffix)
+        2
+        + len(id_text)
+        + len(title)
+        + len(progress_suffix)
+        + len(debug_suffix)
+        + len(cost_suffix)
     )
     if current_len < width:
         result.append(" " * (width - current_len))
@@ -1230,6 +1244,112 @@ class AddWaypointModal(ModalScreen[str | None]):
 
     def action_add(self) -> None:
         """Add waypoint from description."""
+        self._submit()
+
+    def action_cancel(self) -> None:
+        """Cancel."""
+        self.dismiss(None)
+
+
+class DebugWaypointModal(ModalScreen[str | None]):
+    """Modal for describing a debug waypoint fork."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+enter", "add", "Fork", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    DebugWaypointModal {
+        align: center middle;
+        background: $surface 60%;
+    }
+
+    DebugWaypointModal > Vertical {
+        width: 70;
+        height: auto;
+        max-height: 24;
+        background: $surface;
+        border: solid $surface-lighten-2;
+        padding: 1 2;
+    }
+
+    DebugWaypointModal .modal-title {
+        text-style: bold;
+        color: $text;
+        text-align: center;
+        padding: 1 0;
+        margin-bottom: 1;
+        border-bottom: solid $surface-lighten-1;
+    }
+
+    DebugWaypointModal .modal-label {
+        color: $text-muted;
+        padding: 0 0 1 0;
+    }
+
+    DebugWaypointModal TextArea {
+        height: 6;
+        margin-bottom: 1;
+        background: $surface-lighten-1;
+        border: none;
+    }
+
+    DebugWaypointModal TextArea:focus {
+        background: $surface-lighten-2;
+        border: none;
+    }
+
+    DebugWaypointModal .modal-actions {
+        dock: bottom;
+        height: auto;
+        padding: 1 0 0 0;
+        margin-top: 1;
+        border-top: solid $surface-lighten-1;
+        align: center middle;
+    }
+
+    DebugWaypointModal Button {
+        margin: 0 1;
+        min-width: 10;
+        height: 3;
+        background: $surface-lighten-1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Fork Debug Waypoint", classes="modal-title")
+            yield Static(
+                "Describe the issue to fix or behavior to refine:",
+                classes="modal-label",
+            )
+            yield TextArea(id="debug-input")
+            with Horizontal(classes="modal-actions"):
+                yield Button("Fork", id="btn-fork")
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_mount(self) -> None:
+        """Focus the debug input."""
+        self.query_one("#debug-input", TextArea).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "btn-fork":
+            self._submit()
+        else:
+            self.dismiss(None)
+
+    def _submit(self) -> None:
+        """Submit the debug brief."""
+        brief = self.query_one("#debug-input", TextArea).text.strip()
+        if brief:
+            self.dismiss(brief)
+        else:
+            self.notify("Please enter a debug brief", severity="warning")
+
+    def action_add(self) -> None:
+        """Fork a debug waypoint from the brief."""
         self._submit()
 
     def action_cancel(self) -> None:

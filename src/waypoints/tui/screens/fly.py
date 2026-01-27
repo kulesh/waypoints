@@ -55,7 +55,7 @@ from waypoints.tui.utils import (
     get_status_markup,
 )
 from waypoints.tui.widgets.file_preview import FilePreviewModal
-from waypoints.tui.widgets.flight_plan import FlightPlanTree
+from waypoints.tui.widgets.flight_plan import DebugWaypointModal, FlightPlanTree
 from waypoints.tui.widgets.header import StatusHeader
 from waypoints.tui.widgets.resizable_split import (
     ResizableSplit,
@@ -367,6 +367,10 @@ class WaypointDetailPanel(Vertical):
         color: $text-muted;
     }
 
+    WaypointDetailPanel .wp-notes {
+        color: $text-muted;
+    }
+
     WaypointDetailPanel .wp-status {
         color: $text-muted;
     }
@@ -409,6 +413,7 @@ class WaypointDetailPanel(Vertical):
         with Vertical(classes="panel-header"):
             yield Static("Select a waypoint", classes="wp-title", id="wp-title")
             yield Static("", classes="wp-objective", id="wp-objective")
+            yield Static("", classes="wp-notes", id="wp-notes")
             yield Static("Status: Pending", classes="wp-status", id="wp-status")
             yield Static("", classes="wp-metrics", id="wp-metrics")
             yield Static("", classes="wp-status", id="iteration-label")
@@ -450,6 +455,7 @@ class WaypointDetailPanel(Vertical):
 
         title = self.query_one("#wp-title", Static)
         objective = self.query_one("#wp-objective", Static)
+        notes = self.query_one("#wp-notes", Static)
         status = self.query_one("#wp-status", Static)
         metrics = self.query_one("#wp-metrics", Static)
 
@@ -465,6 +471,13 @@ class WaypointDetailPanel(Vertical):
             if len(obj_text) > 100:
                 obj_text = obj_text[:97] + "..."
             objective.update(obj_text)
+            if waypoint.resolution_notes:
+                notes_text = "; ".join(waypoint.resolution_notes)
+                if len(notes_text) > 120:
+                    notes_text = notes_text[:117] + "..."
+                notes.update(f"Notes: {notes_text}")
+            else:
+                notes.update("")
 
             # Format status with colored icon
             icon = get_status_markup(waypoint.status)
@@ -1126,6 +1139,7 @@ class FlyScreen(Screen[None]):
         Binding("r", "start", "Run", show=True),
         Binding("p", "pause", "Pause", show=True),
         Binding("s", "skip", "Skip", show=True),
+        Binding("d", "debug_waypoint", "Debug", show=True),
         Binding("h", "toggle_host_validations", "HostVal", show=True),
         Binding("escape", "back", "Back", show=True),
         Binding("ctrl+f", "forward", "Forward", show=False),
@@ -1643,6 +1657,36 @@ class FlyScreen(Screen[None]):
             wp_id = self.current_waypoint.id
             self.notify(f"Skipped {wp_id}")
             self._select_next_waypoint()
+
+    def action_debug_waypoint(self) -> None:
+        """Fork a debug waypoint from the selected waypoint."""
+        list_panel = self.query_one("#waypoint-list", WaypointListPanel)
+        selected = list_panel.selected_waypoint or self.current_waypoint
+        if not selected:
+            self.notify("Select a waypoint to debug", severity="warning")
+            return
+
+        def handle_result(note: str | None) -> None:
+            if note is None:
+                return
+            debug_wp = self.coordinator.fork_debug_waypoint(selected, note)
+            self._refresh_waypoint_list()
+            self.current_waypoint = debug_wp
+            if self.execution_state == ExecutionState.DONE:
+                self.execution_state = ExecutionState.PAUSED
+            detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
+            cost = self._get_waypoint_cost(debug_wp.id)
+            tokens = self._get_waypoint_tokens(debug_wp.id)
+            detail_panel.show_waypoint(
+                debug_wp,
+                project=self.project,
+                active_waypoint_id=None,
+                cost=cost,
+                tokens=tokens,
+            )
+            self.notify(f"Debug waypoint created: {debug_wp.id}")
+
+        self.app.push_screen(DebugWaypointModal(), handle_result)
 
     def action_preview_file(self, path: str) -> None:
         """Show file preview modal for a file path.
