@@ -214,9 +214,9 @@ class AnthropicProvider(LLMProvider):
         loop = asyncio.new_event_loop()
         try:
 
-            async def collect_results() -> tuple[
-                list[str], float | None, int | None, int | None
-            ]:
+            async def collect_results() -> (
+                tuple[list[str], float | None, int | None, int | None]
+            ):
                 chunks: list[str] = []
                 cost: float | None = None
                 tokens_in: int | None = None
@@ -239,6 +239,17 @@ class AnthropicProvider(LLMProvider):
                                 logger.debug("Got chunk: %d chars", len(block.text))
                     elif isinstance(message, ResultMessage):
                         cost = message.total_cost_usd
+                        logger.debug(
+                            (
+                                "ResultMessage usage=%r input=%r output=%r "
+                                "total_input=%r total_output=%r"
+                            ),
+                            getattr(message, "usage", None),
+                            getattr(message, "input_tokens", None),
+                            getattr(message, "output_tokens", None),
+                            getattr(message, "total_input_tokens", None),
+                            getattr(message, "total_output_tokens", None),
+                        )
                         total_in, total_out = _extract_token_usage(message)
                         if total_in is not None:
                             tokens_in = total_in
@@ -344,6 +355,17 @@ class AnthropicProvider(LLMProvider):
                                 )
                     elif isinstance(message, ResultMessage):
                         cost = message.total_cost_usd
+                        logger.debug(
+                            (
+                                "ResultMessage usage=%r input=%r output=%r "
+                                "total_input=%r total_output=%r"
+                            ),
+                            getattr(message, "usage", None),
+                            getattr(message, "input_tokens", None),
+                            getattr(message, "output_tokens", None),
+                            getattr(message, "total_input_tokens", None),
+                            getattr(message, "total_output_tokens", None),
+                        )
                         total_in, total_out = _extract_token_usage(message)
                         if total_in is not None:
                             tokens_in = total_in
@@ -386,8 +408,7 @@ class AnthropicProvider(LLMProvider):
                     # Preserve quota/rate-limit hints from accumulated text if present
                     if "out of extra usage" in full_text.lower():
                         err_str = (
-                            err_str
-                            + " | quota exhaustion detected in stream:"
+                            err_str + " | quota exhaustion detected in stream:"
                             " out of extra usage"
                         )
                     e = RuntimeError(err_str)

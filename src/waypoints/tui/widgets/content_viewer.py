@@ -52,9 +52,7 @@ class ContentViewer(Static):
         if self._content_type == "markdown":
             yield Markdown(self._content)
         elif self._content_type == "json":
-            syntax = Syntax(
-                self._content, "json", theme="monokai", line_numbers=False
-            )
+            syntax = Syntax(self._content, "json", theme="monokai", line_numbers=False)
             yield Static(syntax)
         else:
             yield Static(self._content)

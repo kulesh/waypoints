@@ -206,9 +206,7 @@ class SettingsModal(ModalScreen[None]):
                     )
                     with Horizontal(classes="toggle-row"):
                         yield Label("Enabled")
-                        yield Switch(
-                            value=settings.use_web_auth, id="web-auth-switch"
-                        )
+                        yield Switch(value=settings.use_web_auth, id="web-auth-switch")
 
                 # OpenAI API Key
                 with Vertical(classes="setting-row", id="openai-key-row"):
@@ -339,8 +337,11 @@ class SettingsModal(ModalScreen[None]):
             settings.anthropic_api_key = anthropic_key
 
         self.notify("Settings saved", severity="information")
-        logger.info("Settings saved: provider=%s, model=%s",
-                    settings.llm_provider, settings.llm_model)
+        logger.info(
+            "Settings saved: provider=%s, model=%s",
+            settings.llm_provider,
+            settings.llm_model,
+        )
 
     def action_close(self) -> None:
         """Close the modal."""

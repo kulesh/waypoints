@@ -414,11 +414,13 @@ class OpenAIProvider(LLMProvider):
                             )
 
                             # Add tool result to messages
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": result,
-                            })
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": result,
+                                }
+                            )
 
                         # Continue loop to get next response
                         continue

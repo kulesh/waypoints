@@ -153,6 +153,7 @@ class Project:
                     projects.append(cls.load(project_dir.name))
                 except (FileNotFoundError, json.JSONDecodeError):
                     pass  # Skip invalid projects
+
         # Normalize datetimes for comparison (handle mix of naive and aware)
         def sort_key(p: "Project") -> datetime:
             dt = p.updated_at

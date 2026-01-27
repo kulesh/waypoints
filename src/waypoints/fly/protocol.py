@@ -40,9 +40,7 @@ class StageReport:
         stage = ExecutionStage(stage_value)
 
         next_stage_value = data.get("next_stage")
-        next_stage = (
-            ExecutionStage(next_stage_value) if next_stage_value else None
-        )
+        next_stage = ExecutionStage(next_stage_value) if next_stage_value else None
 
         return cls(
             stage=stage,
