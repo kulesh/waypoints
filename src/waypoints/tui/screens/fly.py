@@ -1685,9 +1685,12 @@ class FlyScreen(Screen[None]):
                 return
 
         # Transition journey state to FLY_EXECUTING
-        # Handle case where we came from Chart via Ctrl+F (state may be CHART_REVIEW)
+        # Handle case where we came from Chart or Land (CHART_REVIEW/LAND_REVIEW)
         journey = self.project.journey
-        if journey and journey.state == JourneyState.CHART_REVIEW:
+        if journey and journey.state in (
+            JourneyState.CHART_REVIEW,
+            JourneyState.LAND_REVIEW,
+        ):
             self.coordinator.transition(JourneyState.FLY_READY)
         self.coordinator.transition(JourneyState.FLY_EXECUTING)
         self.execution_state = ExecutionState.RUNNING
