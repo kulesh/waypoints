@@ -749,9 +749,55 @@ class WaypointDetailPanel(Vertical):
                 )
                 log.write(markup)
                 return
+        if tool_name == "Bash" and isinstance(tool_input, dict):
+            command = tool_input.get("command", "")
+            if command:
+                log.write_log(f"[dim]$ {command}[/]")
+            if tool_output:
+                output = tool_output.strip()
+                if len(output) > 400:
+                    output = output[:400] + "..."
+                log.write_log(f"[dim]{output}[/]")
+            return
 
         # Fallback for other tools
         log.write_log(f"[dim]→ {tool_name}[/]")
+
+    def _log_soft_validation_evidence(
+        self,
+        log: ExecutionLog,
+        receipt: "ChecklistReceipt",
+        receipt_path: Path,
+    ) -> None:
+        """Log soft-validation evidence with command and output snippet."""
+        if not receipt.soft_checklist:
+            return
+
+        log.write_log("[dim]Soft validation evidence:[/]")
+        for item in receipt.soft_checklist:
+            status = "[green]✓[/]" if item.status == "passed" else "[red]✗[/]"
+            exit_code = item.exit_code if item.exit_code is not None else "?"
+            log.write_log(f"  {status} {item.item} [dim]exit {exit_code}[/]")
+            if item.command:
+                log.write_log(f"    [dim]$ {item.command}[/]")
+            output = (item.stdout or item.stderr or "").strip()
+            if output:
+                summary = output.replace("\n", " / ")
+                if len(summary) > 200:
+                    summary = summary[:200] + "..."
+                log.write_log(f"    [dim]{summary}[/]")
+            for label, rel_path in (
+                ("stdout", item.stdout_path),
+                ("stderr", item.stderr_path),
+            ):
+                if rel_path:
+                    path = receipt_path.parent / rel_path
+                    escaped_path = str(path).replace("'", "\\'")
+                    log.write(
+                        f"    [dim]{label}:[/] "
+                        f"[@click=screen.preview_file('{escaped_path}')]"
+                        f"[dim underline]{path}[/][/]"
+                    )
 
     def _update_iteration_stats(
         self, exec_log: "ExecLogType", max_iteration: int
@@ -827,6 +873,11 @@ class WaypointDetailPanel(Vertical):
                 if result.receipt:
                     for item in result.receipt.failed_items():
                         log.write_log(f"  [red]✗[/] {item.item}: {item.evidence}")
+            if result.receipt:
+                detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
+                detail_panel._log_soft_validation_evidence(
+                    log, result.receipt, receipt_path
+                )
         else:
             log.write_log("[yellow]⚠ No receipt found[/]")
 
@@ -2222,6 +2273,11 @@ class FlyScreen(Screen[None]):
                 if result.receipt:
                     for item in result.receipt.failed_items():
                         log.write_log(f"  [red]✗[/] {item.item}: {item.evidence}")
+            if result.receipt:
+                detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
+                detail_panel._log_soft_validation_evidence(
+                    log, result.receipt, receipt_path
+                )
         else:
             log.write_log("[yellow]⚠ No receipt found[/]")
 
