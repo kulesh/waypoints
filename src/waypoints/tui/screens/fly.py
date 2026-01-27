@@ -65,6 +65,36 @@ from waypoints.tui.widgets.resizable_split import (
 logger = logging.getLogger(__name__)
 
 
+def _format_project_metrics(
+    cost: float,
+    time_seconds: int,
+    tokens_in: int | None,
+    tokens_out: int | None,
+    tokens_known: bool,
+) -> str:
+    parts: list[str] = []
+    if cost > 0:
+        parts.append(f"${cost:.2f}")
+    if tokens_known or tokens_in or tokens_out:
+        parts.append(
+            "Tokens: "
+            f"{format_token_count(tokens_in or 0)} in / "
+            f"{format_token_count(tokens_out or 0)} out"
+        )
+    elif cost > 0 or time_seconds > 0:
+        parts.append("Tokens: n/a")
+    if time_seconds > 0:
+        mins, secs = divmod(time_seconds, 60)
+        if mins >= 60:
+            hours, mins = divmod(mins, 60)
+            parts.append(f"{hours}h {mins}m")
+        elif mins > 0:
+            parts.append(f"{mins}m {secs}s")
+        else:
+            parts.append(f"{secs}s")
+    return " · ".join(parts) if parts else ""
+
+
 class ExecutionState(Enum):
     """State of waypoint execution."""
 
@@ -1059,6 +1089,7 @@ class WaypointListPanel(Vertical):
         time_seconds: int,
         tokens_in: int | None = None,
         tokens_out: int | None = None,
+        tokens_known: bool = False,
     ) -> None:
         """Update the project metrics display (cost and time).
 
@@ -1068,26 +1099,13 @@ class WaypointListPanel(Vertical):
             tokens_in: Total input tokens for the project.
             tokens_out: Total output tokens for the project.
         """
-        parts = []
-        if cost > 0:
-            parts.append(f"${cost:.2f}")
-        if tokens_in or tokens_out:
-            parts.append(
-                "Tokens: "
-                f"{format_token_count(tokens_in or 0)} in / "
-                f"{format_token_count(tokens_out or 0)} out"
-            )
-        if time_seconds > 0:
-            mins, secs = divmod(time_seconds, 60)
-            if mins >= 60:
-                hours, mins = divmod(mins, 60)
-                parts.append(f"{hours}h {mins}m")
-            elif mins > 0:
-                parts.append(f"{mins}m {secs}s")
-            else:
-                parts.append(f"{secs}s")
-
-        display = " · ".join(parts) if parts else ""
+        display = _format_project_metrics(
+            cost,
+            time_seconds,
+            tokens_in,
+            tokens_out,
+            tokens_known,
+        )
         self.query_one("#project-metrics", Static).update(display)
 
     def update_flight_plan(

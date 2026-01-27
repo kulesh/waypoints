@@ -28,9 +28,21 @@ from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader
 from waypoints.models.waypoint import WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
-from waypoints.tui.utils import format_duration
+from waypoints.tui.utils import format_duration, format_token_count
 from waypoints.tui.widgets.content_viewer import ContentViewer
 from waypoints.tui.widgets.header import StatusHeader
+
+
+def _format_token_summary(tokens_in: int, tokens_out: int) -> str | None:
+    """Format token summary text when token counts are available."""
+    if not tokens_in and not tokens_out:
+        return None
+    return (
+        "Total tokens were "
+        f"{format_token_count(tokens_in)} in / "
+        f"{format_token_count(tokens_out)} out."
+    )
+
 
 logger = logging.getLogger(__name__)
 
@@ -217,11 +229,15 @@ class DebriefPanel(VerticalScroll):
         elif parts:
             parts[-1] += "."
 
-        # 3. Cost & time
+        # 3. Cost, time, tokens
         cost = 0.0
+        tokens_in = 0
+        tokens_out = 0
         try:
             collector = MetricsCollector(self.project)
             cost = collector.total_cost
+            tokens_in = collector.total_tokens_in
+            tokens_out = collector.total_tokens_out
         except Exception:
             pass
 
@@ -232,6 +248,9 @@ class DebriefPanel(VerticalScroll):
             )
         elif cost > 0:
             parts.append(f"Total LLM cost was ${cost:.2f}.")
+        token_summary = _format_token_summary(tokens_in, tokens_out)
+        if token_summary:
+            parts.append(token_summary)
 
         # 4. Quality gates outcome
         receipts_path = self.project.get_path() / "receipts"
@@ -313,12 +332,17 @@ class DebriefPanel(VerticalScroll):
             if failed > 0:
                 lines.append(f"├─ {failed} waypoints failed")
 
-        # Time and cost
+        # Time, cost, tokens
         try:
             collector = MetricsCollector(self.project)
             cost = collector.total_cost
             if cost > 0:
                 lines.append(f"├─ ${cost:.2f} total cost")
+            tokens_in = collector.total_tokens_in
+            tokens_out = collector.total_tokens_out
+            token_summary = _format_token_summary(tokens_in, tokens_out)
+            if token_summary:
+                lines.append(f"├─ {token_summary}")
         except Exception:
             pass
 
@@ -411,7 +435,16 @@ class DebriefPanel(VerticalScroll):
                             (log.completed_at - log.started_at).total_seconds()
                         )
                 if total_seconds > 0:
-                    lines.append(f"└─ {format_duration(total_seconds)} build time")
+                    lines.append(f"├─ {format_duration(total_seconds)} build time")
+        except Exception:
+            pass
+        try:
+            collector = MetricsCollector(self.project)
+            token_summary = _format_token_summary(
+                collector.total_tokens_in, collector.total_tokens_out
+            )
+            if token_summary:
+                lines.append(f"└─ {token_summary}")
         except Exception:
             pass
 
@@ -1483,9 +1516,7 @@ class LandScreen(Screen[None]):
         """Toggle host validations (used in Fly phase) from Land."""
         app = self.waypoints_app
         app.host_validations_enabled = not app.host_validations_enabled
-        state = (
-            "ON" if app.host_validations_enabled else "OFF (LLM-as-judge only)"
-        )
+        state = "ON" if app.host_validations_enabled else "OFF (LLM-as-judge only)"
         app.save_host_validation_preference(self.project)
         self.notify(f"Host validations {state}")
         self.app.bell()
