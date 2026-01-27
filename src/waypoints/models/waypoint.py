@@ -25,6 +25,8 @@ class Waypoint:
     objective: str
     acceptance_criteria: list[str] = field(default_factory=list)
     parent_id: str | None = None
+    debug_of: str | None = None
+    resolution_notes: list[str] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
     status: WaypointStatus = WaypointStatus.PENDING
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -38,6 +40,8 @@ class Waypoint:
             "objective": self.objective,
             "acceptance_criteria": self.acceptance_criteria,
             "parent_id": self.parent_id,
+            "debug_of": self.debug_of,
+            "resolution_notes": self.resolution_notes,
             "dependencies": self.dependencies,
             "status": self.status.value,
             "created_at": self.created_at.isoformat(),
@@ -55,6 +59,8 @@ class Waypoint:
             objective=data["objective"],
             acceptance_criteria=data.get("acceptance_criteria", []),
             parent_id=data.get("parent_id"),
+            debug_of=data.get("debug_of"),
+            resolution_notes=data.get("resolution_notes", []),
             dependencies=data.get("dependencies", []),
             status=WaypointStatus(data.get("status", "pending")),
             created_at=(

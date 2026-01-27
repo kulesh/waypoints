@@ -510,6 +510,8 @@ def _collect_artifacts(project: "Project", spec: GenerativeSpec) -> None:
                     "objective": wp.objective,
                     "acceptance_criteria": wp.acceptance_criteria,
                     "parent_id": wp.parent_id,
+                    "debug_of": wp.debug_of,
+                    "resolution_notes": wp.resolution_notes,
                     "dependencies": wp.dependencies,
                     "status": wp.status.value,
                 }

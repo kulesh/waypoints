@@ -50,6 +50,23 @@ These waypoints cover the main requirements."""
         result = extract_json_array(response)
         assert result == [{"id": "WP-1", "title": "Test"}]
 
+    def test_with_trailing_json(self) -> None:
+        """Extract first JSON array when extra data follows."""
+        response = (
+            '[{"id": "WP-1", "title": "Test"}]{"extra": true}'
+        )
+        result = extract_json_array(response)
+        assert result == [{"id": "WP-1", "title": "Test"}]
+
+    def test_with_multiple_arrays(self) -> None:
+        """Extract first valid array when multiple arrays appear."""
+        response = (
+            'Here is the plan: [{"id": "WP-1", "title": "Test"}] '
+            'and another: [{"id": "WP-2", "title": "Other"}]'
+        )
+        result = extract_json_array(response)
+        assert result == [{"id": "WP-1", "title": "Test"}]
+
     def test_no_array_raises(self) -> None:
         """Raise error when no JSON array found."""
         response = "Here is the waypoint: {id: WP-1}"

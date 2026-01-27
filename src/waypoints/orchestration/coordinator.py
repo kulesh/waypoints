@@ -71,6 +71,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _build_chart_retry_prompt(prompt: str, errors: list[str]) -> str:
+    error_text = "\n".join(f"- {error}" for error in errors)
+    return (
+        f"{prompt}\n\n"
+        "The previous response failed validation with these errors:\n"
+        f"{error_text}\n\n"
+        "Fix the issues and output ONLY the JSON array. Ensure every waypoint "
+        "has a non-empty acceptance_criteria list."
+    )
+
+
 class JourneyCoordinator:
     """Coordinates journey phases independent of UI.
 
@@ -263,6 +274,7 @@ class JourneyCoordinator:
         waypoint: Waypoint,
         on_progress: ProgressCallback | None = None,
         max_iterations: int = 10,
+        host_validations_enabled: bool = True,
     ) -> ExecutionResult:
         """Execute a waypoint using the AI executor.
 
@@ -270,6 +282,7 @@ class JourneyCoordinator:
             waypoint: The waypoint to execute
             on_progress: Callback for progress updates
             max_iterations: Maximum execution iterations
+            host_validations_enabled: Whether to run host validations
 
         Returns:
             ExecutionResult indicating success/failure
@@ -292,6 +305,7 @@ class JourneyCoordinator:
             on_progress=self._wrap_progress_callback(on_progress),
             max_iterations=max_iterations,
             metrics_collector=self.metrics,
+            host_validations_enabled=host_validations_enabled,
         )
 
         # Execute (may raise InterventionNeededError)
@@ -574,29 +588,18 @@ class JourneyCoordinator:
         Returns:
             Generated FlightPlan
         """
-        # Create LLM client if needed
-        if self.llm is None:
-            self.llm = ChatClient(
-                metrics_collector=self.metrics,
-                phase="chart",
-            )
-
-        prompt = WAYPOINT_GENERATION_PROMPT.format(spec=spec)
+        spec_with_notes = self._append_resolution_notes(spec)
+        prompt = WAYPOINT_GENERATION_PROMPT.format(spec=spec_with_notes)
         logger.info("Generating waypoints from spec: %d chars", len(spec))
 
-        # Stream response from LLM
-        full_response = ""
-        for result in self.llm.stream_message(
-            messages=[{"role": "user", "content": prompt}],
-            system=CHART_SYSTEM_PROMPT,
-        ):
-            if isinstance(result, StreamChunk):
-                full_response += result.text
-                if on_chunk:
-                    on_chunk(result.text)
-
-        # Parse waypoints from response
-        waypoints = self._parse_waypoints(full_response)
+        full_response = self._stream_chart_response(prompt, on_chunk)
+        try:
+            waypoints = self._parse_waypoints(full_response)
+        except WaypointValidationError as exc:
+            logger.warning("Chart validation failed, retrying: %s", exc.errors)
+            retry_prompt = _build_chart_retry_prompt(prompt, exc.errors)
+            full_response = self._stream_chart_response(retry_prompt, on_chunk)
+            waypoints = self._parse_waypoints(full_response)
 
         # Create flight plan
         flight_plan = FlightPlan(waypoints=waypoints)
@@ -634,43 +637,37 @@ class JourneyCoordinator:
         if self.flight_plan and self.flight_plan.is_epic(waypoint.id):
             raise ValueError(f"{waypoint.id} already has sub-waypoints")
 
-        # Create LLM client if needed
-        if self.llm is None:
-            self.llm = ChatClient(
-                metrics_collector=self.metrics,
-                phase="chart",
-            )
-
         # Format prompt
         criteria_str = "\n".join(f"- {c}" for c in waypoint.acceptance_criteria)
         if not criteria_str:
             criteria_str = "(none specified)"
+        resolution_notes = "\n".join(f"- {n}" for n in waypoint.resolution_notes)
+        if not resolution_notes:
+            resolution_notes = "(none)"
 
         prompt = WAYPOINT_BREAKDOWN_PROMPT.format(
             parent_id=waypoint.id,
             title=waypoint.title,
             objective=waypoint.objective,
             criteria=criteria_str,
+            resolution_notes=resolution_notes,
         )
 
         logger.info("Breaking down waypoint: %s", waypoint.id)
 
-        # Stream response from LLM
-        full_response = ""
-        for result in self.llm.stream_message(
-            messages=[{"role": "user", "content": prompt}],
-            system=CHART_SYSTEM_PROMPT,
-        ):
-            if isinstance(result, StreamChunk):
-                full_response += result.text
-                if on_chunk:
-                    on_chunk(result.text)
+        full_response = self._stream_chart_response(prompt, on_chunk)
 
         # Parse sub-waypoints (pass existing IDs for validation)
         existing_ids = (
             {wp.id for wp in self.flight_plan.waypoints} if self.flight_plan else set()
         )
-        sub_waypoints = self._parse_waypoints(full_response, existing_ids)
+        try:
+            sub_waypoints = self._parse_waypoints(full_response, existing_ids)
+        except WaypointValidationError as exc:
+            logger.warning("Chart validation failed, retrying: %s", exc.errors)
+            retry_prompt = _build_chart_retry_prompt(prompt, exc.errors)
+            full_response = self._stream_chart_response(retry_prompt, on_chunk)
+            sub_waypoints = self._parse_waypoints(full_response, existing_ids)
 
         # Ensure all have correct parent_id
         for wp in sub_waypoints:
@@ -680,6 +677,29 @@ class JourneyCoordinator:
             "Generated %d sub-waypoints for %s", len(sub_waypoints), waypoint.id
         )
         return sub_waypoints
+
+    def _stream_chart_response(
+        self,
+        prompt: str,
+        on_chunk: ChunkCallback | None = None,
+    ) -> str:
+        """Stream chart response text from the LLM."""
+        if self.llm is None:
+            self.llm = ChatClient(
+                metrics_collector=self.metrics,
+                phase="chart",
+            )
+
+        full_response = ""
+        for result in self.llm.stream_message(
+            messages=[{"role": "user", "content": prompt}],
+            system=CHART_SYSTEM_PROMPT,
+        ):
+            if isinstance(result, StreamChunk):
+                full_response += result.text
+                if on_chunk:
+                    on_chunk(result.text)
+        return full_response
 
     def generate_waypoint(
         self,
@@ -720,6 +740,7 @@ class JourneyCoordinator:
 
         # Use provided spec_summary or empty string
         spec_context = spec_summary or "No product spec available"
+        spec_context = self._append_resolution_notes(spec_context)
 
         prompt = WAYPOINT_ADD_PROMPT.format(
             description=description,
@@ -754,6 +775,8 @@ class JourneyCoordinator:
             title=data["title"],
             objective=data["objective"],
             acceptance_criteria=data.get("acceptance_criteria", []),
+            debug_of=data.get("debug_of"),
+            resolution_notes=data.get("resolution_notes", []),
             dependencies=data.get("dependencies", []),
             status=WaypointStatus.PENDING,
         )
@@ -864,6 +887,8 @@ class JourneyCoordinator:
                 objective=item["objective"],
                 acceptance_criteria=item.get("acceptance_criteria", []),
                 parent_id=item.get("parent_id"),
+                debug_of=item.get("debug_of"),
+                resolution_notes=item.get("resolution_notes", []),
                 dependencies=item.get("dependencies", []),
                 status=WaypointStatus.PENDING,
             )
@@ -882,6 +907,24 @@ class JourneyCoordinator:
             if candidate not in existing:
                 return candidate
         return "WP-999"  # Fallback
+
+    def _append_resolution_notes(self, spec: str) -> str:
+        """Append resolution notes to the spec for prompt context."""
+        if self.flight_plan is None:
+            return spec
+
+        notes: list[str] = []
+        for wp in self.flight_plan.waypoints:
+            if not wp.resolution_notes:
+                continue
+            note_text = "; ".join(wp.resolution_notes)
+            notes.append(f"- {wp.id} {wp.title}: {note_text}")
+
+        if not notes:
+            return spec
+
+        notes_block = "\n".join(notes)
+        return f"{spec}\n\n## Waypoint Resolution Notes\n{notes_block}"
 
     def update_waypoint(self, waypoint: Waypoint) -> None:
         """Update a waypoint and persist changes."""
@@ -1009,6 +1052,54 @@ class JourneyCoordinator:
         )
 
         logger.info("Added waypoint %s (after %s)", waypoint.id, after_id or "end")
+
+    def fork_debug_waypoint(self, waypoint: Waypoint, note: str) -> Waypoint:
+        """Create a debug waypoint forked from an existing waypoint.
+
+        Args:
+            waypoint: The waypoint to debug.
+            note: The debug note describing the issue to fix.
+
+        Returns:
+            The newly created debug waypoint.
+        """
+        if self.flight_plan is None:
+            raise RuntimeError("No flight plan loaded")
+
+        note_text = note.strip()
+        combined_notes = list(waypoint.resolution_notes)
+        if note_text:
+            combined_notes.append(note_text)
+
+        debug_waypoint = Waypoint(
+            id=self._next_waypoint_id(),
+            title=f"Debug: {waypoint.title}",
+            objective=waypoint.objective,
+            acceptance_criteria=list(waypoint.acceptance_criteria),
+            debug_of=waypoint.id,
+            resolution_notes=combined_notes,
+            dependencies=[waypoint.id],
+            status=WaypointStatus.PENDING,
+        )
+
+        if note_text:
+            waypoint.resolution_notes.append(note_text)
+            self.flight_plan.update_waypoint(waypoint)
+
+        self.flight_plan.insert_waypoint_at(debug_waypoint, waypoint.id)
+        self.save_flight_plan()
+
+        self._log_waypoint_event(
+            "debug_forked",
+            {
+                "waypoint_id": waypoint.id,
+                "debug_waypoint": debug_waypoint.to_dict(),
+                "note": note_text,
+            },
+        )
+
+        logger.info("Forked debug waypoint %s from %s", debug_waypoint.id, waypoint.id)
+        return debug_waypoint
 
     def reorder_waypoints(
         self,

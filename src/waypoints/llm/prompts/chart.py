@@ -15,12 +15,14 @@ Each waypoint should:
 2. Have clear acceptance criteria
 3. Be appropriately sized (1-3 hours of focused work for single-hop)
 4. Use parent_id for multi-hop waypoints (epics that contain sub-tasks)
+5. If the spec includes "Waypoint Resolution Notes", treat them as required
+   corrections for the referenced waypoint(s)
 
 Output as a JSON array of waypoints. Each waypoint has:
 - id: String like "WP-001" (use "WP-001a", "WP-001b" for children)
 - title: Brief descriptive title
 - objective: What this waypoint accomplishes
-- acceptance_criteria: Array of testable criteria
+- acceptance_criteria: Array of testable criteria (1-5 items, must be non-empty)
 - parent_id: ID of parent waypoint (null for top-level)
 - dependencies: Array of waypoint IDs this depends on
 
@@ -41,18 +43,20 @@ Parent Waypoint:
 - Title: {title}
 - Objective: {objective}
 - Acceptance Criteria: {criteria}
+- Resolution Notes: {resolution_notes}
 
 Each sub-waypoint should:
 1. Be independently testable
 2. Have clear acceptance criteria
 3. Be appropriately sized (1-3 hours of focused work)
 4. Together fully cover the parent waypoint's objective
+5. Honor any Resolution Notes as required corrections
 
 Output as a JSON array. Each sub-waypoint has:
 - id: String like "{parent_id}a", "{parent_id}b", etc.
 - title: Brief descriptive title
 - objective: What this sub-waypoint accomplishes
-- acceptance_criteria: Array of testable criteria
+- acceptance_criteria: Array of testable criteria (1-5 items, must be non-empty)
 - parent_id: "{parent_id}" (the parent waypoint ID)
 - dependencies: Array of sibling waypoint IDs this depends on (or empty)
 

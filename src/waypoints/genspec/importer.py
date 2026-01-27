@@ -431,6 +431,8 @@ def _restore_artifacts(project: Project, spec: GenerativeSpec) -> None:
                     objective=wp["objective"],
                     acceptance_criteria=wp.get("acceptance_criteria", []),
                     parent_id=wp.get("parent_id"),
+                    debug_of=wp.get("debug_of"),
+                    resolution_notes=wp.get("resolution_notes", []),
                     dependencies=wp.get("dependencies", []),
                     status=WaypointStatus.PENDING,  # Reset status for new project
                     created_at=datetime.now(UTC),

@@ -474,3 +474,26 @@ class TestIsEpic:
         )
 
         assert coordinator.is_epic("WP-001") is False
+
+
+def test_fork_debug_waypoint_updates_notes(tmp_path: Path) -> None:
+    """Debug forks should carry notes and link to the original waypoint."""
+    project = MockProject(tmp_path)
+    flight_plan = FlightPlan()
+    original = Waypoint(
+        id="WP-010",
+        title="Live Preview",
+        objective="Ensure the preview renders correctly.",
+        status=WaypointStatus.COMPLETE,
+    )
+    flight_plan.add_waypoint(original)
+    coordinator = JourneyCoordinator(project=project, flight_plan=flight_plan)
+
+    debug_wp = coordinator.fork_debug_waypoint(
+        original, "Preview stays blank after updates."
+    )
+
+    assert debug_wp.debug_of == original.id
+    assert debug_wp.dependencies == [original.id]
+    assert "Preview stays blank" in debug_wp.resolution_notes[0]
+    assert "Preview stays blank" in original.resolution_notes[0]

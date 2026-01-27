@@ -25,6 +25,12 @@ SINGLE_WAYPOINT_SCHEMA: dict[str, Any] = {
             "minItems": 1,
         },
         "parent_id": {"type": ["string", "null"]},
+        "debug_of": {"type": ["string", "null"]},
+        "resolution_notes": {
+            "type": "array",
+            "items": {"type": "string"},
+            "default": [],
+        },
         "dependencies": {
             "type": "array",
             "items": {"type": "string"},
@@ -51,6 +57,12 @@ WAYPOINT_SCHEMA: dict[str, Any] = {
                 "minItems": 1,
             },
             "parent_id": {"type": ["string", "null"]},
+            "debug_of": {"type": ["string", "null"]},
+            "resolution_notes": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": [],
+            },
             "dependencies": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -101,13 +113,21 @@ def extract_json_array(response: str) -> list[dict[str, Any]]:
     cleaned = re.sub(r"```json\s*", "", response)
     cleaned = re.sub(r"```\s*", "", cleaned)
 
-    # Find array pattern
-    match = re.search(r"\[[\s\S]*\]", cleaned)
-    if not match:
-        raise ValueError("No JSON array found in response")
+    decoder = json.JSONDecoder()
+    last_error: json.JSONDecodeError | None = None
+    for match in re.finditer(r"\[", cleaned):
+        start = match.start()
+        try:
+            result, _ = decoder.raw_decode(cleaned[start:])
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            continue
+        if isinstance(result, list):
+            return result
 
-    result: list[dict[str, Any]] = json.loads(match.group())
-    return result
+    if last_error is not None:
+        raise last_error
+    raise ValueError("No JSON array found in response")
 
 
 def validate_schema(data: list[dict[str, Any]]) -> list[str]:
@@ -170,6 +190,10 @@ def validate_semantics(
         parent_id = wp.get("parent_id")
         if parent_id and parent_id not in all_ids:
             errors.append(f"{wp_id}: parent_id '{parent_id}' not found")
+
+        debug_of = wp.get("debug_of")
+        if debug_of and debug_of not in all_ids:
+            errors.append(f"{wp_id}: debug_of '{debug_of}' not found")
 
         # Dependency ref check
         for dep_id in wp.get("dependencies", []):
