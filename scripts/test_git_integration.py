@@ -59,10 +59,41 @@ def print_result(success: bool, message: str) -> None:
     print(f"  {marker} {message}")
 
 
+def _git_config_get(test_dir: Path, key: str) -> str | None:
+    result = subprocess.run(
+        ["git", "config", "--local", "--get", key],
+        cwd=test_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return value if value else None
+
+
+def _git_config_set(test_dir: Path, key: str, value: str) -> None:
+    subprocess.run(
+        ["git", "config", "--local", key, value],
+        cwd=test_dir,
+        capture_output=True,
+    )
+
+
+def _git_config_unset(test_dir: Path, key: str) -> None:
+    subprocess.run(
+        ["git", "config", "--local", "--unset", key],
+        cwd=test_dir,
+        capture_output=True,
+    )
+
+
 def test_git_service(test_dir: Path) -> bool:
     """Test GitService operations."""
     print_header("Testing GitService")
     all_passed = True
+    original_email: str | None = None
+    original_name: str | None = None
 
     # Test 1: is_git_repo (should be False initially)
     print_step("Checking if directory is a git repo (should be False)")
@@ -96,44 +127,48 @@ def test_git_service(test_dir: Path) -> bool:
     if not is_repo:
         all_passed = False
 
-    # Configure git user for commits
-    subprocess.run(
-        ["git", "config", "user.email", "test@waypoints.dev"],
-        cwd=test_dir,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Waypoints Test"],
-        cwd=test_dir,
-        capture_output=True,
-    )
+    # Configure git user for commits (restore afterwards)
+    original_email = _git_config_get(test_dir, "user.email")
+    original_name = _git_config_get(test_dir, "user.name")
+    _git_config_set(test_dir, "user.email", "test@waypoints.dev")
+    _git_config_set(test_dir, "user.name", "Waypoints Test")
 
-    # Test 4: Create a file and commit
-    print_step("Creating and committing a test file")
-    test_file = test_dir / "hello.txt"
-    test_file.write_text("Hello, Waypoints!")
-    git.stage_files("hello.txt")
-    result = git.commit("Initial commit")
-    print_result(result.success, f"commit(): {result.message}")
-    if not result.success:
-        all_passed = False
+    try:
+        # Test 4: Create a file and commit
+        print_step("Creating and committing a test file")
+        test_file = test_dir / "hello.txt"
+        test_file.write_text("Hello, Waypoints!")
+        git.stage_files("hello.txt")
+        result = git.commit("Initial commit")
+        print_result(result.success, f"commit(): {result.message}")
+        if not result.success:
+            all_passed = False
 
-    # Test 5: Tag
-    print_step("Creating a tag")
-    result = git.tag("v0.1.0", "First test release")
-    print_result(result.success, f"tag(): {result.message}")
-    if not result.success:
-        all_passed = False
+        # Test 5: Tag
+        print_step("Creating a tag")
+        result = git.tag("v0.1.0", "First test release")
+        print_result(result.success, f"tag(): {result.message}")
+        if not result.success:
+            all_passed = False
 
-    # Verify tag exists
-    tag_result = subprocess.run(
-        ["git", "tag", "-l", "v0.1.0"],
-        cwd=test_dir,
-        capture_output=True,
-        text=True,
-    )
-    tag_exists = "v0.1.0" in tag_result.stdout
-    print_result(tag_exists, f"Tag v0.1.0 exists: {tag_exists}")
+        # Verify tag exists
+        tag_result = subprocess.run(
+            ["git", "tag", "-l", "v0.1.0"],
+            cwd=test_dir,
+            capture_output=True,
+            text=True,
+        )
+        tag_exists = "v0.1.0" in tag_result.stdout
+        print_result(tag_exists, f"Tag v0.1.0 exists: {tag_exists}")
+    finally:
+        if original_email is None:
+            _git_config_unset(test_dir, "user.email")
+        else:
+            _git_config_set(test_dir, "user.email", original_email)
+        if original_name is None:
+            _git_config_unset(test_dir, "user.name")
+        else:
+            _git_config_set(test_dir, "user.name", original_name)
 
     return all_passed
 
