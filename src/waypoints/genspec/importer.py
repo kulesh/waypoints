@@ -6,6 +6,7 @@ with the artifacts and dialogue history from the specification.
 
 import json
 import logging
+import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,6 +17,7 @@ from waypoints.config.project_root import get_projects_root
 from waypoints.genspec.spec import (
     Artifact,
     ArtifactType,
+    BundleMetadata,
     GenerativeSpec,
     GenerativeStep,
     UserDecision,
@@ -62,6 +64,9 @@ def import_from_file(path: Path) -> GenerativeSpec:
         raise FileNotFoundError(f"Genspec file not found: {path}")
 
     logger.info("Importing genspec from %s", path)
+    if zipfile.is_zipfile(path):
+        return _import_from_bundle(path)
+
     with open(path, encoding="utf-8") as handle:
         return import_from_lines(handle, source=str(path))
 
@@ -134,6 +139,29 @@ def import_from_lines(
     )
 
     return spec
+
+
+def _import_from_bundle(path: Path) -> GenerativeSpec:
+    """Import a GenerativeSpec from a bundle zip."""
+    with zipfile.ZipFile(path) as archive:
+        metadata = _read_bundle_metadata(archive)
+        genspec_path = metadata.genspec_path if metadata else "genspec.jsonl"
+        try:
+            content = archive.read(genspec_path).decode("utf-8")
+        except KeyError as exc:
+            raise ValueError(
+                f"Bundle missing genspec at {genspec_path}"
+            ) from exc
+
+    return import_from_lines(content.splitlines(), source=f"{path}::{genspec_path}")
+
+
+def _read_bundle_metadata(archive: zipfile.ZipFile) -> BundleMetadata | None:
+    try:
+        payload = json.loads(archive.read("metadata.json").decode("utf-8"))
+    except KeyError:
+        return None
+    return BundleMetadata.from_dict(payload)
 
 
 def validate_spec(spec: GenerativeSpec) -> ValidationResult:
@@ -308,7 +336,7 @@ def create_project_from_spec(
     """Create a new project from a generative specification.
 
     Args:
-        spec_or_path: Either a GenerativeSpec object or path to .genspec.jsonl file
+        spec_or_path: Either a GenerativeSpec object or path to .genspec.jsonl/.genspec.zip
         name: Name for the new project (defaults to spec's project name)
         target_state: Journey state to set after import:
             - "fly:ready": Ready to execute waypoints (for "Run Now" mode)

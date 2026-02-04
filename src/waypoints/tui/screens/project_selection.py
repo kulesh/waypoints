@@ -133,14 +133,16 @@ class ConfirmDeleteProjectModal(ModalScreen[bool]):
 
 
 class GenSpecDirectoryTree(DirectoryTree):
-    """DirectoryTree that filters for .genspec.jsonl files."""
+    """DirectoryTree that filters for genspec files."""
 
     def filter_paths(self, paths: Iterable[Path]) -> Iterable[Path]:
-        """Show directories and .genspec.jsonl files only."""
+        """Show directories and genspec files only."""
         return [
             path
             for path in paths
-            if path.is_dir() or path.name.endswith(".genspec.jsonl")
+            if path.is_dir()
+            or path.name.endswith(".genspec.jsonl")
+            or path.name.endswith(".genspec.zip")
         ]
 
 
@@ -256,6 +258,10 @@ class ImportProjectModal(ModalScreen[tuple[str, str] | None]):
             yield GenSpecDirectoryTree(Path.home(), id="file-tree")
             yield Label("Selected file:", classes="field-label")
             yield Input(placeholder="Select a file or type path...", id="file-path")
+            yield Static(
+                "Accepted: .genspec.jsonl or .genspec.zip",
+                classes="hint",
+            )
             yield Static("", id="validation-status", classes="hint")
             yield GenSpecPreview(id="spec-preview")
             yield Label("After import:", classes="field-label")

@@ -568,3 +568,37 @@ def test_create_project_respects_project_directory(
 
     assert project.get_path().is_relative_to(custom_root.resolve())
     assert project.slug.startswith("imported-project")
+
+
+def test_import_from_bundle(tmp_path: Path) -> None:
+    """Importing from a bundle zip reads the embedded genspec."""
+    from waypoints.genspec.exporter import export_bundle
+    from waypoints.genspec.importer import import_from_file
+
+    spec = GenerativeSpec(
+        version="1.0",
+        waypoints_version="0.1.0",
+        source_project="bundle-import",
+        created_at=datetime.now(),
+        initial_idea="Idea",
+    )
+    spec.steps = [
+        GenerativeStep(
+            step_id="step-001",
+            phase=Phase.SHAPE_QA,
+            timestamp=datetime.now(),
+            input=StepInput(user_prompt="Q"),
+            output=StepOutput(content="A", output_type=OutputType.TEXT),
+        )
+    ]
+    spec.artifacts = [
+        Artifact(artifact_type=ArtifactType.IDEA_BRIEF, content="Brief")
+    ]
+
+    bundle_path = tmp_path / "bundle.genspec.zip"
+    export_bundle(spec, bundle_path)
+
+    imported = import_from_file(bundle_path)
+
+    assert imported.source_project == "bundle-import"
+    assert len(imported.steps) == 1
