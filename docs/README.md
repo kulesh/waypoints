@@ -1,24 +1,29 @@
 # Documentation
 
-This folder contains the design documents for Waypoints.
+This folder contains the product, architecture, and testing references for Waypoints.
 
-## Files
+## Product and Vision
 
-### [idea.md](./idea.md)
+- [idea.md](./idea.md) - Original idea and vision
+- [product-spec.md](./product-spec.md) - Full product specification
 
-The original idea document that sparked this project. Describes the high-level vision of an AI-native software development environment that guides developers through a journey from idea to working product.
+## Architecture
 
-### [product-spec.md](./product-spec.md)
+- [runtime-architecture.md](./runtime-architecture.md) - Runtime flow and module map
+- [journey-state-machine.md](./journey-state-machine.md) - Journey states and transitions
+- [architecture-roadmap.md](./architecture-roadmap.md) - Long-term architecture plan
+- [unix-architecture-plan.md](./unix-architecture-plan.md) - UNIX-style architecture notes
 
-The comprehensive product specification generated during the SHAPE phase. Includes:
-- Vision and value proposition
-- User personas
-- User experience design
-- Feature requirements
-- MVP scope
-- Roadmap
-- FAQ
+## Protocols and Formats
 
----
+- [protocol-v1.md](./protocol-v1.md) - Protocol specification
+- [genspec-format.md](./genspec-format.md) - Generative specification format
 
-*These documents were created using Waypoints itself, demonstrating the idea → brief → spec workflow.*
+## Testing
+
+- [testing-strategy.md](./testing-strategy.md) - End-to-end testing strategy
+
+## Reviews and Notes
+
+- [claude-review.md](./claude-review.md) - Claude review notes
+- [codex-review-01082026.md](./codex-review-01082026.md) - Codex review notes

@@ -83,6 +83,8 @@ uv sync
 uv run waypoints
 ```
 
+For a runtime-only environment, use `uv sync --no-dev`.
+
 ## Quick Start
 
 1. Launch Waypoints:
@@ -151,10 +153,21 @@ src/waypoints/
 └── llm/                 # AI client (Claude Agent SDK)
 
 docs/
+├── README.md            # Documentation index
 ├── idea.md              # Original idea document
 ├── product-spec.md      # Full product specification
 └── testing-strategy.md  # AI system testing approach
 ```
+
+## Documentation
+
+- [docs/README.md](./docs/README.md) - Documentation index
+- [docs/product-spec.md](./docs/product-spec.md) - Product specification
+- [docs/runtime-architecture.md](./docs/runtime-architecture.md) - Runtime module map
+- [docs/journey-state-machine.md](./docs/journey-state-machine.md) - Journey states and transitions
+- [docs/genspec-format.md](./docs/genspec-format.md) - Genspec format reference
+- [docs/testing-strategy.md](./docs/testing-strategy.md) - Testing approach
+- [docs/architecture-roadmap.md](./docs/architecture-roadmap.md) - Architecture roadmap
 
 ## How It Works
 
@@ -223,6 +236,12 @@ uv run mypy src/
 - **[Textual](https://textual.textualize.io/)** - Modern TUI framework for Python
 - **[Claude Agent SDK](https://docs.anthropic.com/en/docs/claude-agent-sdk)** - AI agent execution
 - **[uv](https://github.com/astral-sh/uv)** - Fast Python package manager
+
+## FAQ
+
+- **What is a genspec?** A genspec is the distributable specification (idea brief, product spec, flight plan) that can be exported and used to recreate a project.
+- **Which LLMs are supported?** Waypoints supports Anthropic and OpenAI providers; configure the provider and model in settings.
+- **Where is project state stored?** Each project persists under a `.waypoints/` directory with project metadata, documents, plans, and logs.
 
 ## Related
 

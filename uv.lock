@@ -967,16 +967,6 @@ dependencies = [
     { name = "textual" },
 ]
 
-[package.optional-dependencies]
-dev = [
-    { name = "black" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-    { name = "types-jsonschema" },
-]
-
 [package.dev-dependencies]
 dev = [
     { name = "black" },
@@ -990,18 +980,11 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "black", marker = "extra == 'dev'" },
     { name = "claude-agent-sdk", specifier = ">=0.1.0" },
-    { name = "mypy", marker = "extra == 'dev'" },
     { name = "openai", specifier = ">=1.0.0" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ruff", marker = "extra == 'dev'" },
     { name = "textual", specifier = ">=0.50.0" },
-    { name = "types-jsonschema", marker = "extra == 'dev'" },
 ]
-provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [

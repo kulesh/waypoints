@@ -12,16 +12,23 @@ ENV/
 .coverage
 .pytest_cache/
 htmlcov/
+.mypy_cache/
+.ruff_cache/
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+.DS_Store
 
 # Local
 .waypoints/
 *.log
+.uv-cache/
+.beads/
+.claude/
+tmp/
 
 # Build
 dist/
