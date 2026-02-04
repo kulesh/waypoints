@@ -11,7 +11,7 @@ from waypoints.genspec.executor import (
     StepResult,
     execute_spec,
 )
-from waypoints.genspec.exporter import export_project, export_to_file
+from waypoints.genspec.exporter import export_bundle, export_project, export_to_file
 from waypoints.genspec.importer import (
     ValidationResult,
     create_project_from_spec,
@@ -21,6 +21,10 @@ from waypoints.genspec.importer import (
 from waypoints.genspec.spec import (
     Artifact,
     ArtifactType,
+    BundleChecksums,
+    BundleFile,
+    BundleFileType,
+    BundleMetadata,
     DecisionType,
     GenerativeSpec,
     GenerativeStep,
@@ -35,6 +39,10 @@ from waypoints.genspec.spec import (
 __all__ = [
     "Artifact",
     "ArtifactType",
+    "BundleChecksums",
+    "BundleFile",
+    "BundleFileType",
+    "BundleMetadata",
     "DecisionType",
     "ExecutionMode",
     "ExecutionResult",
@@ -50,6 +58,7 @@ __all__ = [
     "ValidationResult",
     "create_project_from_spec",
     "execute_spec",
+    "export_bundle",
     "export_project",
     "export_to_file",
     "import_from_file",

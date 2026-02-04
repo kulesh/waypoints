@@ -5,6 +5,8 @@ needed to reproduce a waypoints project. This enables shipping "recipes" instead
 of compiled software - anyone can regenerate functionally equivalent software.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -46,6 +48,86 @@ class ArtifactType(Enum):
     IDEA_BRIEF = "idea_brief"
     PRODUCT_SPEC = "product_spec"
     FLIGHT_PLAN = "flight_plan"
+
+
+class BundleFileType(Enum):
+    """Type of file inside a genspec bundle."""
+
+    GENSPEC = "genspec"
+    ARTIFACT = "artifact"
+    METADATA = "metadata"
+    CHECKSUMS = "checksums"
+
+
+@dataclass(frozen=True)
+class BundleFile:
+    """Descriptor for a file stored in a genspec bundle."""
+
+    path: str
+    file_type: BundleFileType
+    artifact_type: ArtifactType | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        result: dict[str, Any] = {
+            "path": self.path,
+            "type": self.file_type.value,
+        }
+        if self.artifact_type is not None:
+            result["artifact_type"] = self.artifact_type.value
+        return result
+
+
+@dataclass(frozen=True)
+class BundleMetadata:
+    """Metadata for a genspec bundle."""
+
+    schema: str
+    version: str
+    waypoints_version: str
+    source_project: str
+    created_at: datetime
+    files: list[BundleFile]
+    model: str | None = None
+    model_version: str | None = None
+    initial_idea: str | None = None
+    genspec_path: str = "genspec.jsonl"
+    checksums_path: str = "checksums.json"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        result: dict[str, Any] = {
+            "schema": self.schema,
+            "version": self.version,
+            "waypoints_version": self.waypoints_version,
+            "source_project": self.source_project,
+            "created_at": self.created_at.isoformat(),
+            "genspec_path": self.genspec_path,
+            "checksums_path": self.checksums_path,
+            "files": [file.to_dict() for file in self.files],
+        }
+        if self.model:
+            result["model"] = self.model
+        if self.model_version:
+            result["model_version"] = self.model_version
+        if self.initial_idea:
+            result["initial_idea"] = self.initial_idea
+        return result
+
+
+@dataclass(frozen=True)
+class BundleChecksums:
+    """Checksums for a genspec bundle."""
+
+    algorithm: str
+    files: dict[str, str]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "algorithm": self.algorithm,
+            "files": self.files,
+        }
 
 
 @dataclass

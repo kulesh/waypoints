@@ -175,6 +175,79 @@ can ignore.
 - If `_schema` is not `"genspec"`, the file is invalid.
 - If `_version` is greater than supported, consumers should refuse or warn.
 
+## 6) Bundle Format (`.genspec.zip`)
+
+The bundle format packages a genspec plus its artifacts into a single, portable
+zip file. This is the recommended distribution format for testing, sharing, and
+verification.
+
+### 6.1 Bundle Layout
+
+```
+{project}.genspec.zip
+├── genspec.jsonl
+├── metadata.json
+├── checksums.json
+└── artifacts/
+    ├── idea-brief.md
+    ├── product-spec.md
+    └── flight-plan.json
+```
+
+### 6.2 Metadata (`metadata.json`)
+
+```json
+{
+  "schema": "genspec-bundle",
+  "version": "1.0",
+  "waypoints_version": "0.1.0",
+  "source_project": "my-project",
+  "created_at": "2026-01-19T23:52:10.123456",
+  "genspec_path": "genspec.jsonl",
+  "checksums_path": "checksums.json",
+  "files": [
+    {"path": "genspec.jsonl", "type": "genspec"},
+    {"path": "artifacts/idea-brief.md", "type": "artifact", "artifact_type": "idea_brief"},
+    {"path": "metadata.json", "type": "metadata"},
+    {"path": "checksums.json", "type": "checksums"}
+  ],
+  "model": "claude-sonnet-4",
+  "model_version": "2024-12-01",
+  "initial_idea": "An IDE for generative software"
+}
+```
+
+Required fields:
+- `schema`, `version`
+- `waypoints_version`, `source_project`, `created_at`
+- `genspec_path`, `checksums_path`
+- `files` list (with `path` and `type` per entry)
+
+Optional fields:
+- `model`, `model_version`, `initial_idea`
+
+### 6.3 Checksums (`checksums.json`)
+
+```json
+{
+  "algorithm": "sha256",
+  "files": {
+    "genspec.jsonl": "…",
+    "metadata.json": "…",
+    "artifacts/idea-brief.md": "…"
+  }
+}
+```
+
+Notes:
+- `checksums.json` does **not** include a checksum for itself.
+- Use checksums to verify bundle integrity before import/verification.
+
+### 6.4 Determinism
+
+Bundles are generated with deterministic zip entry ordering and normalized
+timestamps to ensure stable, reproducible archives for CI and comparisons.
+
 ## Appendix: Decisions
 
 User decisions are recorded when a user accepts, rejects, or edits a step.

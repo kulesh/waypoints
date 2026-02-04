@@ -69,6 +69,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Output file path (default: {project}.genspec.jsonl)",
     )
+    export_parser.add_argument(
+        "--bundle",
+        action="store_true",
+        help="Export as a genspec bundle zip (default: {project}.genspec.zip)",
+    )
 
     # Import command
     import_parser = subparsers.add_parser(
@@ -180,7 +185,7 @@ def parse_args() -> argparse.Namespace:
 
 def cmd_export(args: argparse.Namespace) -> int:
     """Export a project to generative specification."""
-    from waypoints.genspec import export_project, export_to_file
+    from waypoints.genspec import export_bundle, export_project, export_to_file
     from waypoints.models.project import Project
 
     projects_root = get_projects_root()
@@ -200,11 +205,15 @@ def cmd_export(args: argparse.Namespace) -> int:
     # Export
     spec = export_project(project)
 
-    # Determine output path
-    output_path = args.output or Path(f"{args.project}.genspec.jsonl")
-    export_to_file(spec, output_path)
-
-    print(f"Exported {spec.summary()['total_steps']} steps to {output_path}")
+    step_count = spec.summary()["total_steps"]
+    if args.bundle:
+        output_path = args.output or Path(f"{args.project}.genspec.zip")
+        export_bundle(spec, output_path)
+        print(f"Exported bundle with {step_count} steps to {output_path}")
+    else:
+        output_path = args.output or Path(f"{args.project}.genspec.jsonl")
+        export_to_file(spec, output_path)
+        print(f"Exported {step_count} steps to {output_path}")
     return 0
 
 

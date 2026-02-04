@@ -363,13 +363,12 @@ class ExportModal(ModalScreen[tuple[str, str] | None]):
         return str(Path.cwd())
 
     def _generate_filename(self) -> str:
-        """Generate default filename with timestamp."""
-        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        return f"{self.project_slug}-{timestamp}.genspec.jsonl"
+        """Generate default filename."""
+        return f"{self.project_slug}.genspec.zip"
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static("Export GenSpec", classes="modal-title")
+            yield Static("Export GenSpec Bundle", classes="modal-title")
 
             with Vertical(classes="modal-content"):
                 yield Label("Directory:", classes="modal-label")
@@ -387,7 +386,7 @@ class ExportModal(ModalScreen[tuple[str, str] | None]):
                 )
 
                 yield Static(
-                    "The genspec file contains the full project generation history.",
+                    "Bundle includes genspec history and artifacts.",
                     classes="hint",
                 )
 
@@ -441,8 +440,8 @@ class ExportModal(ModalScreen[tuple[str, str] | None]):
             self.app.notify("Please enter a filename", severity="warning")
             return
 
-        if not filename.endswith(".genspec.jsonl"):
-            filename = filename + ".genspec.jsonl"
+        if not filename.endswith(".genspec.zip"):
+            filename = filename + ".genspec.zip"
 
         # Check for existing file
         full_path = dir_path / filename

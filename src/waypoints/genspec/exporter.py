@@ -4,8 +4,10 @@ Collects all prompts, dialogues, and artifacts from a project
 and bundles them into a structured genspec.jsonl file.
 """
 
+import hashlib
 import json
 import logging
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,6 +16,10 @@ from waypoints.fly.execution_log import ExecutionLogReader
 from waypoints.genspec.spec import (
     Artifact,
     ArtifactType,
+    BundleChecksums,
+    BundleFile,
+    BundleFileType,
+    BundleMetadata,
     GenerativeSpec,
     GenerativeStep,
     OutputType,
@@ -30,6 +36,16 @@ if TYPE_CHECKING:
     from waypoints.models.project import Project
 
 logger = logging.getLogger(__name__)
+
+# Bundle format constants
+BUNDLE_SCHEMA = "genspec-bundle"
+BUNDLE_VERSION = "1.0"
+BUNDLE_ARTIFACT_PATHS = {
+    ArtifactType.IDEA_BRIEF: "artifacts/idea-brief.md",
+    ArtifactType.PRODUCT_SPEC: "artifacts/product-spec.md",
+    ArtifactType.FLIGHT_PLAN: "artifacts/flight-plan.json",
+}
+_ZIP_EPOCH = (2020, 1, 1, 0, 0, 0)
 
 # Mapping from session phase names to genspec Phase enum
 PHASE_MAP = {
@@ -294,6 +310,119 @@ def export_project(project: "Project") -> GenerativeSpec:
     )
 
     return spec
+
+
+def export_bundle(spec: GenerativeSpec, path: Path) -> None:
+    """Export a GenerativeSpec to a bundle zip.
+
+    Args:
+        spec: The spec to export
+        path: Output bundle path
+    """
+    logger.info("Writing genspec bundle to %s", path)
+    files = _build_bundle_files(spec)
+    _write_bundle_zip(path, files)
+
+
+def _build_bundle_files(spec: GenerativeSpec) -> dict[str, bytes]:
+    """Build bundle files as a path -> bytes mapping."""
+    files: dict[str, bytes] = {}
+    bundle_files: list[BundleFile] = []
+
+    files["genspec.jsonl"] = _serialize_spec(spec).encode("utf-8")
+    bundle_files.append(
+        BundleFile(path="genspec.jsonl", file_type=BundleFileType.GENSPEC)
+    )
+
+    for artifact in spec.artifacts:
+        artifact_path = BUNDLE_ARTIFACT_PATHS.get(artifact.artifact_type)
+        if not artifact_path:
+            continue
+        files[artifact_path] = artifact.content.encode("utf-8")
+        bundle_files.append(
+            BundleFile(
+                path=artifact_path,
+                file_type=BundleFileType.ARTIFACT,
+                artifact_type=artifact.artifact_type,
+            )
+        )
+
+    bundle_files.append(
+        BundleFile(path="metadata.json", file_type=BundleFileType.METADATA)
+    )
+    bundle_files.append(
+        BundleFile(path="checksums.json", file_type=BundleFileType.CHECKSUMS)
+    )
+
+    bundle_files_sorted = sorted(bundle_files, key=lambda entry: entry.path)
+    metadata = BundleMetadata(
+        schema=BUNDLE_SCHEMA,
+        version=BUNDLE_VERSION,
+        waypoints_version=spec.waypoints_version,
+        source_project=spec.source_project,
+        created_at=spec.created_at,
+        model=spec.model,
+        model_version=spec.model_version,
+        initial_idea=spec.initial_idea or None,
+        files=bundle_files_sorted,
+    )
+    files["metadata.json"] = _serialize_json(metadata.to_dict())
+
+    checksums = BundleChecksums(
+        algorithm="sha256",
+        files=_calculate_checksums(files),
+    )
+    files["checksums.json"] = _serialize_json(checksums.to_dict())
+
+    return files
+
+
+def _serialize_spec(spec: GenerativeSpec) -> str:
+    """Serialize a GenerativeSpec to JSONL."""
+    lines = [json.dumps(spec.to_header_dict())]
+
+    for step in spec.steps:
+        lines.append(json.dumps(step.to_dict()))
+
+    for decision in spec.decisions:
+        lines.append(json.dumps(decision.to_dict()))
+
+    for artifact in spec.artifacts:
+        lines.append(json.dumps(artifact.to_dict()))
+
+    return "\n".join(lines) + "\n"
+
+
+def _serialize_json(payload: dict[str, object]) -> bytes:
+    """Serialize JSON payload with stable formatting."""
+    return json.dumps(payload, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+
+
+def _calculate_checksums(files: dict[str, bytes]) -> dict[str, str]:
+    """Compute sha256 checksums for each bundle file (excluding checksums.json)."""
+    checksums: dict[str, str] = {}
+    for file_path in sorted(files):
+        if file_path == "checksums.json":
+            continue
+        checksums[file_path] = hashlib.sha256(files[file_path]).hexdigest()
+    return checksums
+
+
+def _write_bundle_zip(path: Path, files: dict[str, bytes]) -> None:
+    """Write bundle zip deterministically."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(
+        path,
+        mode="w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=9,
+    ) as archive:
+        for file_path in sorted(files):
+            info = zipfile.ZipInfo(file_path)
+            info.date_time = _ZIP_EPOCH
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            archive.writestr(info, files[file_path])
 
 
 def _collect_session_steps(
@@ -619,21 +748,7 @@ def export_to_file(spec: GenerativeSpec, path: Path) -> None:
     """
     logger.info("Writing genspec to %s", path)
 
-    with open(path, "w") as f:
-        # Write header
-        f.write(json.dumps(spec.to_header_dict()) + "\n")
-
-        # Write steps
-        for step in spec.steps:
-            f.write(json.dumps(step.to_dict()) + "\n")
-
-        # Write decisions
-        for decision in spec.decisions:
-            f.write(json.dumps(decision.to_dict()) + "\n")
-
-        # Write artifacts
-        for artifact in spec.artifacts:
-            f.write(json.dumps(artifact.to_dict()) + "\n")
+    path.write_text(_serialize_spec(spec), encoding="utf-8")
 
     total_lines = 1 + len(spec.steps) + len(spec.decisions) + len(spec.artifacts)
     logger.info("Wrote %d lines to genspec", total_lines)

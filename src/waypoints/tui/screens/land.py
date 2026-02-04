@@ -1336,7 +1336,7 @@ class GenSpecPanel(Horizontal):
         """Export the generative spec to a file via modal."""
         from pathlib import Path
 
-        from waypoints.genspec import export_to_file
+        from waypoints.genspec import export_bundle
         from waypoints.tui.widgets.genspec import ExportModal
 
         if not self._spec:
@@ -1351,9 +1351,9 @@ class GenSpecPanel(Horizontal):
 
             try:
                 self.app.notify("Exporting...")
-                export_to_file(self._spec, output_path)
-                self.app.notify(f"Exported to {output_path}")
-                logger.info("Exported genspec to %s", output_path)
+                export_bundle(self._spec, output_path)
+                self.app.notify(f"Exported bundle to {output_path}")
+                logger.info("Exported genspec bundle to %s", output_path)
             except Exception as e:
                 self.app.notify(f"Export failed: {e}", severity="error")
                 logger.exception("Failed to export genspec: %s", e)
