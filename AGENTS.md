@@ -148,6 +148,52 @@ tests/             # Test files (pytest auto-discovers)
 - Mypy: strict mode enabled
 - Python: 3.14+
 
-### Issue Tracking
+## Issue Tracking
 
-This project uses **bd** (beads) for issue tracking. See AGENTS.md for workflow details.
+This project uses **bd (beads)** for issue tracking.
+Run `bd prime` for workflow context, or install hooks (`bd hooks install`) for auto-injection.
+
+**Quick reference:**
+- `bd ready` - Find unblocked work
+- `bd create "Title" --type task --priority 2` - Create issue
+- `bd close <id>` - Complete work
+- `bd sync` - Sync with git (run at session end)
+
+For full workflow details: `bd prime`
+
+## Retrieval Index
+
+**Start here**
+- `README.md` - Product overview, phases, quick start, key docs
+- `docs/README.md` - Docs index
+
+**Core docs**
+- `docs/product-spec.md` - Product spec and UX
+- `docs/runtime-architecture.md` - Module map and runtime flow
+- `docs/journey-state-machine.md` - States, transitions, recovery
+- `docs/genspec-format.md` - Export format
+- `docs/protocol-v1.md` - JSON command/event protocol draft
+- `docs/testing-strategy.md` - Flight tests and quality gates
+
+**Runtime entry points**
+- `src/waypoints/main.py` - CLI + TUI entry
+- `src/waypoints/tui/app.py` - TUI app + routing
+
+**Domain + orchestration**
+- `src/waypoints/models/` - Project, Journey, Waypoint, FlightPlan
+- `src/waypoints/orchestration/coordinator.py` - Business logic
+
+**Execution + LLM**
+- `src/waypoints/fly/executor.py` - Waypoint execution loop
+- `src/waypoints/llm/` - Provider abstraction + prompts + validation
+
+**Persistence + paths**
+- `src/waypoints/config/paths.py` - XDG + workspace paths
+- `src/waypoints/models/project.py` - project.json + state persistence
+
+**Genspec + verification**
+- `src/waypoints/genspec/` - Export/import
+- `src/waypoints/verify/` - Reproducibility checks
+
+**Tests**
+- `tests/` - Pytest suite (coordinator, journey, fly, genspec)
