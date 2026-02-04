@@ -77,6 +77,18 @@ class BundleFile:
             result["artifact_type"] = self.artifact_type.value
         return result
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "BundleFile":
+        """Create from dictionary."""
+        artifact_type = data.get("artifact_type")
+        return cls(
+            path=data["path"],
+            file_type=BundleFileType(data["type"]),
+            artifact_type=(
+                ArtifactType(artifact_type) if artifact_type is not None else None
+            ),
+        )
+
 
 @dataclass(frozen=True)
 class BundleMetadata:
@@ -114,6 +126,23 @@ class BundleMetadata:
             result["initial_idea"] = self.initial_idea
         return result
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "BundleMetadata":
+        """Create from dictionary."""
+        return cls(
+            schema=data["schema"],
+            version=data["version"],
+            waypoints_version=data["waypoints_version"],
+            source_project=data["source_project"],
+            created_at=datetime.fromisoformat(data["created_at"]),
+            files=[BundleFile.from_dict(item) for item in data.get("files", [])],
+            model=data.get("model"),
+            model_version=data.get("model_version"),
+            initial_idea=data.get("initial_idea"),
+            genspec_path=data.get("genspec_path", "genspec.jsonl"),
+            checksums_path=data.get("checksums_path", "checksums.json"),
+        )
+
 
 @dataclass(frozen=True)
 class BundleChecksums:
@@ -128,6 +157,14 @@ class BundleChecksums:
             "algorithm": self.algorithm,
             "files": self.files,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "BundleChecksums":
+        """Create from dictionary."""
+        return cls(
+            algorithm=data["algorithm"],
+            files=data.get("files", {}),
+        )
 
 
 @dataclass

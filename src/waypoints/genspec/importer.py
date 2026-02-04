@@ -6,6 +6,7 @@ with the artifacts and dialogue history from the specification.
 
 import json
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -61,45 +62,62 @@ def import_from_file(path: Path) -> GenerativeSpec:
         raise FileNotFoundError(f"Genspec file not found: {path}")
 
     logger.info("Importing genspec from %s", path)
+    with open(path, encoding="utf-8") as handle:
+        return import_from_lines(handle, source=str(path))
 
+
+def import_from_lines(
+    lines: Iterable[str], *, source: str | None = None
+) -> GenerativeSpec:
+    """Import a GenerativeSpec from JSONL lines.
+
+    Args:
+        lines: Iterable of JSONL lines
+        source: Optional source description for error messages
+
+    Returns:
+        Parsed GenerativeSpec
+    """
     spec: GenerativeSpec | None = None
     steps: list[GenerativeStep] = []
     decisions: list[UserDecision] = []
     artifacts: list[Artifact] = []
 
-    with open(path) as f:
-        for line_num, line in enumerate(f):
-            line = line.strip()
-            if not line:
-                continue
+    for line_num, line in enumerate(lines):
+        line = line.strip()
+        if not line:
+            continue
 
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Invalid JSON on line {line_num + 1}: {e}") from e
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError as exc:
+            location = f" in {source}" if source else ""
+            raise ValueError(
+                f"Invalid JSON on line {line_num + 1}{location}: {exc}"
+            ) from exc
 
-            # First line is header
-            if line_num == 0:
-                if data.get("_schema") != "genspec":
-                    raise ValueError(
-                        f"Invalid schema: expected 'genspec', "
-                        f"got '{data.get('_schema')}'"
-                    )
-                spec = GenerativeSpec.from_header_dict(data)
-                continue
-
-            # Parse entry by type
-            entry_type = data.get("type")
-            if entry_type == "step":
-                steps.append(GenerativeStep.from_dict(data))
-            elif entry_type == "decision":
-                decisions.append(UserDecision.from_dict(data))
-            elif entry_type == "artifact":
-                artifacts.append(Artifact.from_dict(data))
-            else:
-                logger.warning(
-                    "Unknown entry type on line %d: %s", line_num + 1, entry_type
+        # First line is header
+        if line_num == 0:
+            if data.get("_schema") != "genspec":
+                raise ValueError(
+                    "Invalid schema: expected 'genspec', "
+                    f"got '{data.get('_schema')}'"
                 )
+            spec = GenerativeSpec.from_header_dict(data)
+            continue
+
+        # Parse entry by type
+        entry_type = data.get("type")
+        if entry_type == "step":
+            steps.append(GenerativeStep.from_dict(data))
+        elif entry_type == "decision":
+            decisions.append(UserDecision.from_dict(data))
+        elif entry_type == "artifact":
+            artifacts.append(Artifact.from_dict(data))
+        else:
+            logger.warning(
+                "Unknown entry type on line %d: %s", line_num + 1, entry_type
+            )
 
     if spec is None:
         raise ValueError("Missing header in genspec file")
