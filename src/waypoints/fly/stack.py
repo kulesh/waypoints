@@ -43,7 +43,7 @@ STACK_COMMANDS: dict[StackType, list[ValidationCommand]] = {
         ValidationCommand("linting", "ruff check .", "lint"),
         ValidationCommand("tests", "pytest -v", "test"),
         ValidationCommand("type checking", "mypy .", "type"),
-        ValidationCommand("formatting", "black --check .", "format"),
+        ValidationCommand("formatting", "ruff format --check .", "format"),
     ],
     StackType.TYPESCRIPT: [
         ValidationCommand("linting", "npm run lint", "lint"),

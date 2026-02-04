@@ -199,6 +199,9 @@ def _detect_validation_category(command: str) -> str | None:
     ):
         return "tests"
 
+    if "ruff format" in cmd_lower or "ruff fmt" in cmd_lower:
+        return "formatting"
+
     # Linting commands
     if any(
         pattern in cmd_lower
@@ -209,7 +212,7 @@ def _detect_validation_category(command: str) -> str | None:
     # Formatting commands
     if any(
         pattern in cmd_lower
-        for pattern in ["fmt", "format", "prettier", "black", "rustfmt"]
+        for pattern in ["fmt", "format", "prettier", "rustfmt"]
     ):
         return "formatting"
 

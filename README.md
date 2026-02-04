@@ -225,7 +225,8 @@ uv run pytest
 
 # Linting and formatting
 uv run ruff check .
-uv run black .
+uv run ruff format .
+uv run ruff format --check .
 
 # Type checking
 uv run mypy src/
