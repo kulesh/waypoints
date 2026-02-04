@@ -4,6 +4,7 @@ Reads a genspec.jsonl file and creates a new waypoints project
 with the artifacts and dialogue history from the specification.
 """
 
+import hashlib
 import json
 import logging
 import zipfile
@@ -17,6 +18,7 @@ from waypoints.config.project_root import get_projects_root
 from waypoints.genspec.spec import (
     Artifact,
     ArtifactType,
+    BundleChecksums,
     BundleMetadata,
     GenerativeSpec,
     GenerativeStep,
@@ -145,6 +147,9 @@ def _import_from_bundle(path: Path) -> GenerativeSpec:
     """Import a GenerativeSpec from a bundle zip."""
     with zipfile.ZipFile(path) as archive:
         metadata = _read_bundle_metadata(archive)
+        checksums = _read_bundle_checksums(archive)
+        if checksums:
+            _verify_bundle_checksums(archive, checksums)
         genspec_path = metadata.genspec_path if metadata else "genspec.jsonl"
         try:
             content = archive.read(genspec_path).decode("utf-8")
@@ -162,6 +167,37 @@ def _read_bundle_metadata(archive: zipfile.ZipFile) -> BundleMetadata | None:
     except KeyError:
         return None
     return BundleMetadata.from_dict(payload)
+
+
+def _read_bundle_checksums(archive: zipfile.ZipFile) -> BundleChecksums | None:
+    try:
+        payload = json.loads(archive.read("checksums.json").decode("utf-8"))
+    except KeyError:
+        return None
+    return BundleChecksums.from_dict(payload)
+
+
+def _verify_bundle_checksums(
+    archive: zipfile.ZipFile, checksums: BundleChecksums
+) -> None:
+    if checksums.algorithm != "sha256":
+        raise ValueError(
+            f"Unsupported checksum algorithm: {checksums.algorithm}"
+        )
+
+    for file_path, expected_hash in checksums.files.items():
+        try:
+            content = archive.read(file_path)
+        except KeyError as exc:
+            raise ValueError(
+                f"Bundle missing file listed in checksums: {file_path}"
+            ) from exc
+        actual_hash = hashlib.sha256(content).hexdigest()
+        if actual_hash != expected_hash:
+            raise ValueError(
+                f"Checksum mismatch for {file_path}: "
+                f"expected {expected_hash}, got {actual_hash}"
+            )
 
 
 def validate_spec(spec: GenerativeSpec) -> ValidationResult:

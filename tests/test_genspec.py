@@ -602,3 +602,51 @@ def test_import_from_bundle(tmp_path: Path) -> None:
 
     assert imported.source_project == "bundle-import"
     assert len(imported.steps) == 1
+
+
+def test_import_from_bundle_checksum_mismatch(tmp_path: Path) -> None:
+    """Importing a tampered bundle fails checksum verification."""
+    import zipfile
+
+    from waypoints.genspec.exporter import export_bundle
+    from waypoints.genspec.importer import import_from_file
+
+    spec = GenerativeSpec(
+        version="1.0",
+        waypoints_version="0.1.0",
+        source_project="bundle-import",
+        created_at=datetime.now(),
+        initial_idea="Idea",
+    )
+    spec.steps = [
+        GenerativeStep(
+            step_id="step-001",
+            phase=Phase.SHAPE_QA,
+            timestamp=datetime.now(),
+            input=StepInput(user_prompt="Q"),
+            output=StepOutput(content="A", output_type=OutputType.TEXT),
+        )
+    ]
+    spec.artifacts = [
+        Artifact(artifact_type=ArtifactType.IDEA_BRIEF, content="Brief")
+    ]
+
+    original_path = tmp_path / "bundle.genspec.zip"
+    export_bundle(spec, original_path)
+
+    tampered_path = tmp_path / "bundle-tampered.genspec.zip"
+    with zipfile.ZipFile(original_path) as original:
+        entries = {name: original.read(name) for name in original.namelist()}
+
+    checksums = json.loads(entries["checksums.json"].decode("utf-8"))
+    checksums["files"]["genspec.jsonl"] = "0" * 64
+    entries["checksums.json"] = (
+        json.dumps(checksums, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    )
+
+    with zipfile.ZipFile(tampered_path, mode="w") as tampered:
+        for name, content in entries.items():
+            tampered.writestr(name, content)
+
+    with pytest.raises(ValueError, match="Checksum mismatch"):
+        import_from_file(tampered_path)
