@@ -220,7 +220,7 @@ def edit_file_in_editor(
     resolved_editor = validate_editor(editor)
     if resolved_editor is None:
         logger.error(
-            "Editor validation failed for '%s'. " "Set $EDITOR to a known editor: %s",
+            "Editor validation failed for '%s'. Set $EDITOR to a known editor: %s",
             editor,
             ", ".join(sorted(SAFE_EDITORS)[:10]) + "...",
         )

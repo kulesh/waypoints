@@ -214,9 +214,9 @@ class AnthropicProvider(LLMProvider):
         loop = asyncio.new_event_loop()
         try:
 
-            async def collect_results() -> (
-                tuple[list[str], float | None, int | None, int | None]
-            ):
+            async def collect_results() -> tuple[
+                list[str], float | None, int | None, int | None
+            ]:
                 chunks: list[str] = []
                 cost: float | None = None
                 tokens_in: int | None = None

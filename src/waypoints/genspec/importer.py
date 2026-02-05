@@ -107,8 +107,7 @@ def import_from_lines(
         if line_num == 0:
             if data.get("_schema") != "genspec":
                 raise ValueError(
-                    "Invalid schema: expected 'genspec', "
-                    f"got '{data.get('_schema')}'"
+                    f"Invalid schema: expected 'genspec', got '{data.get('_schema')}'"
                 )
             spec = GenerativeSpec.from_header_dict(data)
             continue
@@ -154,9 +153,7 @@ def _import_from_bundle(path: Path) -> GenerativeSpec:
         try:
             content = archive.read(genspec_path).decode("utf-8")
         except KeyError as exc:
-            raise ValueError(
-                f"Bundle missing genspec at {genspec_path}"
-            ) from exc
+            raise ValueError(f"Bundle missing genspec at {genspec_path}") from exc
 
     return import_from_lines(content.splitlines(), source=f"{path}::{genspec_path}")
 
@@ -181,9 +178,7 @@ def _verify_bundle_checksums(
     archive: zipfile.ZipFile, checksums: BundleChecksums
 ) -> None:
     if checksums.algorithm != "sha256":
-        raise ValueError(
-            f"Unsupported checksum algorithm: {checksums.algorithm}"
-        )
+        raise ValueError(f"Unsupported checksum algorithm: {checksums.algorithm}")
 
     for file_path, expected_hash in checksums.files.items():
         try:

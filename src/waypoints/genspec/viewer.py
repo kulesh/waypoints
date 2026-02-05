@@ -61,9 +61,7 @@ def render_view(
     if metadata:
         lines.append(f"Bundle: {metadata.schema} v{metadata.version}")
     if checksums:
-        lines.append(
-            f"Checksums: {checksums.algorithm} ({len(checksums.files)} files)"
-        )
+        lines.append(f"Checksums: {checksums.algorithm} ({len(checksums.files)} files)")
 
     if options.show_steps:
         lines.append("")

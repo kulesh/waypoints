@@ -211,8 +211,7 @@ def _detect_validation_category(command: str) -> str | None:
 
     # Formatting commands
     if any(
-        pattern in cmd_lower
-        for pattern in ["fmt", "format", "prettier", "rustfmt"]
+        pattern in cmd_lower for pattern in ["fmt", "format", "prettier", "rustfmt"]
     ):
         return "formatting"
 
@@ -631,8 +630,7 @@ class WaypointExecutor:
                 # Create user-friendly error summary
                 error_summaries = {
                     APIErrorType.RATE_LIMITED: (
-                        "Claude API rate limit reached. "
-                        "Wait a few minutes and retry."
+                        "Claude API rate limit reached. Wait a few minutes and retry."
                     ),
                     APIErrorType.API_UNAVAILABLE: (
                         "Claude service temporarily unavailable. Try again shortly."

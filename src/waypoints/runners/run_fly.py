@@ -72,8 +72,7 @@ async def run_execution(args: argparse.Namespace) -> int:
         waypoints_to_execute = [
             wp
             for wp in flight_plan.waypoints
-            if wp.status == WaypointStatus.PENDING
-            and not flight_plan.is_epic(wp.id)
+            if wp.status == WaypointStatus.PENDING and not flight_plan.is_epic(wp.id)
         ]
 
     if not waypoints_to_execute:

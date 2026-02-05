@@ -603,9 +603,7 @@ class TestExecutionLogWriter:
 class TestExecutionLogReader:
     """Tests for ExecutionLogReader."""
 
-    def test_load_log(
-        self, mock_project: MockProject, mock_waypoint: Waypoint
-    ) -> None:
+    def test_load_log(self, mock_project: MockProject, mock_waypoint: Waypoint) -> None:
         """Load execution log from file."""
         # Create a log file
         writer = ExecutionLogWriter(mock_project, mock_waypoint)
