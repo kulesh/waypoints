@@ -372,7 +372,8 @@ def create_project_from_spec(
     """Create a new project from a generative specification.
 
     Args:
-        spec_or_path: Either a GenerativeSpec object or path to .genspec.jsonl/.genspec.zip
+        spec_or_path: Either a GenerativeSpec object or path to
+            .genspec.jsonl/.genspec.zip
         name: Name for the new project (defaults to spec's project name)
         target_state: Journey state to set after import:
             - "fly:ready": Ready to execute waypoints (for "Run Now" mode)

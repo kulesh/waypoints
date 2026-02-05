@@ -1,7 +1,6 @@
 """TUI widgets for viewing and interacting with generative specifications."""
 
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 

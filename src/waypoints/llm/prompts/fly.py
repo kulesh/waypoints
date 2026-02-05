@@ -131,7 +131,8 @@ warnings/errors must be fixed before completion; include evidence of fixes in
 your outputs:
 - **Tests**: Run the test suite (e.g., `pytest`, `cargo test`, `npm test`, `go test`)
 - **Linting**: Run the linter (e.g., `ruff check`, `cargo clippy`, `eslint`)
-- **Formatting**: Check code formatting (e.g., `ruff format --check`, `cargo fmt --check`)
+- **Formatting**: Check code formatting (e.g., `ruff format --check`,
+  `cargo fmt --check`)
 
 Use the correct tool paths (e.g., `/Users/kulesh/.cargo/bin/cargo` if cargo is there).
 
