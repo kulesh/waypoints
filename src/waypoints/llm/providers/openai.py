@@ -6,7 +6,8 @@ import logging
 import os
 import time
 from collections.abc import AsyncIterator, Iterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
 from waypoints.llm.prompt_cache import (
     PROMPT_CACHE_RETENTION,
@@ -199,6 +200,16 @@ def _extract_usage_tokens(
     )
 
 
+def _assistant_message_dict(message: Any) -> dict[str, Any]:
+    """Serialize an assistant message for message-history replay."""
+    if hasattr(message, "model_dump"):
+        return cast(dict[str, Any], message.model_dump())
+    return {
+        "role": "assistant",
+        "content": getattr(message, "content", None),
+    }
+
+
 class OpenAIProvider(LLMProvider):
     """OpenAI provider using the openai Python SDK.
 
@@ -206,6 +217,10 @@ class OpenAIProvider(LLMProvider):
     """
 
     provider_name = "openai"
+    _MAX_RESUMABLE_SESSIONS = 128
+    _MAX_RESUMABLE_MESSAGES = 300
+    _resumable_sessions: dict[str, list[dict[str, Any]]] = {}
+    _resumable_order: list[str] = []
 
     def __init__(
         self,
@@ -357,7 +372,6 @@ class OpenAIProvider(LLMProvider):
         Implements a tool loop: sends message, executes tool calls,
         sends results back, continues until completion.
         """
-        _ = resume_session_id  # Session resume is provider-specific; no-op for OpenAI.
         start_time = time.perf_counter()
         error_msg: str | None = None
         last_error: Exception | None = None
@@ -365,6 +379,11 @@ class OpenAIProvider(LLMProvider):
         tokens_in_total: int | None = None
         tokens_out_total: int | None = None
         cached_tokens_in_total: int | None = None
+        session_id, messages = self._build_resumable_messages(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            resume_session_id=resume_session_id,
+        )
         cache_key = build_prompt_cache_key(
             provider=self.provider_name,
             model=self.model,
@@ -409,12 +428,6 @@ class OpenAIProvider(LLMProvider):
             try:
                 client = self._get_async_client()
 
-                # Build initial messages
-                messages: list[dict[str, Any]] = []
-                if system_prompt:
-                    messages.append({"role": "system", "content": system_prompt})
-                messages.append({"role": "user", "content": prompt})
-
                 # Tool loop
                 max_iterations = 50  # Prevent infinite loops
                 for _ in range(max_iterations):
@@ -455,7 +468,7 @@ class OpenAIProvider(LLMProvider):
                     # Check for tool calls
                     if message.tool_calls:
                         # Add assistant message to history
-                        messages.append(message.model_dump())
+                        messages.append(_assistant_message_dict(message))
 
                         # Process each tool call
                         for tool_call in message.tool_calls:
@@ -489,8 +502,10 @@ class OpenAIProvider(LLMProvider):
 
                     # No tool calls and finish_reason indicates done
                     if choice.finish_reason in ("stop", "length"):
+                        messages.append(_assistant_message_dict(message))
                         break
 
+                self._store_resumable_session(session_id, messages)
                 # Success
                 yield StreamComplete(
                     full_text=full_text,
@@ -498,6 +513,7 @@ class OpenAIProvider(LLMProvider):
                     tokens_in=tokens_in_total,
                     tokens_out=tokens_out_total,
                     cached_tokens_in=cached_tokens_in_total,
+                    session_id=session_id,
                 )
 
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
@@ -572,3 +588,65 @@ class OpenAIProvider(LLMProvider):
                 )
                 metrics_collector.record(call)
             raise last_error
+
+    @classmethod
+    def _trim_messages(cls, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Cap persisted session history to bound token growth."""
+        if len(messages) <= cls._MAX_RESUMABLE_MESSAGES:
+            return messages
+        first = (
+            messages[0]
+            if messages and messages[0].get("role") == "system"
+            else None
+        )
+        body = messages[1:] if first is not None else messages
+        trimmed_body = body[-cls._MAX_RESUMABLE_MESSAGES :]
+        if first is None:
+            return trimmed_body
+        return [first, *trimmed_body]
+
+    def _build_resumable_messages(
+        self,
+        *,
+        prompt: str,
+        system_prompt: str | None,
+        resume_session_id: str | None,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Create message list for a new or resumed OpenAI session."""
+        if (
+            resume_session_id
+            and resume_session_id in self.__class__._resumable_sessions
+        ):
+            prior = self.__class__._resumable_sessions[resume_session_id]
+            resumed_messages = [dict(item) for item in prior]
+            resumed_messages.append({"role": "user", "content": prompt})
+            return resume_session_id, resumed_messages
+
+        if resume_session_id:
+            logger.info(
+                "OpenAI resume session not found (%s); starting a new session",
+                resume_session_id,
+            )
+
+        session_id = str(uuid4())
+        initial_messages: list[dict[str, Any]] = []
+        if system_prompt:
+            initial_messages.append({"role": "system", "content": system_prompt})
+        initial_messages.append({"role": "user", "content": prompt})
+        return session_id, initial_messages
+
+    def _store_resumable_session(
+        self,
+        session_id: str,
+        messages: list[dict[str, Any]],
+    ) -> None:
+        """Persist bounded message history for a resumable OpenAI session."""
+        trimmed = self._trim_messages(messages)
+        self.__class__._resumable_sessions[session_id] = trimmed
+        order = self.__class__._resumable_order
+        if session_id in order:
+            order.remove(session_id)
+        order.append(session_id)
+        while len(order) > self._MAX_RESUMABLE_SESSIONS:
+            stale_id = order.pop(0)
+            self.__class__._resumable_sessions.pop(stale_id, None)
