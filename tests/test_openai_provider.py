@@ -47,6 +47,7 @@ def test_agent_query_uses_prompt_cache_params() -> None:
             system_prompt="system",
             allowed_tools=["Read"],
             cwd="/tmp/project",
+            resume_session_id="session-123",
             phase="fly",
             waypoint_id="WP-001",
         ):

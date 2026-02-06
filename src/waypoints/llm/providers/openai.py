@@ -347,6 +347,7 @@ class OpenAIProvider(LLMProvider):
         system_prompt: str | None = None,
         allowed_tools: list[str] | None = None,
         cwd: str | None = None,
+        resume_session_id: str | None = None,
         metrics_collector: "MetricsCollector | None" = None,
         phase: str = "fly",
         waypoint_id: str | None = None,
@@ -356,6 +357,7 @@ class OpenAIProvider(LLMProvider):
         Implements a tool loop: sends message, executes tool calls,
         sends results back, continues until completion.
         """
+        _ = resume_session_id  # Session resume is provider-specific; no-op for OpenAI.
         start_time = time.perf_counter()
         error_msg: str | None = None
         last_error: Exception | None = None

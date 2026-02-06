@@ -89,6 +89,14 @@ logger = logging.getLogger(__name__)
 
 # Max iterations before giving up
 MAX_ITERATIONS = 10
+MAX_PROTOCOL_DERAILMENT_STREAK = 2
+COMPLETION_ALIAS_HINTS = (
+    "waypoint_complete",
+    "waypoint completed",
+    "==completed==",
+    "implementation is complete",
+    "all waypoints",
+)
 
 
 class ExecutionResult(Enum):
@@ -241,6 +249,10 @@ class WaypointExecutor:
         completion_iteration: int | None = None
         completion_output: str | None = None
         completion_criteria: set[int] | None = None
+        resume_session_id: str | None = None
+        next_reason_code = "initial"
+        next_reason_detail = "Initial waypoint execution."
+        protocol_derailment_streak = 0
 
         while iteration < self.max_iterations:
             if self._cancelled:
@@ -262,13 +274,32 @@ class WaypointExecutor:
             )
 
             # Log iteration start
-            iter_prompt = prompt if iteration == 1 else "Continue implementing."
-            self._log_writer.log_iteration_start(iteration, iter_prompt)
+            reason_code = next_reason_code
+            reason_detail = next_reason_detail
+            iter_prompt = (
+                prompt
+                if iteration == 1
+                else self._build_iteration_kickoff_prompt(
+                    reason_code=reason_code,
+                    reason_detail=reason_detail,
+                    completion_marker=completion_marker,
+                    captured_criteria=captured_criteria,
+                )
+            )
+            self._log_writer.log_iteration_start(
+                iteration=iteration,
+                prompt=iter_prompt,
+                reason_code=reason_code,
+                reason_detail=reason_detail,
+                resume_session_id=resume_session_id,
+            )
 
             # Run agent query with file and bash tools
             iteration_output = ""
             iteration_cost: float | None = None
             iteration_file_ops: list[FileOperation] = []
+            iteration_stage_reports_logged = 0
+            scope_drift_detected = False
             try:
                 async for chunk in agent_query(
                     prompt=iter_prompt,
@@ -284,6 +315,7 @@ class WaypointExecutor:
                         "WebFetch",
                     ],
                     cwd=str(project_path),
+                    resume_session_id=resume_session_id,
                     metrics_collector=self.metrics_collector,
                     phase="fly",
                     waypoint_id=self.waypoint.id,
@@ -343,6 +375,7 @@ class WaypointExecutor:
                                 if key in logged_stage_reports:
                                     continue
                                 logged_stage_reports.add(key)
+                                iteration_stage_reports_logged += 1
                                 self._log_writer.log_stage_report(iteration, report)
                                 output = report.output.strip()
                                 if len(output) > 400:
@@ -393,6 +426,11 @@ class WaypointExecutor:
                             chunk.tool_input,
                             chunk.tool_output,
                         )
+                        if (
+                            isinstance(chunk.tool_output, str)
+                            and "Error: Access denied:" in chunk.tool_output
+                        ):
+                            scope_drift_detected = True
                         if chunk.tool_name == "Bash":
                             command = chunk.tool_input.get("command")
                             if isinstance(command, str) and chunk.tool_output:
@@ -430,6 +468,8 @@ class WaypointExecutor:
 
                     elif isinstance(chunk, StreamComplete):
                         iteration_cost = chunk.cost_usd
+                        if chunk.session_id:
+                            resume_session_id = chunk.session_id
                         logger.info(
                             "Iteration %d complete, cost: $%.4f",
                             iteration,
@@ -619,6 +659,91 @@ class WaypointExecutor:
             final_completed = {int(m[0]) for m in final_criteria}
             self._log_writer.log_output(iteration, iteration_output, final_completed)
             self._log_writer.log_iteration_end(iteration, iteration_cost)
+            verified_criteria = {
+                idx
+                for idx, criterion in captured_criteria.items()
+                if criterion.status == "verified"
+            }
+            unresolved_criteria = sorted(
+                set(range(len(self.waypoint.acceptance_criteria))) - verified_criteria
+            )
+            protocol_issues = self._detect_protocol_issues(
+                iteration_output=iteration_output,
+                completion_marker=completion_marker,
+                stage_reports_logged=iteration_stage_reports_logged,
+                scope_drift_detected=scope_drift_detected,
+            )
+            if protocol_issues:
+                escalation_issues = [
+                    issue
+                    for issue in protocol_issues
+                    if issue != "missing structured stage report"
+                ]
+                if escalation_issues:
+                    protocol_derailment_streak += 1
+                else:
+                    protocol_derailment_streak = 0
+                next_reason_code = "protocol_violation"
+                next_reason_detail = "; ".join(protocol_issues)
+                self._log_writer.log_protocol_derailment(
+                    iteration=iteration,
+                    issues=protocol_issues,
+                    action=(
+                        "escalate_intervention"
+                        if protocol_derailment_streak
+                        >= MAX_PROTOCOL_DERAILMENT_STREAK
+                        else "nudge_and_retry"
+                    ),
+                )
+            elif unresolved_criteria:
+                protocol_derailment_streak = 0
+                remaining_labels = ", ".join(
+                    f"[{idx}] {self.waypoint.acceptance_criteria[idx]}"
+                    for idx in unresolved_criteria
+                )
+                next_reason_code = "incomplete_criteria"
+                next_reason_detail = (
+                    f"{len(unresolved_criteria)} criteria unresolved: "
+                    f"{remaining_labels}"
+                )
+            else:
+                protocol_derailment_streak = 0
+                next_reason_code = "validation_failure"
+                next_reason_detail = (
+                    "Criteria appear complete, but completion protocol was "
+                    "not satisfied."
+                )
+
+            if protocol_derailment_streak >= MAX_PROTOCOL_DERAILMENT_STREAK:
+                summary = (
+                    "Execution repeatedly violated waypoint protocol. "
+                    f"Issues: {next_reason_detail}"
+                )
+                self._log_writer.log_error(iteration, summary)
+                self._log_writer.log_completion(
+                    ExecutionResult.INTERVENTION_NEEDED.value
+                )
+                intervention = Intervention(
+                    type=InterventionType.EXECUTION_ERROR,
+                    waypoint=self.waypoint,
+                    iteration=iteration,
+                    max_iterations=self.max_iterations,
+                    error_summary=summary,
+                    context={
+                        "full_output": full_output[-2000:],
+                        "reason_code": next_reason_code,
+                    },
+                )
+                self._log_writer.log_intervention_needed(
+                    iteration, intervention.type.value, summary
+                )
+                self._log_workspace_provenance(
+                    project_path,
+                    workspace_before,
+                    iteration,
+                    ExecutionResult.INTERVENTION_NEEDED.value,
+                )
+                raise InterventionNeededError(intervention)
 
             # Record step
             self.steps.append(
@@ -685,6 +810,73 @@ class WaypointExecutor:
             ExecutionResult.INTERVENTION_NEEDED.value,
         )
         raise InterventionNeededError(intervention)
+
+    def _build_iteration_kickoff_prompt(
+        self,
+        reason_code: str,
+        reason_detail: str,
+        completion_marker: str,
+        captured_criteria: dict[int, CriterionVerification],
+    ) -> str:
+        """Build a focused kickoff prompt for follow-up iterations."""
+        verified_criteria = {
+            idx
+            for idx, criterion in captured_criteria.items()
+            if criterion.status == "verified"
+        }
+        unresolved_lines = [
+            f"- [ ] [{idx}] {text}"
+            for idx, text in enumerate(self.waypoint.acceptance_criteria)
+            if idx not in verified_criteria
+        ]
+        unresolved_block = (
+            "\n".join(unresolved_lines)
+            if unresolved_lines
+            else "- All criteria appear verified; finish protocol and validation."
+        )
+        return (
+            "Iteration kickoff\n"
+            f"Reason: {reason_code}\n"
+            f"Details: {reason_detail}\n\n"
+            f"Current waypoint: {self.waypoint.id} - {self.waypoint.title}\n"
+            f"Objective: {self.waypoint.objective}\n\n"
+            "Unresolved criteria:\n"
+            f"{unresolved_block}\n\n"
+            "Required next action:\n"
+            "- Continue implementation from current filesystem state.\n"
+            "- Run only necessary validations for changed code.\n"
+            "- Report structured execution stages.\n\n"
+            "Completion rule (strict):\n"
+            f"- Emit exactly: {completion_marker}\n"
+            "- Do not use aliases like WAYPOINT_COMPLETE.\n"
+            "- Do not re-audit unrelated waypoints."
+        )
+
+    def _detect_protocol_issues(
+        self,
+        iteration_output: str,
+        completion_marker: str,
+        stage_reports_logged: int,
+        scope_drift_detected: bool,
+    ) -> list[str]:
+        """Detect recoverable protocol issues for iteration-to-iteration nudging."""
+        issues: list[str] = []
+        lower_output = iteration_output.lower()
+        waypoint_alias = f"{self.waypoint.id.lower()} complete"
+        claimed_complete = (
+            "complete" in lower_output
+            and (
+                any(hint in lower_output for hint in COMPLETION_ALIAS_HINTS)
+                or waypoint_alias in lower_output
+            )
+        )
+        if claimed_complete and completion_marker not in iteration_output:
+            issues.append("claimed completion without exact completion marker")
+        if stage_reports_logged == 0:
+            issues.append("missing structured stage report")
+        if scope_drift_detected:
+            issues.append("attempted tool access to blocked project areas")
+        return issues
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the agent."""

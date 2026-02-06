@@ -167,14 +167,27 @@ class ExecutionLogWriter:
         with open(self.file_path, "w", encoding="utf-8") as f:
             f.write(json.dumps(header) + "\n")
 
-    def log_iteration_start(self, iteration: int, prompt: str) -> None:
-        """Log the start of an iteration with the prompt sent."""
-        entry = {
+    def log_iteration_start(
+        self,
+        iteration: int,
+        prompt: str,
+        reason_code: str | None = None,
+        reason_detail: str | None = None,
+        resume_session_id: str | None = None,
+    ) -> None:
+        """Log the start of an iteration with the prompt and kickoff context."""
+        entry: dict[str, Any] = {
             "type": "iteration_start",
             "iteration": iteration,
             "prompt": prompt,
             "timestamp": datetime.now(UTC).isoformat(),
         }
+        if reason_code is not None:
+            entry["reason_code"] = reason_code
+        if reason_detail is not None:
+            entry["reason_detail"] = reason_detail
+        if resume_session_id is not None:
+            entry["resume_session_id"] = resume_session_id
         self._append(entry)
 
     def log_output(
@@ -378,6 +391,22 @@ class ExecutionLogWriter:
             "output": report.output,
             "artifacts": report.artifacts,
             "next_stage": report.next_stage.value if report.next_stage else None,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        self._append(entry)
+
+    def log_protocol_derailment(
+        self,
+        iteration: int,
+        issues: list[str],
+        action: str,
+    ) -> None:
+        """Log protocol derailment detection and selected recovery action."""
+        entry = {
+            "type": "protocol_derailment",
+            "iteration": iteration,
+            "issues": issues,
+            "action": action,
             "timestamp": datetime.now(UTC).isoformat(),
         }
         self._append(entry)
