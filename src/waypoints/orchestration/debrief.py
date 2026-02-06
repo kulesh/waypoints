@@ -12,6 +12,7 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any
 
+from waypoints.fly.execution_log import ExecutionLog as ExecutionLogData
 from waypoints.fly.execution_log import ExecutionLogReader
 from waypoints.git.service import GitService
 from waypoints.llm.metrics import MetricsCollector
@@ -59,6 +60,30 @@ class DebriefService:
     def __init__(self, project: Project, flight_plan: FlightPlan | None) -> None:
         self._project = project
         self._flight_plan = flight_plan
+
+    @staticmethod
+    def _count_contiguous_iterations(log: ExecutionLogData) -> int:
+        """Count contiguous iterations starting from 1 in an execution log.
+
+        Returns the length of the longest prefix of sequential iteration
+        numbers (1, 2, 3, ...) found in the log's iteration_start entries.
+        A gap in the sequence terminates the count.
+        """
+        if not log.entries:
+            return 0
+        iteration_entries = [
+            e for e in log.entries if e.entry_type == "iteration_start"
+        ]
+        if not iteration_entries:
+            return 0
+        iterations = sorted(e.iteration for e in iteration_entries)
+        count = 0
+        for i, it in enumerate(iterations, start=1):
+            if it == i:
+                count = it
+            else:
+                break
+        return count
 
     def generate(self) -> DebriefData:
         """Generate all debrief data."""
@@ -112,19 +137,7 @@ class DebriefService:
                     total_seconds += int(
                         (log.completed_at - log.started_at).total_seconds()
                     )
-                if log.entries:
-                    iteration_entries = [
-                        e for e in log.entries if e.entry_type == "iteration_start"
-                    ]
-                    if iteration_entries:
-                        iterations = sorted(e.iteration for e in iteration_entries)
-                        max_iter = 0
-                        for i, it in enumerate(iterations, start=1):
-                            if it == i:
-                                max_iter = it
-                            else:
-                                break
-                        total_iterations += max_iter
+                total_iterations += self._count_contiguous_iterations(log)
         except Exception:
             pass
 
@@ -255,19 +268,7 @@ class DebriefService:
                     total_seconds += int(
                         (log.completed_at - log.started_at).total_seconds()
                     )
-                if log.entries:
-                    iteration_entries = [
-                        e for e in log.entries if e.entry_type == "iteration_start"
-                    ]
-                    if iteration_entries:
-                        iterations = sorted(e.iteration for e in iteration_entries)
-                        max_iter = 0
-                        for i, it in enumerate(iterations, start=1):
-                            if it == i:
-                                max_iter = it
-                            else:
-                                break
-                        total_iterations += max_iter
+                total_iterations += self._count_contiguous_iterations(log)
         except Exception:
             pass
 

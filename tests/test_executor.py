@@ -649,12 +649,14 @@ async def test_finalize_runs_host_validation_commands(
         captured_at=datetime.now(),
     )
 
-    result = await executor._finalize_and_verify_receipt(
-        tmp_path,
-        {},
-        validation_commands,
-        [],
+    finalizer = executor._make_finalizer()
+    result = await finalizer.finalize(
+        project_path=tmp_path,
+        captured_criteria={},
+        validation_commands=validation_commands,
+        reported_validation_commands=[],
         tool_validation_categories={"tests": tool_evidence},
+        max_iterations=executor.max_iterations,
     )
 
     assert result is True
@@ -701,12 +703,14 @@ async def test_finalize_host_validation_records_soft_evidence(
         captured_at=datetime.now(),
     )
 
-    result = await executor._finalize_and_verify_receipt(
-        tmp_path,
-        {},
-        validation_commands,
-        [],
+    finalizer = executor._make_finalizer()
+    result = await finalizer.finalize(
+        project_path=tmp_path,
+        captured_criteria={},
+        validation_commands=validation_commands,
+        reported_validation_commands=[],
         tool_validation_categories={"linting": tool_evidence},
+        max_iterations=executor.max_iterations,
     )
 
     assert result is True
@@ -751,12 +755,14 @@ async def test_finalize_falls_back_to_model_commands(
         captured_at=datetime.now(),
     )
 
-    result = await executor._finalize_and_verify_receipt(
-        tmp_path,
-        {},
-        [],
-        reported_commands,
+    finalizer = executor._make_finalizer()
+    result = await finalizer.finalize(
+        project_path=tmp_path,
+        captured_criteria={},
+        validation_commands=[],
+        reported_validation_commands=reported_commands,
         tool_validation_evidence={reported_commands[0]: tool_evidence},
+        max_iterations=executor.max_iterations,
     )
 
     assert result is True
@@ -797,13 +803,15 @@ async def test_finalize_soft_validation_uses_tool_evidence(
         )
     }
 
-    result = await executor._finalize_and_verify_receipt(
-        tmp_path,
-        {},
-        validation_commands,
-        [],
+    finalizer = executor._make_finalizer()
+    result = await finalizer.finalize(
+        project_path=tmp_path,
+        captured_criteria={},
+        validation_commands=validation_commands,
+        reported_validation_commands=[],
         tool_validation_evidence=tool_evidence,
         host_validations_enabled=False,
+        max_iterations=executor.max_iterations,
     )
 
     assert result is True
@@ -844,8 +852,13 @@ async def test_finalize_requires_soft_evidence(
         ValidationCommand(name="tests", command=command, category="test")
     ]
 
-    result = await executor._finalize_and_verify_receipt(
-        tmp_path, {}, validation_commands, []
+    finalizer = executor._make_finalizer()
+    result = await finalizer.finalize(
+        project_path=tmp_path,
+        captured_criteria={},
+        validation_commands=validation_commands,
+        reported_validation_commands=[],
+        max_iterations=executor.max_iterations,
     )
 
     assert result is False

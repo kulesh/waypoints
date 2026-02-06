@@ -438,14 +438,16 @@ class WaypointExecutor:
                     )
                     self._log_writer.log_iteration_end(iteration, iteration_cost)
 
-                    receipt_valid = await self._finalize_and_verify_receipt(
-                        project_path,
-                        captured_criteria,
-                        self._validation_commands,
-                        reported_validation_commands,
+                    finalizer = self._make_finalizer()
+                    receipt_valid = await finalizer.finalize(
+                        project_path=project_path,
+                        captured_criteria=captured_criteria,
+                        validation_commands=self._validation_commands,
+                        reported_validation_commands=reported_validation_commands,
                         tool_validation_evidence=tool_validation_evidence,
                         tool_validation_categories=tool_validation_categories,
                         host_validations_enabled=self.host_validations_enabled,
+                        max_iterations=self.max_iterations,
                     )
 
                     if receipt_valid:
@@ -711,32 +713,6 @@ When complete, output the completion marker specified in the instructions."""
             log_writer=self._log_writer,
             metrics_collector=self.metrics_collector,
             progress_callback=self._report_progress,
-        )
-
-    async def _finalize_and_verify_receipt(
-        self,
-        project_path: Path,
-        captured_criteria: dict[int, CriterionVerification],
-        validation_commands: list[ValidationCommand],
-        reported_validation_commands: list[str],
-        tool_validation_evidence: dict[str, CapturedEvidence] | None = None,
-        tool_validation_categories: dict[str, CapturedEvidence] | None = None,
-        host_validations_enabled: bool = True,
-    ) -> bool:
-        """Build receipt from host-captured evidence and verify with LLM.
-
-        Delegates to ReceiptFinalizer for the actual finalization pipeline.
-        """
-        finalizer = self._make_finalizer()
-        return await finalizer.finalize(
-            project_path=project_path,
-            captured_criteria=captured_criteria,
-            validation_commands=validation_commands,
-            reported_validation_commands=reported_validation_commands,
-            tool_validation_evidence=tool_validation_evidence,
-            tool_validation_categories=tool_validation_categories,
-            host_validations_enabled=host_validations_enabled,
-            max_iterations=self.max_iterations,
         )
 
     def _validate_no_external_changes(self, project_path: Path) -> list[str]:
