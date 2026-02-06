@@ -16,6 +16,9 @@ def build_execution_prompt(
     checklist: "Checklist",
     directory_policy_context: str | None = None,
     waypoint_memory_context: str | None = None,
+    full_spec_pointer: str = "docs/product-spec.md",
+    spec_context_stale: bool = False,
+    current_spec_hash: str | None = None,
 ) -> str:
     """Build the execution prompt for a waypoint.
 
@@ -26,6 +29,9 @@ def build_execution_prompt(
         checklist: Pre-completion checklist to verify
         directory_policy_context: Optional compact memory index guidance
         waypoint_memory_context: Optional cross-waypoint memory context
+        full_spec_pointer: Relative path to the full product spec on disk
+        spec_context_stale: Whether waypoint context hash mismatches current spec
+        current_spec_hash: Hash of currently loaded product spec content
 
     Returns:
         Formatted execution prompt string
@@ -52,6 +58,26 @@ def build_execution_prompt(
         waypoint_memory_section = (
             f"\n## Prior Waypoint Memory\n{waypoint_memory_context}\n"
         )
+    spec_summary = waypoint.spec_context_summary.strip()
+    if not spec_summary:
+        spec_summary = (
+            "No chart-time waypoint spec summary is available for this waypoint."
+        )
+    section_refs = (
+        "\n".join(f"- {ref}" for ref in waypoint.spec_section_refs)
+        if waypoint.spec_section_refs
+        else "- No section references recorded."
+    )
+    stale_context_note = ""
+    if spec_context_stale:
+        stale_context_note = (
+            "\n## Spec Context Status\n"
+            "The waypoint's chart-time spec context appears stale because the product "
+            "spec changed after charting.\n"
+            f"- waypoint spec hash: {waypoint.spec_context_hash or 'unknown'}\n"
+            f"- current spec hash: {current_spec_hash or 'unknown'}\n"
+            "Read the full spec before coding and treat the summary as hints only.\n"
+        )
 
     return f"""## Current Waypoint: {waypoint.id}
 {waypoint.title}
@@ -63,9 +89,17 @@ def build_execution_prompt(
 {criteria_list}
 {resolution_notes}
 
-## Product Spec Summary
-## TODO: We should use proper summary of the spec not prefix!
-{spec[:2000]}{"..." if len(spec) > 2000 else ""}
+## Waypoint Spec Context (Chart-Time)
+{spec_summary}
+
+### Relevant Product Spec Sections
+{section_refs}
+
+### Full Product Spec
+- Canonical file: `{full_spec_pointer}`
+- If any requirement is ambiguous, read the full spec and reconcile before
+  implementing.
+{stale_context_note}
 
 ## Working Directory
 {project_path}

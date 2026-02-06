@@ -1,5 +1,6 @@
 """Unit tests for WaypointExecutor."""
 
+import json
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,7 @@ from waypoints.llm.prompts import build_execution_prompt
 from waypoints.llm.providers.base import StreamChunk, StreamComplete
 from waypoints.memory import WaypointMemoryRecord, save_waypoint_memory
 from waypoints.models.waypoint import Waypoint
+from waypoints.spec import compute_spec_hash
 
 
 class TestCriterionPattern:
@@ -225,6 +227,12 @@ class TestBuildPrompt:
             title="Implement feature X",
             objective="Build feature X with full test coverage",
             acceptance_criteria=["Code works", "Tests pass", "Documentation updated"],
+            spec_context_summary=(
+                "Implement feature X according to the requirements and "
+                "validate with focused tests."
+            ),
+            spec_section_refs=["3.1 Feature X", "6.2 Validation"],
+            spec_context_hash="abc123def456abc123de",
         )
 
     @pytest.fixture
@@ -270,29 +278,49 @@ class TestBuildPrompt:
         assert "[1] Tests pass" in prompt
         assert "[2] Documentation updated" in prompt
 
-    def test_includes_spec(
+    def test_includes_waypoint_spec_context(
         self,
         waypoint: Waypoint,
         checklist: Checklist,
     ) -> None:
-        """Prompt includes product spec."""
-        spec = "This is the product specification."
-        prompt = build_execution_prompt(waypoint, spec, Path("/project"), checklist)
-        assert "This is the product specification" in prompt
+        """Prompt includes chart-time waypoint summary and section refs."""
+        prompt = build_execution_prompt(waypoint, "spec", Path("/project"), checklist)
+        assert "Waypoint Spec Context (Chart-Time)" in prompt
+        assert "Implement feature X according to the requirements" in prompt
+        assert "3.1 Feature X" in prompt
+        assert "6.2 Validation" in prompt
 
-    def test_truncates_long_spec(
+    def test_does_not_inline_full_spec_content(
         self,
         waypoint: Waypoint,
         checklist: Checklist,
     ) -> None:
-        """Long spec is truncated with ellipsis."""
+        """Prompt should rely on summary + pointer instead of spec body."""
         long_spec = "x" * 3000
         prompt = build_execution_prompt(
             waypoint, long_spec, Path("/project"), checklist
         )
-        assert "..." in prompt
-        # Should truncate to 2000 chars + ...
-        assert long_spec[:2000] in prompt
+        assert long_spec[:200] not in prompt
+        assert "Canonical file: `docs/product-spec.md`" in prompt
+
+    def test_includes_stale_spec_context_warning(
+        self,
+        waypoint: Waypoint,
+        checklist: Checklist,
+    ) -> None:
+        """Prompt should surface stale context warning and hash details."""
+        prompt = build_execution_prompt(
+            waypoint,
+            "spec",
+            Path("/project"),
+            checklist,
+            spec_context_stale=True,
+            current_spec_hash="feedfacebeadfeedface",
+        )
+        assert "Spec Context Status" in prompt
+        assert "appears stale" in prompt
+        assert "waypoint spec hash: abc123def456abc123de" in prompt
+        assert "current spec hash: feedfacebeadfeedface" in prompt
 
     def test_includes_project_path(
         self,
@@ -638,6 +666,65 @@ async def test_execute_resumes_session_and_uses_protocol_nudge(
     assert isinstance(calls[1]["prompt"], str)
     assert "Reason: protocol_violation" in calls[1]["prompt"]
     assert "<waypoint-complete>WP-1</waypoint-complete>" in calls[1]["prompt"]
+
+
+@pytest.mark.anyio
+async def test_execute_logs_spec_context_usage_and_staleness(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Iteration start log should capture spec context usage metadata."""
+
+    async def fake_agent_query(**kwargs: object):
+        del kwargs
+        yield StreamChunk(text="<waypoint-complete>WP-1</waypoint-complete>")
+        yield StreamComplete(
+            full_text="<waypoint-complete>WP-1</waypoint-complete>",
+            session_id="session-1",
+        )
+
+    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_make_finalizer",
+        lambda self: _StubFinalizer(),
+    )
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_resolve_validation_commands",
+        lambda self, project_path, checklist: [],
+    )
+
+    project = _TestProject(tmp_path)
+    spec = "# Product Spec\n\n## Current Scope\nNew requirements."
+    waypoint_summary = "Implement current scope behavior with matching tests."
+    waypoint = Waypoint(
+        id="WP-1",
+        title="Context logging",
+        objective="Capture spec context metadata",
+        acceptance_criteria=["Criterion 1"],
+        spec_context_summary=waypoint_summary,
+        spec_section_refs=["Current Scope", "Validation"],
+        spec_context_hash=compute_spec_hash("# Product Spec\n\n## Current Scope\nOld"),
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec=spec)
+
+    result = await executor.execute()
+
+    assert result == ExecutionResult.SUCCESS
+
+    logs = sorted((tmp_path / "sessions" / "fly").glob("*.jsonl"))
+    assert logs
+    entries = [json.loads(line) for line in logs[-1].read_text().splitlines()]
+    iteration_start = next(
+        entry for entry in entries if entry["type"] == "iteration_start"
+    )
+
+    assert iteration_start["spec_context_summary_chars"] == len(waypoint_summary)
+    assert iteration_start["spec_section_ref_count"] == 2
+    assert iteration_start["spec_context_hash"] == waypoint.spec_context_hash
+    assert iteration_start["current_spec_hash"] == compute_spec_hash(spec)
+    assert iteration_start["spec_context_stale"] is True
+    assert iteration_start["full_spec_pointer"] == "docs/product-spec.md"
 
 
 class TestExecutionStep:

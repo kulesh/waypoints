@@ -176,6 +176,12 @@ class ExecutionLogWriter:
         resume_session_id: str | None = None,
         memory_waypoint_ids: list[str] | None = None,
         memory_context_chars: int | None = None,
+        spec_context_summary_chars: int | None = None,
+        spec_section_ref_count: int | None = None,
+        spec_context_hash: str | None = None,
+        current_spec_hash: str | None = None,
+        spec_context_stale: bool | None = None,
+        full_spec_pointer: str | None = None,
     ) -> None:
         """Log the start of an iteration with the prompt and kickoff context."""
         entry: dict[str, Any] = {
@@ -194,6 +200,18 @@ class ExecutionLogWriter:
             entry["memory_waypoint_ids"] = memory_waypoint_ids
         if memory_context_chars is not None:
             entry["memory_context_chars"] = memory_context_chars
+        if spec_context_summary_chars is not None:
+            entry["spec_context_summary_chars"] = spec_context_summary_chars
+        if spec_section_ref_count is not None:
+            entry["spec_section_ref_count"] = spec_section_ref_count
+        if spec_context_hash is not None:
+            entry["spec_context_hash"] = spec_context_hash
+        if current_spec_hash is not None:
+            entry["current_spec_hash"] = current_spec_hash
+        if spec_context_stale is not None:
+            entry["spec_context_stale"] = spec_context_stale
+        if full_spec_pointer is not None:
+            entry["full_spec_pointer"] = full_spec_pointer
         self._append(entry)
 
     def log_output(

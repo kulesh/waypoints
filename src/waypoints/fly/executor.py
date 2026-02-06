@@ -89,6 +89,7 @@ from waypoints.memory import (
 )
 from waypoints.models.project import Project
 from waypoints.models.waypoint import Waypoint
+from waypoints.spec import compute_spec_hash
 
 if TYPE_CHECKING:
     from waypoints.fly.receipt_finalizer import ReceiptFinalizer
@@ -177,6 +178,8 @@ class WaypointExecutor:
         self._directory_policy_context: str | None = None
         self._waypoint_memory_context: str | None = None
         self._waypoint_memory_ids: tuple[str, ...] = ()
+        self._current_spec_hash: str | None = None
+        self._spec_context_stale: bool = False
 
     def cancel(self) -> None:
         """Cancel the execution."""
@@ -239,6 +242,7 @@ class WaypointExecutor:
             project_path, checklist
         )
         self._refresh_project_memory(project_path)
+        self._refresh_spec_context_status()
 
         prompt = build_execution_prompt(
             self.waypoint,
@@ -247,6 +251,9 @@ class WaypointExecutor:
             checklist,
             directory_policy_context=self._directory_policy_context,
             waypoint_memory_context=self._waypoint_memory_context,
+            full_spec_pointer="docs/product-spec.md",
+            spec_context_stale=self._spec_context_stale,
+            current_spec_hash=self._current_spec_hash,
         )
 
         logger.info(
@@ -327,6 +334,26 @@ class WaypointExecutor:
                 ),
                 memory_context_chars=(
                     len(self._waypoint_memory_context or "") if iteration == 1 else None
+                ),
+                spec_context_summary_chars=(
+                    len(self.waypoint.spec_context_summary.strip())
+                    if iteration == 1
+                    else None
+                ),
+                spec_section_ref_count=(
+                    len(self.waypoint.spec_section_refs) if iteration == 1 else None
+                ),
+                spec_context_hash=(
+                    self.waypoint.spec_context_hash if iteration == 1 else None
+                ),
+                current_spec_hash=(
+                    self._current_spec_hash if iteration == 1 else None
+                ),
+                spec_context_stale=(
+                    self._spec_context_stale if iteration == 1 else None
+                ),
+                full_spec_pointer=(
+                    "docs/product-spec.md" if iteration == 1 else None
                 ),
             )
 
@@ -1031,6 +1058,25 @@ When complete, output the completion marker specified in the instructions."""
             )
             self._waypoint_memory_context = None
             self._waypoint_memory_ids = ()
+
+    def _refresh_spec_context_status(self) -> None:
+        """Compute spec context freshness metadata for prompting and logs."""
+        spec_text = self.spec.strip()
+        self._current_spec_hash = compute_spec_hash(spec_text) if spec_text else None
+        waypoint_hash = self.waypoint.spec_context_hash
+        self._spec_context_stale = bool(
+            self._current_spec_hash
+            and waypoint_hash
+            and waypoint_hash != self._current_spec_hash
+        )
+        if self._spec_context_stale:
+            logger.warning(
+                "Waypoint spec context appears stale for %s "
+                "(waypoint=%s current=%s)",
+                self.waypoint.id,
+                waypoint_hash,
+                self._current_spec_hash,
+            )
 
     def _report_progress(
         self,
