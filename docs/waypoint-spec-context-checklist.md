@@ -32,5 +32,5 @@ uses waypoint-scoped context with section references and a full-spec pointer.
 
 ## PR3: Backfill and Ops
 
-- [ ] Add command to regenerate spec context for existing/stale waypoints
-- [ ] Add docs for lifecycle and operational usage
+- [x] Add command to regenerate spec context for existing/stale waypoints
+- [x] Add docs for lifecycle and operational usage
