@@ -165,6 +165,7 @@ docs/
 - [docs/product-spec.md](./docs/product-spec.md) - Product specification
 - [docs/runtime-architecture.md](./docs/runtime-architecture.md) - Runtime module map
 - [docs/journey-state-machine.md](./docs/journey-state-machine.md) - Journey states and transitions
+- [docs/project-memory-index.md](./docs/project-memory-index.md) - Project memory and directory indexing
 - [docs/genspec-format.md](./docs/genspec-format.md) - Genspec format reference
 - [docs/testing-strategy.md](./docs/testing-strategy.md) - Testing approach
 - [docs/architecture-roadmap.md](./docs/architecture-roadmap.md) - Architecture roadmap

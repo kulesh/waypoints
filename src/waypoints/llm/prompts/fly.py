@@ -14,6 +14,7 @@ def build_execution_prompt(
     spec: str,
     project_path: Path,
     checklist: "Checklist",
+    directory_policy_context: str | None = None,
 ) -> str:
     """Build the execution prompt for a waypoint.
 
@@ -22,6 +23,7 @@ def build_execution_prompt(
         spec: Product specification content
         project_path: Path to the project directory
         checklist: Pre-completion checklist to verify
+        directory_policy_context: Optional compact memory index guidance
 
     Returns:
         Formatted execution prompt string
@@ -36,6 +38,13 @@ def build_execution_prompt(
     if waypoint.resolution_notes:
         notes_list = "\n".join(f"- {note}" for note in waypoint.resolution_notes)
         resolution_notes = f"\n## Resolution Notes (must honor)\n{notes_list}\n"
+    policy_section = ""
+    if directory_policy_context:
+        policy_section = (
+            "\n## Project Memory (Directory Index)\n"
+            "Use this index to prioritize where you search and what to ignore:\n"
+            f"{directory_policy_context}\n"
+        )
 
     return f"""## Current Waypoint: {waypoint.id}
 {waypoint.title}
@@ -53,6 +62,7 @@ def build_execution_prompt(
 
 ## Working Directory
 {project_path}
+{policy_section}
 
 ## Instructions
 You are implementing a software waypoint. Your task is to:

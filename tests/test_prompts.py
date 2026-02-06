@@ -79,3 +79,24 @@ def test_execution_prompt_includes_resolution_notes() -> None:
 
     assert "Resolution Notes" in prompt
     assert "Live preview does not refresh" in prompt
+
+
+def test_execution_prompt_includes_directory_policy_context() -> None:
+    """Prompt should include project memory directory policy when provided."""
+    waypoint = Waypoint(
+        id="WP-002",
+        title="Policy Context",
+        objective="Use memory index context",
+        acceptance_criteria=["context appears in prompt"],
+    )
+
+    prompt = build_execution_prompt(
+        waypoint,
+        "Spec content",
+        Path("project"),
+        Checklist(items=["Run tests"]),
+        directory_policy_context="- Focus your search in: src, tests",
+    )
+
+    assert "Project Memory (Directory Index)" in prompt
+    assert "Focus your search in: src, tests" in prompt

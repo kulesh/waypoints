@@ -78,6 +78,11 @@ from waypoints.llm.providers.base import (
     RATE_LIMIT_PATTERNS,
     UNAVAILABLE_PATTERNS,
 )
+from waypoints.memory import (
+    ProjectMemoryIndex,
+    format_directory_policy_for_prompt,
+    load_or_build_project_memory,
+)
 from waypoints.models.project import Project
 from waypoints.models.waypoint import Waypoint
 
@@ -164,6 +169,8 @@ class WaypointExecutor:
         self._log_writer: ExecutionLogWriter | None = None
         self._validation_commands: list[ValidationCommand] = []
         self._file_operations: list[FileOperation] = []
+        self._project_memory_index: ProjectMemoryIndex | None = None
+        self._directory_policy_context: str | None = None
 
     def cancel(self) -> None:
         """Cancel the execution."""
@@ -225,9 +232,14 @@ class WaypointExecutor:
         self._validation_commands = self._resolve_validation_commands(
             project_path, checklist
         )
+        self._refresh_project_memory(project_path)
 
         prompt = build_execution_prompt(
-            self.waypoint, self.spec, project_path, checklist
+            self.waypoint,
+            self.spec,
+            project_path,
+            checklist,
+            directory_policy_context=self._directory_policy_context,
         )
 
         logger.info(
@@ -690,8 +702,7 @@ class WaypointExecutor:
                     issues=protocol_issues,
                     action=(
                         "escalate_intervention"
-                        if protocol_derailment_streak
-                        >= MAX_PROTOCOL_DERAILMENT_STREAK
+                        if protocol_derailment_streak >= MAX_PROTOCOL_DERAILMENT_STREAK
                         else "nudge_and_retry"
                     ),
                 )
@@ -863,12 +874,9 @@ class WaypointExecutor:
         issues: list[str] = []
         lower_output = iteration_output.lower()
         waypoint_alias = f"{self.waypoint.id.lower()} complete"
-        claimed_complete = (
-            "complete" in lower_output
-            and (
-                any(hint in lower_output for hint in COMPLETION_ALIAS_HINTS)
-                or waypoint_alias in lower_output
-            )
+        claimed_complete = "complete" in lower_output and (
+            any(hint in lower_output for hint in COMPLETION_ALIAS_HINTS)
+            or waypoint_alias in lower_output
         )
         if claimed_complete and completion_marker not in iteration_output:
             issues.append("claimed completion without exact completion marker")
@@ -881,6 +889,12 @@ class WaypointExecutor:
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the agent."""
         project_path = self.project.get_path()
+        policy_context = ""
+        if self._directory_policy_context:
+            policy_context = (
+                "\nProject memory policy (generated from repository scan):\n"
+                f"{self._directory_policy_context}\n"
+            )
         return f"""You are implementing a software waypoint as part of a larger project.
 You have access to file and bash tools to read, write, and execute code.
 
@@ -889,6 +903,7 @@ You have access to file and bash tools to read, write, and execute code.
 - ONLY access files within this directory
 - NEVER use absolute paths outside the project
 - NEVER use ../ to escape the project directory
+{policy_context}
 
 Work methodically:
 1. First understand the existing codebase
@@ -897,6 +912,21 @@ Work methodically:
 4. Iterate until done
 
 When complete, output the completion marker specified in the instructions."""
+
+    def _refresh_project_memory(self, project_path: Path) -> None:
+        """Load and cache project memory policy for this execution."""
+        try:
+            memory = load_or_build_project_memory(project_path)
+            self._project_memory_index = memory.index
+            self._directory_policy_context = format_directory_policy_for_prompt(
+                memory.index
+            )
+        except Exception:
+            logger.exception(
+                "Failed to build project memory index for %s", self.waypoint.id
+            )
+            self._project_memory_index = None
+            self._directory_policy_context = None
 
     def _report_progress(
         self,

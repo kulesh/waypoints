@@ -11,6 +11,7 @@ This folder contains the product, architecture, and testing references for Waypo
 
 - [runtime-architecture.md](./runtime-architecture.md) - Runtime flow and module map
 - [journey-state-machine.md](./journey-state-machine.md) - Journey states and transitions
+- [project-memory-index.md](./project-memory-index.md) - Persistent project memory and directory policy
 - [architecture-roadmap.md](./architecture-roadmap.md) - Long-term architecture plan
 - [unix-architecture-plan.md](./unix-architecture-plan.md) - UNIX-style architecture notes
 
