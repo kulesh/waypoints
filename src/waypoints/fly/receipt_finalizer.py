@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -39,6 +40,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class FinalizeFailure:
+    """Diagnostic payload describing why receipt finalization failed."""
+
+    reason: str
+    details: tuple[str, ...] = ()
+
+
 class ReceiptFinalizer:
     """Builds and verifies execution receipts from captured evidence.
 
@@ -61,10 +70,34 @@ class ReceiptFinalizer:
         self._log_writer = log_writer
         self._metrics_collector = metrics_collector
         self._report_progress = progress_callback
+        self._last_failure: FinalizeFailure | None = None
 
     def _progress(self, iteration: int, total: int, step: str, output: str) -> None:
         if self._report_progress:
             self._report_progress(iteration, total, step, output)
+
+    def _set_failure(
+        self,
+        reason: str,
+        details: list[str] | tuple[str, ...] | None = None,
+    ) -> None:
+        """Store finalization failure diagnostics for executor retry prompts."""
+        self._last_failure = FinalizeFailure(
+            reason=reason,
+            details=tuple(details or ()),
+        )
+
+    def last_failure_summary(self, max_chars: int = 1000) -> str:
+        """Return compact failure details suitable for retry prompt injection."""
+        if self._last_failure is None:
+            return "Receipt validation failed."
+        pieces: list[str] = [self._last_failure.reason.strip()]
+        if self._last_failure.details:
+            pieces.extend(self._last_failure.details[:3])
+        summary = "; ".join(piece for piece in pieces if piece).strip()
+        if len(summary) > max_chars:
+            return summary[: max_chars - 3].rstrip() + "..."
+        return summary
 
     # ─── Validation Commands ──────────────────────────────────────────
 
@@ -255,6 +288,7 @@ class ReceiptFinalizer:
         Returns:
             True if receipt is valid, False otherwise.
         """
+        self._last_failure = None
         self._log_writer.log_finalize_start()
 
         self._progress(
@@ -299,6 +333,7 @@ class ReceiptFinalizer:
             self._log_writer.log_receipt_validated(
                 "", False, "No validation commands provided"
             )
+            self._set_failure("No validation commands provided.")
             return False
 
         host_evidence = self.run_validation_commands(project_path, commands_to_run)
@@ -320,6 +355,7 @@ class ReceiptFinalizer:
             logger.warning("No validation evidence captured")
             self._log_writer.log_finalize_end()
             self._log_writer.log_receipt_validated("", False, "No evidence captured")
+            self._set_failure("No validation evidence captured.")
             return False
 
         receipt_path = self._save_receipt(receipt_builder, soft_evidence or None)
@@ -331,17 +367,30 @@ class ReceiptFinalizer:
         if not receipt.is_valid():
             failed = receipt.failed_items()
             failed_names = ", ".join(item.item for item in failed)
+            details: list[str] = []
+            for item in failed[:3]:
+                command = item.command or item.item
+                exit_code = (
+                    str(item.exit_code) if item.exit_code is not None else "unknown"
+                )
+                output = (item.stderr or item.stdout or "").strip()
+                output = re.sub(r"\s+", " ", output)
+                if len(output) > 220:
+                    output = output[:217].rstrip() + "..."
+                details.append(f"{command} exited {exit_code}: {output}")
             logger.warning("Validation commands failed: %s", failed_names)
             self._log_writer.log_finalize_end()
             self._log_writer.log_receipt_validated(
                 str(receipt_path), False, f"Failed: {failed_names}"
             )
+            self._set_failure("Host validation failed.", details)
             return False
         if soft_missing:
             self._log_writer.log_finalize_end()
             self._log_writer.log_receipt_validated(
                 str(receipt_path), False, "Soft validation evidence missing"
             )
+            self._set_failure("Soft validation evidence missing.")
             return False
 
         # LLM verification
@@ -440,6 +489,7 @@ class ReceiptFinalizer:
             self._log_writer.log_receipt_validated(
                 str(receipt_path), True, "LLM verification skipped"
             )
+            self._last_failure = None
             return True  # Trust the evidence if LLM verification fails
 
         # Log verification output
@@ -465,9 +515,14 @@ class ReceiptFinalizer:
 
             if is_valid:
                 logger.info("Receipt verified: %s", reasoning)
+                self._last_failure = None
                 return True
             else:
                 logger.warning("Receipt rejected: %s", reasoning)
+                self._set_failure(
+                    "LLM receipt verification rejected host evidence.",
+                    [reasoning] if reasoning else None,
+                )
                 return False
         else:
             logger.warning("No verdict marker in LLM response, using format validation")
@@ -475,6 +530,7 @@ class ReceiptFinalizer:
             self._log_writer.log_receipt_validated(
                 str(receipt_path), True, "LLM verdict not found, using format check"
             )
+            self._last_failure = None
             return True
 
     def _save_receipt(
