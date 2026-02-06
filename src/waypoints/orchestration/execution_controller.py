@@ -37,6 +37,7 @@ class ExecutionDirective:
     waypoint: Waypoint | None = None
     message: str | None = None
     completed: Waypoint | None = None
+    reload_flight_plan: bool = False
 
 
 class ExecutionController:
@@ -241,6 +242,28 @@ class ExecutionController:
             message="Waypoint execution failed",
         )
 
+    def request_land(self) -> ExecutionDirective:
+        """Request transition to LAND, returning a directive."""
+        journey = self.coordinator.project.journey
+        if journey and journey.state == JourneyState.LAND_REVIEW:
+            return ExecutionDirective(action="land")
+
+        status = self.coordinator.get_completion_status()
+        if status.all_complete:
+            self.coordinator.transition(JourneyState.LAND_REVIEW)
+            return ExecutionDirective(action="land")
+
+        if self.execution_state == ExecutionState.DONE:
+            return ExecutionDirective(
+                action="pause",
+                message="Cannot land yet - some waypoints are blocked or failed",
+            )
+
+        return ExecutionDirective(
+            action="pause",
+            message="Cannot land yet - waypoints still in progress",
+        )
+
     def prepare_intervention(self, intervention: Intervention) -> ExecutionDirective:
         """Record an intervention and transition state."""
         self._current_intervention = intervention
@@ -301,11 +324,21 @@ class ExecutionController:
             )
 
         if result.action == InterventionAction.ROLLBACK:
+            outcome = self.coordinator.rollback_to_tag(result.rollback_tag)
             self.coordinator.transition(JourneyState.FLY_PAUSED)
-            self.coordinator.transition(JourneyState.FLY_READY)
-            self.execution_state = ExecutionState.IDLE
             self._current_intervention = None
-            return ExecutionDirective(action="noop", message="Rollback requested")
+
+            if outcome.status == "success":
+                self.coordinator.transition(JourneyState.FLY_READY)
+                self.execution_state = ExecutionState.IDLE
+                return ExecutionDirective(
+                    action="pause",
+                    message=outcome.message,
+                    reload_flight_plan=True,
+                )
+
+            self.execution_state = ExecutionState.PAUSED
+            return ExecutionDirective(action="pause", message=outcome.message)
 
         if result.action == InterventionAction.ABORT:
             self.coordinator.transition(JourneyState.FLY_PAUSED)

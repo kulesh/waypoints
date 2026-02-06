@@ -39,7 +39,6 @@ from waypoints.fly.intervention import (
     InterventionResult,
 )
 from waypoints.fly.state import ExecutionState
-from waypoints.git import GitService, ReceiptValidator
 from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
@@ -415,11 +414,16 @@ class WaypointDetailPanel(Vertical):
     """
 
     def __init__(
-        self, project: Project, flight_plan: FlightPlan, **kwargs: Any
+        self,
+        project: Project,
+        flight_plan: FlightPlan,
+        coordinator: JourneyCoordinator,
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._project = project
         self._flight_plan = flight_plan
+        self._coordinator = coordinator
         self._waypoint: Waypoint | None = None
         self._waypoint_cost: float | None = None
         self._waypoint_tokens: tuple[int, int] | None = None
@@ -554,6 +558,10 @@ class WaypointDetailPanel(Vertical):
         if cost is not None and cost > 0:
             metrics_parts.append(f"Cost: ${cost:.2f}")
         return " · ".join(metrics_parts)
+
+    def update_flight_plan(self, flight_plan: FlightPlan) -> None:
+        """Update the flight plan reference for detail rendering."""
+        self._flight_plan = flight_plan
 
     def _update_output_for_waypoint(
         self, waypoint: Waypoint, active_waypoint_id: str | None
@@ -862,6 +870,9 @@ class WaypointDetailPanel(Vertical):
         )
         total_criteria = len(waypoint.acceptance_criteria)
         completed_count = len(completed_criteria)
+        summary = self._coordinator.build_verification_summary(
+            waypoint, completed_criteria
+        )
 
         if total_criteria > 0:
             for i, criterion in enumerate(waypoint.acceptance_criteria):
@@ -878,11 +889,8 @@ class WaypointDetailPanel(Vertical):
                 )
 
         # Check receipt status
-        validator = ReceiptValidator()
-        receipt_path = validator.find_latest_receipt(self._project, waypoint.id)
-
-        if receipt_path:
-            result = validator.validate(receipt_path)
+        if summary.receipt_path and summary.receipt_validation:
+            result = summary.receipt_validation
             if result.valid:
                 log.write_log("[green]✓ Receipt validated[/]")
             else:
@@ -893,7 +901,7 @@ class WaypointDetailPanel(Vertical):
             if result.receipt:
                 detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
                 detail_panel._log_soft_validation_evidence(
-                    log, result.receipt, receipt_path
+                    log, result.receipt, summary.receipt_path
                 )
         else:
             log.write_log("[yellow]⚠ No receipt found[/]")
@@ -1276,6 +1284,7 @@ class FlyScreen(Screen[None]):
             right=WaypointDetailPanel(
                 project=self.project,
                 flight_plan=self.flight_plan,
+                coordinator=self.coordinator,
                 id="waypoint-detail",
             ),
             left_pct=33,
@@ -2016,18 +2025,24 @@ class FlyScreen(Screen[None]):
                 "Edit waypoint in flight plan, then press 'r' to retry",
                 severity="information",
             )
-        elif result.action == InterventionAction.ROLLBACK:
-            log.write_log("Rolling back to last safe tag")
-            self._rollback_to_safe_tag(result.rollback_tag)
         elif result.action == InterventionAction.ABORT:
             log.write_log("Execution aborted")
             self.notify("Execution aborted")
 
         directive = self.execution_controller.resolve_intervention(result)
         if directive.message:
+            if result.action == InterventionAction.ROLLBACK:
+                log.write_log(directive.message)
             self.notify(directive.message)
         self.execution_state = self.execution_controller.execution_state
         self.query_one(StatusHeader).set_normal()
+
+        if directive.reload_flight_plan:
+            if self.coordinator.flight_plan:
+                self.flight_plan = self.coordinator.flight_plan
+                detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
+                detail_panel.update_flight_plan(self.flight_plan)
+            self._sync_current_waypoint_details()
 
         self._refresh_waypoint_list()
 
@@ -2037,42 +2052,6 @@ class FlyScreen(Screen[None]):
         elif directive.action == "land":
             self.notify("All waypoints complete!")
             self._switch_to_land_screen()
-
-    def _rollback_to_safe_tag(self, tag: str | None) -> None:
-        """Rollback git to the specified tag or find the last safe one."""
-        git = GitService(self.project.get_path())
-
-        if not git.is_git_repo():
-            self.notify("Not a git repository - cannot rollback", severity="error")
-            return
-
-        if tag:
-            # Use specified tag
-            target_tag = tag
-        else:
-            # Find last safe tag (project/WP-* pattern)
-            # This is a simplified version - a full implementation would list tags
-            self.notify(
-                "No rollback tag specified - please use git manually",
-                severity="warning",
-            )
-            return
-
-        # Perform the rollback
-        result = git.reset_hard(target_tag)
-        if result.success:
-            self.notify(f"Rolled back to {target_tag}")
-            # Reload flight plan from disk after reset
-            flight_plan_path = self.project.get_path() / "flight-plan.jsonl"
-            if flight_plan_path.exists():
-                from waypoints.models.flight_plan import FlightPlanReader
-
-                loaded = FlightPlanReader.load(self.project)
-                if loaded:
-                    self.flight_plan = loaded
-                    self._refresh_waypoint_list()
-        else:
-            self.notify(f"Rollback failed: {result.message}", severity="error")
 
     def _refresh_waypoint_list(
         self, execution_state: ExecutionState | None = None
@@ -2099,6 +2078,9 @@ class FlyScreen(Screen[None]):
         log.log_heading("Verification Summary")
 
         # Report live acceptance criteria status
+        summary = self.coordinator.build_verification_summary(
+            waypoint, self._live_criteria_completed
+        )
         total_criteria = len(waypoint.acceptance_criteria)
         live_completed = len(self._live_criteria_completed)
 
@@ -2117,11 +2099,8 @@ class FlyScreen(Screen[None]):
                 )
 
         # Check receipt status
-        validator = ReceiptValidator()
-        receipt_path = validator.find_latest_receipt(self.project, waypoint.id)
-
-        if receipt_path:
-            result = validator.validate(receipt_path)
+        if summary.receipt_path and summary.receipt_validation:
+            result = summary.receipt_validation
             if result.valid:
                 log.write_log("[green]✓ Receipt validated[/]")
             else:
@@ -2132,7 +2111,7 @@ class FlyScreen(Screen[None]):
             if result.receipt:
                 detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
                 detail_panel._log_soft_validation_evidence(
-                    log, result.receipt, receipt_path
+                    log, result.receipt, summary.receipt_path
                 )
         else:
             log.write_log("[yellow]⚠ No receipt found[/]")
@@ -2151,22 +2130,12 @@ class FlyScreen(Screen[None]):
 
     def action_forward(self) -> None:
         """Go forward to Land screen if available."""
-        # Check if Land is available (all waypoints complete or already in LAND_REVIEW)
-        journey = self.project.journey
-        if journey and journey.state == JourneyState.LAND_REVIEW:
+        directive = self.execution_controller.request_land()
+        if directive.action == "land":
             self._switch_to_land_screen()
             return
-
-        # Check if all waypoints are complete
-        all_complete, pending, failed, blocked = self._get_completion_status()
-        if all_complete:
-            self.coordinator.transition(JourneyState.LAND_REVIEW)
-            self._switch_to_land_screen()
-        elif self.execution_state == ExecutionState.DONE:
-            # DONE but not all_complete - blocked waypoints
-            self.notify("Cannot land yet - some waypoints are blocked or failed")
-        else:
-            self.notify("Cannot land yet - waypoints still in progress")
+        if directive.message:
+            self.notify(directive.message)
 
     def action_shrink_left(self) -> None:
         """Shrink the left pane."""

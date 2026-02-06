@@ -6,10 +6,13 @@ to communicate with UI layers and external callers.
 
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from waypoints.fly.intervention import Intervention
+    from waypoints.git.receipt import ReceiptValidationResult
+    from waypoints.models.flight_plan import FlightPlan
     from waypoints.models.waypoint import Waypoint
 
 
@@ -56,6 +59,25 @@ class CommitOutcome:
     message: str | None = None
     reason: str | None = None
     notices: tuple[CommitNotice, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class VerificationSummary:
+    """Summary of acceptance criteria and receipt validation for a waypoint."""
+
+    total_criteria: int
+    completed_criteria: frozenset[int]
+    receipt_path: Path | None = None
+    receipt_validation: "ReceiptValidationResult | None" = None
+
+
+@dataclass(frozen=True, slots=True)
+class RollbackOutcome:
+    """Outcome of a rollback attempt."""
+
+    status: Literal["success", "failure"]
+    message: str
+    flight_plan: "FlightPlan | None" = None
 
 
 @dataclass

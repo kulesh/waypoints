@@ -25,7 +25,9 @@ from waypoints.orchestration.types import (
     NextAction,
     ProgressCallback,
     ProgressUpdate,
+    RollbackOutcome,
     TextStream,
+    VerificationSummary,
 )
 
 __all__ = [
@@ -38,6 +40,8 @@ __all__ = [
     "CompletionStatus",
     "ProgressCallback",
     "ProgressUpdate",
+    "RollbackOutcome",
     "ChunkCallback",
     "TextStream",
+    "VerificationSummary",
 ]

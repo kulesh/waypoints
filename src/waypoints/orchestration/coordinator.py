@@ -64,6 +64,8 @@ from waypoints.orchestration.types import (
     NextAction,
     ProgressCallback,
     ProgressUpdate,
+    RollbackOutcome,
+    VerificationSummary,
 )
 
 if TYPE_CHECKING:
@@ -422,6 +424,35 @@ class JourneyCoordinator:
 
     # ─── FLY Phase: Intervention Handling ────────────────────────────────
 
+    def rollback_to_tag(self, tag: str | None) -> RollbackOutcome:
+        """Rollback git state to a tag and reload the flight plan."""
+        if not tag:
+            return RollbackOutcome(status="failure", message="Rollback tag required")
+
+        from waypoints.git import GitService
+
+        git = self.git or GitService(self.project.get_path())
+        if not git.is_git_repo():
+            return RollbackOutcome(
+                status="failure",
+                message="Not a git repository - cannot rollback",
+            )
+
+        result = git.reset_hard(tag)
+        if not result.success:
+            return RollbackOutcome(
+                status="failure",
+                message=f"Rollback failed: {result.message}",
+            )
+
+        self._flight_plan = self._load_flight_plan()
+        self._current_waypoint = None
+        return RollbackOutcome(
+            status="success",
+            message=f"Rolled back to {tag}",
+            flight_plan=self._flight_plan,
+        )
+
     def handle_intervention(
         self,
         intervention: Intervention,
@@ -466,22 +497,10 @@ class JourneyCoordinator:
             if not rollback_tag:
                 return NextAction(action="pause", message="Rollback tag required")
 
-            if self.git:
-                result = self.git.reset_hard(rollback_tag)
-                if not result.success:
-                    return NextAction(
-                        action="pause",
-                        message=f"Rollback failed: {result.message}",
-                    )
-            else:
-                return NextAction(
-                    action="pause",
-                    message="Rollback requested but git is not configured",
-                )
-
-            waypoint.status = WaypointStatus.PENDING
-            self.save_flight_plan()
-            return NextAction(action="pause", message=f"Rolled back to {rollback_tag}")
+            outcome = self.rollback_to_tag(rollback_tag)
+            if outcome.status == "failure":
+                return NextAction(action="pause", message=outcome.message)
+            return NextAction(action="pause", message=outcome.message)
 
         elif action == InterventionAction.ABORT:
             # Mark failed and stop
@@ -543,6 +562,25 @@ class JourneyCoordinator:
         )
 
     # ─── FLY Phase: Git Integration ──────────────────────────────────────
+
+    def build_verification_summary(
+        self, waypoint: Waypoint, completed_criteria: set[int]
+    ) -> VerificationSummary:
+        """Build verification summary for a waypoint."""
+        from waypoints.git.receipt import ReceiptValidator
+
+        validator = ReceiptValidator()
+        receipt_path = validator.find_latest_receipt(self.project, waypoint.id)
+        receipt_validation = None
+        if receipt_path:
+            receipt_validation = validator.validate(receipt_path)
+
+        return VerificationSummary(
+            total_criteria=len(waypoint.acceptance_criteria),
+            completed_criteria=frozenset(completed_criteria),
+            receipt_path=receipt_path,
+            receipt_validation=receipt_validation,
+        )
 
     def commit_waypoint(self, waypoint: Waypoint) -> CommitOutcome:
         """Commit waypoint completion if receipt is valid.
