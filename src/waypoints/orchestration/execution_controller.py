@@ -14,7 +14,11 @@ from waypoints.fly.executor import (
     ExecutionResult,
     WaypointExecutor,
 )
-from waypoints.fly.intervention import Intervention, InterventionAction, InterventionResult
+from waypoints.fly.intervention import (
+    Intervention,
+    InterventionAction,
+    InterventionResult,
+)
 from waypoints.fly.state import ExecutionState
 from waypoints.models import JourneyState, Waypoint, WaypointStatus
 from waypoints.orchestration.coordinator import JourneyCoordinator
@@ -61,7 +65,9 @@ class ExecutionController:
         self.coordinator.reset_stale_in_progress()
         self.select_next_waypoint(include_in_progress=True)
 
-    def select_next_waypoint(self, include_in_progress: bool = False) -> Waypoint | None:
+    def select_next_waypoint(
+        self, include_in_progress: bool = False
+    ) -> Waypoint | None:
         """Select the next eligible waypoint and update execution state."""
         wp = self.coordinator.select_next_waypoint(include_failed=include_in_progress)
         if wp:
@@ -111,7 +117,9 @@ class ExecutionController:
                         action="noop",
                         message="Select a failed waypoint and press 'r' to retry",
                     )
-                return ExecutionDirective(action="noop", message="No waypoints to resume")
+                return ExecutionDirective(
+                    action="noop", message="No waypoints to resume"
+                )
             self._transition_to_executing()
             self.execution_state = ExecutionState.RUNNING
             return ExecutionDirective(action="execute", waypoint=self.current_waypoint)
@@ -198,7 +206,8 @@ class ExecutionController:
                         waypoint=next_wp,
                         completed=waypoint,
                     )
-                if self.execution_state == ExecutionState.DONE:
+                status = self.coordinator.get_completion_status()
+                if status.all_complete:
                     self.coordinator.transition(JourneyState.LAND_REVIEW)
                     return ExecutionDirective(action="land", completed=waypoint)
                 return ExecutionDirective(action="pause", completed=waypoint)
@@ -252,7 +261,9 @@ class ExecutionController:
             return ExecutionDirective(action="noop", message="Intervention cancelled")
 
         if not self._current_intervention:
-            return ExecutionDirective(action="noop", message="No intervention to resolve")
+            return ExecutionDirective(
+                action="noop", message="No intervention to resolve"
+            )
 
         waypoint = self._current_intervention.waypoint
 

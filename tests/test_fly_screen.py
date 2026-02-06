@@ -2,10 +2,10 @@
 
 import pytest
 
+from waypoints.fly.state import ExecutionState
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import ExecutionController, JourneyCoordinator
-from waypoints.fly.state import ExecutionState
 from waypoints.tui.screens.fly import FlyScreen
 
 

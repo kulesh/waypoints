@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT))
 
-from scripts.run_flight_test import run
+
+def _load_run() -> callable:
+    module_path = ROOT / "scripts" / "run_flight_test.py"
+    spec = importlib.util.spec_from_file_location("run_flight_test", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load flight test runner")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run
+
+
+RUN = _load_run()
 
 
 def _setup_flight_test(root: Path, *, min_files: list[str]) -> Path:
@@ -38,7 +48,7 @@ def test_runner_records_success(tmp_path: Path) -> None:
     project_path.mkdir()
     (project_path / "README.md").write_text("ok", encoding="utf-8")
 
-    exit_code = run(flight_test, project_path, skip_smoke=True)
+    exit_code = RUN(flight_test, project_path, skip_smoke=True)
 
     assert exit_code == 0
     results_dir = _latest_results(flight_test / "results")
@@ -53,7 +63,7 @@ def test_runner_detects_missing_files(tmp_path: Path) -> None:
     project_path.mkdir()
     (project_path / "README.md").write_text("ok", encoding="utf-8")
 
-    exit_code = run(flight_test, project_path, skip_smoke=True)
+    exit_code = RUN(flight_test, project_path, skip_smoke=True)
 
     assert exit_code == 1
     results_dir = _latest_results(flight_test / "results")
@@ -72,7 +82,7 @@ def test_runner_writes_smoke_log(tmp_path: Path) -> None:
     smoke_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     smoke_script.chmod(0o755)
 
-    exit_code = run(flight_test, project_path, skip_smoke=False)
+    exit_code = RUN(flight_test, project_path, skip_smoke=False)
 
     assert exit_code == 0
     results_dir = _latest_results(flight_test / "results")

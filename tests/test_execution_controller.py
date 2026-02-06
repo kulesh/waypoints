@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from waypoints.fly.executor import ExecutionResult
-from waypoints.fly.intervention import Intervention, InterventionAction, InterventionResult, InterventionType
+from waypoints.fly.intervention import (
+    Intervention,
+    InterventionAction,
+    InterventionResult,
+    InterventionType,
+)
 from waypoints.fly.state import ExecutionState
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.journey import Journey, JourneyState
@@ -28,7 +31,9 @@ class DummyProject:
     def save(self) -> None:
         return None
 
-    def transition_journey(self, target: JourneyState, reason: str | None = None) -> None:
+    def transition_journey(
+        self, target: JourneyState, reason: str | None = None
+    ) -> None:
         if self.journey is None:
             self.journey = Journey.new(self.slug)
         self.journey = self.journey.transition(target, reason=reason)

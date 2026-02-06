@@ -85,6 +85,10 @@ def run(flight_test_dir: Path, project_path: Path, *, skip_smoke: bool) -> int:
         not smoke_result.ran or smoke_result.exit_code == 0
     )
 
+    log_path_value = (
+        str(smoke_result.log_path) if smoke_result.log_path else None
+    )
+
     _write_meta(
         results_dir,
         {
@@ -97,7 +101,7 @@ def run(flight_test_dir: Path, project_path: Path, *, skip_smoke: bool) -> int:
             "smoke_test": {
                 "ran": smoke_result.ran,
                 "exit_code": smoke_result.exit_code,
-                "log_path": str(smoke_result.log_path) if smoke_result.log_path else None,
+                "log_path": log_path_value,
             },
             "success": success,
         },
@@ -110,7 +114,11 @@ def run(flight_test_dir: Path, project_path: Path, *, skip_smoke: bool) -> int:
         for path in missing:
             print(f"  - {path}")
     if smoke_result.ran and smoke_result.exit_code != 0:
-        print(f"Smoke test failed (exit {smoke_result.exit_code}). See {smoke_result.log_path}")
+        message = (
+            f"Smoke test failed (exit {smoke_result.exit_code}). "
+            f"See {smoke_result.log_path}"
+        )
+        print(message)
 
     return 0 if success else 1
 

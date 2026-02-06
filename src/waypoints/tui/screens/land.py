@@ -25,8 +25,8 @@ from waypoints.fly.execution_log import ExecutionLogReader
 from waypoints.git.service import GitService
 from waypoints.llm.metrics import MetricsCollector
 from waypoints.models import JourneyState, Project
-from waypoints.models.project import ProjectStatus
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader
+from waypoints.models.project import ProjectStatus
 from waypoints.models.waypoint import WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.utils import format_duration, format_token_count
