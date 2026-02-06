@@ -24,11 +24,11 @@ uses waypoint-scoped context with section references and a full-spec pointer.
 
 ## PR2: Fly Prompt Consumption
 
-- [ ] Replace `spec[:2000]` usage with waypoint spec context in fly prompt
-- [ ] Add full spec pointer (`docs/product-spec.md`) and instruction to read on ambiguity
-- [ ] Add stale-context detection (`spec_context_hash` vs current spec hash)
-- [ ] Add logging fields for context usage/staleness
-- [ ] Add fly prompt + executor logging tests
+- [x] Replace `spec[:2000]` usage with waypoint spec context in fly prompt
+- [x] Add full spec pointer (`docs/product-spec.md`) and instruction to read on ambiguity
+- [x] Add stale-context detection (`spec_context_hash` vs current spec hash)
+- [x] Add logging fields for context usage/staleness
+- [x] Add fly prompt + executor logging tests
 
 ## PR3: Backfill and Ops
 

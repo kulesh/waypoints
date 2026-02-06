@@ -389,6 +389,31 @@ class TestExecutionLogWriter:
         assert entries[1]["memory_waypoint_ids"] == ["WP-001", "WP-003"]
         assert entries[1]["memory_context_chars"] == 512
 
+    def test_log_iteration_start_with_spec_context_metadata(
+        self, mock_project: MockProject, mock_waypoint: Waypoint
+    ) -> None:
+        """Iteration start can capture spec context usage and staleness."""
+        writer = ExecutionLogWriter(mock_project, mock_waypoint)
+        writer.log_iteration_start(
+            1,
+            "Initial prompt",
+            spec_context_summary_chars=280,
+            spec_section_ref_count=3,
+            spec_context_hash="abc123def456abc123de",
+            current_spec_hash="feedfacebeadfeedface",
+            spec_context_stale=True,
+            full_spec_pointer="docs/product-spec.md",
+        )
+
+        entries = _read_jsonl_entries(writer.file_path)
+
+        assert entries[1]["spec_context_summary_chars"] == 280
+        assert entries[1]["spec_section_ref_count"] == 3
+        assert entries[1]["spec_context_hash"] == "abc123def456abc123de"
+        assert entries[1]["current_spec_hash"] == "feedfacebeadfeedface"
+        assert entries[1]["spec_context_stale"] is True
+        assert entries[1]["full_spec_pointer"] == "docs/product-spec.md"
+
     def test_log_output(
         self, mock_project: MockProject, mock_waypoint: Waypoint
     ) -> None:
