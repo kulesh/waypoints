@@ -13,6 +13,10 @@ Usage:
 """
 
 from waypoints.orchestration.coordinator import JourneyCoordinator
+from waypoints.orchestration.execution_controller import (
+    ExecutionController,
+    ExecutionDirective,
+)
 from waypoints.orchestration.types import (
     ChunkCallback,
     CompletionStatus,
@@ -24,6 +28,8 @@ from waypoints.orchestration.types import (
 
 __all__ = [
     "JourneyCoordinator",
+    "ExecutionController",
+    "ExecutionDirective",
     "NextAction",
     "CompletionStatus",
     "ProgressCallback",

@@ -47,8 +47,7 @@ def build_execution_prompt(
 {criteria_list}
 {resolution_notes}
 
-## Product Spec Summary
-## TODO: We should use proper summary of the spec not prefix!
+## Product Spec Excerpt (first 2000 chars)
 {spec[:2000]}{"..." if len(spec) > 2000 else ""}
 
 ## Working Directory

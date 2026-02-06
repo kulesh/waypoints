@@ -55,22 +55,37 @@ A set of reference projects with increasing complexity that Waypoints should be 
 flight-tests/
 ├── L0-hello-world/
 │   ├── input/
-│   │   └── idea.txt              # "A CLI that prints hello world"
+│   │   └── idea.txt              # "A Python CLI named hello_world..."
 │   ├── expected/
 │   │   ├── min_files.txt         # Minimum expected files
-│   │   └── smoke_test.sh         # ./hello should print "Hello"
+│   │   └── smoke_test.sh         # uv run python -m hello_world
 │   └── results/                  # Generated on each run
-│       └── 2026-01-08-run1/
+│       └── 2026-02-05-120000/
 ├── L1-todo-cli/
 │   ├── input/
 │   │   └── idea.txt
 │   ├── expected/
 │   │   ├── min_files.txt
-│   │   ├── acceptance_criteria.yaml
+│   │   └── smoke_test.sh
+│   └── results/
+├── L2-rest-api/
+│   ├── input/
+│   │   └── idea.txt
+│   ├── expected/
+│   │   ├── min_files.txt
 │   │   └── smoke_test.sh
 │   └── results/
 ...
 ```
+
+Run a flight test against an existing generated project:
+
+```bash
+uv run python scripts/run_flight_test.py flight-tests/L0-hello-world   --project-path /path/to/generated/project
+```
+
+Each run writes a `meta.json` summary and optional `smoke_test.log` into the
+results directory for auditability and regression tracking.
 
 ### Flight Test Metrics
 
@@ -294,9 +309,9 @@ def verify_artifacts(project: Project) -> ArtifactReport:
 ## Implementation Roadmap
 
 ### Phase 1: Foundation
-1. Create `flight-tests/` directory structure
-2. Implement L0-L1 flight tests (hello world, todo CLI)
-3. Create smoke test runner
+1. Create `flight-tests/` directory structure (done)
+2. Implement L0-L2 flight tests (hello world, todo CLI, REST API) (done)
+3. Create smoke test runner (`scripts/run_flight_test.py`) (done)
 
 ### Phase 2: Quality Gates
 4. Implement LLM-as-judge for idea briefs and specs

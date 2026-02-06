@@ -461,10 +461,22 @@ class JourneyCoordinator:
                 return NextAction(action="complete")
 
         elif action == InterventionAction.ROLLBACK:
-            # Rollback to tag and pause
-            # TODO: Implement rollback when GitService supports it
-            # if self.git and rollback_tag:
-            #     self.git.rollback_to_tag(rollback_tag)
+            if not rollback_tag:
+                return NextAction(action="pause", message="Rollback tag required")
+
+            if self.git:
+                result = self.git.reset_hard(rollback_tag)
+                if not result.success:
+                    return NextAction(
+                        action="pause",
+                        message=f"Rollback failed: {result.message}",
+                    )
+            else:
+                return NextAction(
+                    action="pause",
+                    message="Rollback requested but git is not configured",
+                )
+
             waypoint.status = WaypointStatus.PENDING
             self.save_flight_plan()
             return NextAction(action="pause", message=f"Rolled back to {rollback_tag}")
