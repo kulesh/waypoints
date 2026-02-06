@@ -399,13 +399,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         except InterventionNeededError as e:
             msg = e.intervention.error_summary
             print(f"  ⚠ Intervention needed: {msg}", file=sys.stderr)
+            coordinator.mark_waypoint_status(waypoint, WaypointStatus.FAILED)
             if args.on_error == "abort":
                 print("\nAborting due to intervention (--on-error=abort)")
                 return 2
             elif args.on_error == "skip":
                 print("  Skipping to next waypoint")
                 skipped += 1
-                waypoint.status = WaypointStatus.SKIPPED
+                coordinator.mark_waypoint_status(waypoint, WaypointStatus.SKIPPED)
                 continue
             # retry: pause for now
             break
@@ -413,6 +414,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         except Exception as e:
             print(f"  ✗ Error: {e}", file=sys.stderr)
             logging.exception("Waypoint execution error")
+            coordinator.mark_waypoint_status(waypoint, WaypointStatus.FAILED)
             if args.on_error == "abort":
                 return 1
             elif args.on_error == "skip":

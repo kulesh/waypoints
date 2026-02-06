@@ -107,6 +107,11 @@ class JourneyCoordinator:
     def current_waypoint(self, waypoint: Waypoint | None) -> None:
         self._current_waypoint = waypoint
 
+    @property
+    def product_spec(self) -> str:
+        """Load and return the product specification."""
+        return self._load_product_spec()
+
     def can_transition(self, target: JourneyState) -> bool:
         return self._state_manager.is_transition_allowed(target)
 

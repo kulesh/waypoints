@@ -46,6 +46,7 @@ from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
+from waypoints.orchestration.types import NextAction
 from waypoints.tui.screens.intervention import InterventionModal
 from waypoints.tui.utils import (
     format_token_count,
@@ -1971,8 +1972,8 @@ class FlyScreen(Screen[None]):
     def _handle_execution_result(self, result: ExecutionResult | None) -> None:
         """Handle the result of waypoint execution.
 
-        Delegates business logic (status mutations, git commits) to the
-        coordinator, then applies UI effects (logging, notifications,
+        Delegates ALL status mutations to the coordinator, then dispatches
+        on the returned NextAction to apply UI effects (logging, notifications,
         execution state transitions, screen navigation).
         """
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
@@ -1987,85 +1988,91 @@ class FlyScreen(Screen[None]):
             tokens = self._get_waypoint_tokens(self.current_waypoint.id)
             detail_panel.update_metrics(cost, tokens)
 
-        if result == ExecutionResult.SUCCESS and self.current_waypoint:
-            # Delegate status, commit, and next-waypoint selection
-            config = GitConfig.load(self.project.slug)
-            next_action = self.coordinator.handle_execution_result(
-                self.current_waypoint, result, git_config=config
-            )
-
-            # UI: log success and verification summary
-            log.log_success(f"Waypoint {self.current_waypoint.id} complete!")
-
-            self._live_criteria_completed = ExecutionLogReader.get_completed_criteria(
-                self.project, self.current_waypoint.id
-            )
-            self._log_verification_summary(self.current_waypoint, log)
-
-            # UI: log commit result
-            cr = next_action.commit_result
-            if cr and cr.committed:
-                self.notify(f"Committed: {self.current_waypoint.id}")
-                if self._executor and self._executor._log_writer:
-                    self._executor._log_writer.log_git_commit(
-                        True, cr.commit_hash or "", cr.message
-                    )
-            elif cr and not cr.committed and cr.message:
-                if "Nothing to commit" not in cr.message:
-                    self.notify(f"Skipping commit: {cr.message}", severity="warning")
-                if self._executor and self._executor._log_writer:
-                    self._executor._log_writer.log_git_commit(False, "", cr.message)
-            if cr and cr.initialized_repo:
-                self.notify("Initialized git repository")
-
-            # Reset live criteria tracking for next waypoint
-            self._live_criteria_completed = set()
-
-            detail_panel.clear_iteration()
-            self._refresh_waypoint_list()
-
-            # Move to next waypoint if not paused/pausing
-            if self.execution_state == ExecutionState.RUNNING:
-                if next_action.action == "continue" and next_action.waypoint:
-                    self.current_waypoint = next_action.waypoint
-                    self._execute_current_waypoint()
-                elif next_action.action == "complete":
-                    self._select_next_waypoint()  # sets DONE state
-                    if self.execution_state == ExecutionState.DONE:  # type: ignore[comparison-overlap]
-                        self.coordinator.transition(JourneyState.LAND_REVIEW)
-                        self._switch_to_land_screen()
-            elif self.execution_state == ExecutionState.PAUSE_PENDING:
-                self.coordinator.transition(JourneyState.FLY_PAUSED)
-                self.execution_state = ExecutionState.PAUSED
-
-        elif result == ExecutionResult.INTERVENTION_NEEDED:
-            log.log_error("Human intervention needed")
-            self._mark_waypoint_failed()
-            self.coordinator.transition(JourneyState.FLY_INTERVENTION)
-            self.execution_state = ExecutionState.INTERVENTION
-            self.query_one(StatusHeader).set_error()
-            self.notify("Waypoint needs human intervention", severity="warning")
-
-        elif result == ExecutionResult.MAX_ITERATIONS:
-            log.log_error("Max iterations reached without completion")
-            self._mark_waypoint_failed()
-            self.coordinator.transition(JourneyState.FLY_INTERVENTION)
-            self.execution_state = ExecutionState.INTERVENTION
-            self.query_one(StatusHeader).set_error()
-            self.notify("Max iterations reached", severity="error")
-
-        elif result == ExecutionResult.CANCELLED:
-            log.write_log("Execution cancelled")
-            self.coordinator.transition(JourneyState.FLY_PAUSED)
-            self.execution_state = ExecutionState.PAUSED
-
-        else:  # FAILED or None
+        # Delegate status mutation, commit, and next-waypoint selection
+        # to the coordinator for ALL result types
+        if not self.current_waypoint or result is None:
             log.log_error("Execution failed")
-            self._mark_waypoint_failed()
             self.coordinator.transition(JourneyState.FLY_INTERVENTION)
             self.execution_state = ExecutionState.INTERVENTION
             self.query_one(StatusHeader).set_error()
             self.notify("Waypoint execution failed", severity="error")
+            return
+
+        config = GitConfig.load(self.project.slug)
+        next_action = self.coordinator.handle_execution_result(
+            self.current_waypoint, result, git_config=config
+        )
+
+        # Dispatch on coordinator's decision
+        if next_action.action in ("continue", "complete"):
+            self._apply_success_effects(log, detail_panel, next_action)
+        elif next_action.action == "intervention":
+            log.log_error(next_action.message or "Execution failed")
+            self.coordinator.transition(JourneyState.FLY_INTERVENTION)
+            self.execution_state = ExecutionState.INTERVENTION
+            self.query_one(StatusHeader).set_error()
+            self._refresh_waypoint_list()
+            self.notify(
+                next_action.message or "Waypoint execution failed",
+                severity="error",
+            )
+        elif next_action.action == "pause":
+            log.write_log(next_action.message or "Execution paused")
+            self.coordinator.transition(JourneyState.FLY_PAUSED)
+            self.execution_state = ExecutionState.PAUSED
+
+    def _apply_success_effects(
+        self,
+        log: ExecutionLog,
+        detail_panel: WaypointDetailPanel,
+        next_action: NextAction,
+    ) -> None:
+        """Apply UI effects for a successful waypoint completion."""
+        assert self.current_waypoint is not None
+
+        # Log success and verification summary
+        log.log_success(f"Waypoint {self.current_waypoint.id} complete!")
+
+        self._live_criteria_completed = ExecutionLogReader.get_completed_criteria(
+            self.project, self.current_waypoint.id
+        )
+        self._log_verification_summary(self.current_waypoint, log)
+
+        # Log commit result
+        cr = next_action.commit_result
+        if cr and cr.committed:
+            self.notify(f"Committed: {self.current_waypoint.id}")
+            if self._executor and self._executor._log_writer:
+                self._executor._log_writer.log_git_commit(
+                    True, cr.commit_hash or "", cr.message
+                )
+        elif cr and not cr.committed and cr.message:
+            if "Nothing to commit" not in cr.message:
+                self.notify(f"Skipping commit: {cr.message}", severity="warning")
+            if self._executor and self._executor._log_writer:
+                self._executor._log_writer.log_git_commit(False, "", cr.message)
+        if cr and cr.initialized_repo:
+            self.notify("Initialized git repository")
+
+        # Reset live criteria tracking for next waypoint
+        self._live_criteria_completed = set()
+
+        detail_panel.clear_iteration()
+        self._refresh_waypoint_list()
+
+        # Move to next waypoint if not paused/pausing
+        if self.execution_state == ExecutionState.RUNNING:
+            if next_action.action == "continue" and next_action.waypoint:
+                self.current_waypoint = next_action.waypoint
+                self._execute_current_waypoint()
+            elif next_action.action == "complete":
+                self._select_next_waypoint()  # sets DONE state
+                if self.execution_state == ExecutionState.DONE:  # type: ignore[comparison-overlap]
+                    self.coordinator.transition(JourneyState.LAND_REVIEW)
+                    self._switch_to_land_screen()
+        elif self.execution_state == ExecutionState.PAUSE_PENDING:
+            self.coordinator.transition(JourneyState.FLY_PAUSED)
+            self.execution_state = ExecutionState.PAUSED
 
     def _handle_intervention(self, intervention: Intervention) -> None:
         """Handle an intervention request by showing the modal."""
@@ -2080,8 +2087,12 @@ class FlyScreen(Screen[None]):
         # Store the intervention for retry handling
         self._current_intervention = intervention
 
-        # Mark waypoint as failed (can be retried)
-        self._mark_waypoint_failed()
+        # Mark waypoint as failed (can be retried) via coordinator
+        if self.current_waypoint:
+            self.coordinator.mark_waypoint_status(
+                self.current_waypoint, WaypointStatus.FAILED
+            )
+            self._refresh_waypoint_list()
 
         # Transition journey state: FLY_EXECUTING -> FLY_INTERVENTION
         self.coordinator.transition(JourneyState.FLY_INTERVENTION)
@@ -2231,14 +2242,6 @@ class FlyScreen(Screen[None]):
                     self._refresh_waypoint_list()
         else:
             self.notify(f"Rollback failed: {result.message}", severity="error")
-
-    def _mark_waypoint_failed(self) -> None:
-        """Mark the current waypoint as failed and save."""
-        if self.current_waypoint:
-            self.current_waypoint.status = WaypointStatus.FAILED
-            self._save_flight_plan()
-            # Update the tree display
-            self._refresh_waypoint_list()
 
     def _refresh_waypoint_list(
         self, execution_state: ExecutionState | None = None

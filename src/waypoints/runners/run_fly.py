@@ -111,16 +111,18 @@ async def run_execution(args: argparse.Namespace) -> int:
                 host_validations_enabled=args.host_validations_enabled,
             )
 
+            # Route ALL results through coordinator (single source of truth)
+            coordinator.handle_execution_result(waypoint, result)
+
             if result == ExecutionResult.SUCCESS:
                 log_event(
                     "waypoint_completed",
                     {"waypoint_id": waypoint.id, "status": "success"},
                 )
-                coordinator.handle_execution_result(waypoint, result)
             else:
                 log_event(
                     "waypoint_failed",
-                    {"waypoint_id": waypoint.id, "status": "failed"},
+                    {"waypoint_id": waypoint.id, "status": result.value},
                 )
                 errors += 1
 
@@ -133,6 +135,7 @@ async def run_execution(args: argparse.Namespace) -> int:
                     "error_summary": e.intervention.error_summary,
                 },
             )
+            coordinator.mark_waypoint_status(waypoint, WaypointStatus.FAILED)
             if args.skip_intervention:
                 if args.verbose:
                     print(
@@ -154,6 +157,7 @@ async def run_execution(args: argparse.Namespace) -> int:
                 "waypoint_error",
                 {"waypoint_id": waypoint.id, "error": str(e)},
             )
+            coordinator.mark_waypoint_status(waypoint, WaypointStatus.FAILED)
             errors += 1
             if not args.continue_on_error:
                 break

@@ -135,7 +135,7 @@ class FlyPhase:
         self._coord.save_flight_plan()
 
         # Get product spec for context
-        spec = self._coord._load_product_spec()
+        spec = self._coord.product_spec
 
         # Create executor
         executor = WaypointExecutor(
@@ -220,23 +220,38 @@ class FlyPhase:
                     commit_result=commit_result,
                 )
 
-        elif result == ExecutionResult.FAILED:
-            waypoint.status = WaypointStatus.FAILED
-            self._coord.save_flight_plan()
-            return NextAction(
-                action="pause",
-                waypoint=waypoint,
-                message=f"Waypoint {waypoint.id} failed",
-            )
-
         elif result == ExecutionResult.CANCELLED:
             waypoint.status = WaypointStatus.PENDING
             self._coord.save_flight_plan()
             return NextAction(action="pause", message="Execution cancelled")
 
+        elif result == ExecutionResult.FAILED:
+            waypoint.status = WaypointStatus.FAILED
+            self._coord.save_flight_plan()
+            return NextAction(
+                action="intervention",
+                waypoint=waypoint,
+                message=f"Waypoint {waypoint.id} failed",
+            )
+
+        elif result == ExecutionResult.MAX_ITERATIONS:
+            waypoint.status = WaypointStatus.FAILED
+            self._coord.save_flight_plan()
+            return NextAction(
+                action="intervention",
+                waypoint=waypoint,
+                message=f"Waypoint {waypoint.id} hit max iterations without completion",
+            )
+
         else:
-            # MAX_ITERATIONS or INTERVENTION_NEEDED handled via exception
-            return NextAction(action="pause", waypoint=waypoint)
+            # INTERVENTION_NEEDED
+            waypoint.status = WaypointStatus.FAILED
+            self._coord.save_flight_plan()
+            return NextAction(
+                action="intervention",
+                waypoint=waypoint,
+                message=f"Waypoint {waypoint.id} needs human intervention",
+            )
 
     def check_parent_completion(self, waypoint: Waypoint) -> None:
         """Check if parent epic is ready for execution (all children done).
