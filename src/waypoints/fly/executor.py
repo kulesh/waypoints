@@ -451,14 +451,16 @@ class WaypointExecutor:
                                     summary,
                                 )
 
-                            # Check for completion marker
-                            if completion_marker in full_output:
+                            # Check for completion marker in this iteration output.
+                            # Using iteration-local output avoids latching old markers
+                            # when a completion attempt fails receipt validation.
+                            if completion_marker in iteration_output:
                                 logger.info("Completion marker found!")
                                 completion_detected = True
                                 completion_iteration = iteration
                                 completion_output = iteration_output
                                 criterion_matches = CRITERION_PATTERN.findall(
-                                    full_output
+                                    iteration_output
                                 )
                                 completion_criteria = {
                                     int(m[0]) for m in criterion_matches
@@ -593,35 +595,44 @@ class WaypointExecutor:
                         )
                         return ExecutionResult.SUCCESS
 
+                    failure_summary = "Receipt validation failed."
+                    if hasattr(finalizer, "last_failure_summary"):
+                        summary_func = getattr(finalizer, "last_failure_summary")
+                        if callable(summary_func):
+                            failure_summary = summary_func()
                     logger.warning(
-                        "Waypoint marked complete but receipt invalid. "
-                        "Git commit will be skipped."
+                        "Receipt invalid for %s at iteration %d. Retrying: %s",
+                        self.waypoint.id,
+                        iteration,
+                        failure_summary,
                     )
                     self._report_progress(
                         iteration,
                         MAX_ITERATIONS,
-                        "complete",
-                        "Complete (receipt missing/invalid)",
+                        "validation_failed",
+                        f"Host validation failed; retrying. {failure_summary}",
                     )
-                    self._log_writer.log_completion(ExecutionResult.SUCCESS.value)
-                    workspace_summary = self._log_workspace_provenance(
-                        project_path,
-                        workspace_before,
+                    self._log_writer.log_error(
                         iteration,
-                        ExecutionResult.SUCCESS.value,
+                        (
+                            "Completion marker emitted but receipt was invalid: "
+                            f"{failure_summary}"
+                        ),
                     )
-                    self._persist_waypoint_memory(
-                        project_path=project_path,
-                        result=ExecutionResult.SUCCESS.value,
-                        iteration=iteration,
-                        reported_validation_commands=reported_validation_commands,
-                        captured_criteria=captured_criteria,
-                        tool_validation_evidence=tool_validation_evidence,
-                        protocol_derailments=protocol_derailments,
-                        workspace_summary=workspace_summary,
-                        error_summary="Receipt invalid or missing despite completion.",
+                    next_reason_code = "host_validation_failed"
+                    next_reason_detail = failure_summary
+                    completion_detected = False
+                    completion_iteration = None
+                    completion_output = None
+                    completion_criteria = None
+                    self.steps.append(
+                        ExecutionStep(
+                            iteration=iteration,
+                            action="receipt_retry",
+                            output=failure_summary,
+                        )
                     )
-                    return ExecutionResult.SUCCESS
+                    continue
 
             except Exception as e:
                 logger.exception("Error during iteration %d: %s", iteration, e)

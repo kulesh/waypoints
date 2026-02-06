@@ -17,6 +17,7 @@ from waypoints.fly.executor import (
     WaypointExecutor,
     _extract_file_operation,
 )
+from waypoints.fly.intervention import InterventionNeededError
 from waypoints.fly.stack import ValidationCommand
 from waypoints.git.config import Checklist
 from waypoints.git.receipt import CapturedEvidence, ChecklistReceipt
@@ -614,6 +615,35 @@ class _StubFinalizer:
         return True
 
 
+class _RetryFinalizer:
+    """Finalize stub that fails once, then succeeds."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def finalize(self, **_: object) -> bool:
+        self.calls += 1
+        return self.calls > 1
+
+    def last_failure_summary(self, max_chars: int = 1000) -> str:
+        del max_chars
+        return (
+            "Host validation failed. cargo clippy -- -D warnings exited 101: "
+            "unused assignment in validator.rs:90"
+        )
+
+
+class _AlwaysInvalidFinalizer:
+    """Finalize stub that always fails with host validation diagnostics."""
+
+    async def finalize(self, **_: object) -> bool:
+        return False
+
+    def last_failure_summary(self, max_chars: int = 1000) -> str:
+        del max_chars
+        return "Host validation failed. cargo clippy -- -D warnings exited 101."
+
+
 @pytest.mark.anyio
 async def test_execute_resumes_session_and_uses_protocol_nudge(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -666,6 +696,98 @@ async def test_execute_resumes_session_and_uses_protocol_nudge(
     assert isinstance(calls[1]["prompt"], str)
     assert "Reason: protocol_violation" in calls[1]["prompt"]
     assert "<waypoint-complete>WP-1</waypoint-complete>" in calls[1]["prompt"]
+
+
+@pytest.mark.anyio
+async def test_execute_retries_when_receipt_is_invalid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Invalid receipt should trigger another iteration, not a false success."""
+    calls: list[dict[str, object]] = []
+
+    async def fake_agent_query(**kwargs: object):
+        calls.append(kwargs)
+        yield StreamChunk(text="<waypoint-complete>WP-1</waypoint-complete>")
+        yield StreamComplete(
+            full_text="<waypoint-complete>WP-1</waypoint-complete>",
+            session_id="session-abc",
+        )
+
+    retry_finalizer = _RetryFinalizer()
+    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_make_finalizer",
+        lambda self: retry_finalizer,
+    )
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_resolve_validation_commands",
+        lambda self, project_path, checklist: [],
+    )
+
+    project = _TestProject(tmp_path)
+    waypoint = Waypoint(
+        id="WP-1",
+        title="Receipt retry",
+        objective="Retry on host validation failure",
+        acceptance_criteria=["Criterion 1"],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+
+    result = await executor.execute()
+
+    assert result == ExecutionResult.SUCCESS
+    assert retry_finalizer.calls == 2
+    assert len(calls) == 2
+    assert calls[1]["resume_session_id"] == "session-abc"
+    assert isinstance(calls[1]["prompt"], str)
+    assert "Reason: host_validation_failed" in calls[1]["prompt"]
+    assert "cargo clippy -- -D warnings exited 101" in calls[1]["prompt"]
+
+
+@pytest.mark.anyio
+async def test_execute_invalid_receipt_does_not_return_success(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Persistent receipt failure should escalate instead of returning success."""
+
+    async def fake_agent_query(**kwargs: object):
+        del kwargs
+        yield StreamChunk(text="<waypoint-complete>WP-1</waypoint-complete>")
+        yield StreamComplete(
+            full_text="<waypoint-complete>WP-1</waypoint-complete>",
+            session_id="session-abc",
+        )
+
+    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_make_finalizer",
+        lambda self: _AlwaysInvalidFinalizer(),
+    )
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_resolve_validation_commands",
+        lambda self, project_path, checklist: [],
+    )
+
+    project = _TestProject(tmp_path)
+    waypoint = Waypoint(
+        id="WP-1",
+        title="Persistent invalid receipt",
+        objective="Never return success on invalid receipt",
+        acceptance_criteria=["Criterion 1"],
+    )
+    executor = WaypointExecutor(
+        project=project,
+        waypoint=waypoint,
+        spec="spec",
+        max_iterations=2,
+    )
+
+    with pytest.raises(InterventionNeededError):
+        await executor.execute()
 
 
 @pytest.mark.anyio
@@ -1089,3 +1211,42 @@ async def test_finalize_requires_soft_evidence(
     )
 
     assert result is False
+    assert "Soft validation evidence missing" in finalizer.last_failure_summary()
+
+
+@pytest.mark.anyio
+async def test_finalize_exposes_host_failure_details(tmp_path: Path) -> None:
+    """Finalizer should surface command/exit/stderr details for retry prompts."""
+    project = SimpleNamespace(get_path=lambda: tmp_path)
+    waypoint = Waypoint(
+        id="WP-791",
+        title="Host failure details",
+        objective="Expose failed validation diagnostics",
+        acceptance_criteria=[],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+    executor._log_writer = DummyLogWriter()
+
+    command = (
+        "python -c \"import sys; "
+        "print('unused assignment in validator.rs:90', file=sys.stderr); "
+        "sys.exit(101)\""
+    )
+    validation_commands = [
+        ValidationCommand(name="linting", command=command, category="lint")
+    ]
+
+    finalizer = executor._make_finalizer()
+    result = await finalizer.finalize(
+        project_path=tmp_path,
+        captured_criteria={},
+        validation_commands=validation_commands,
+        reported_validation_commands=[],
+        max_iterations=executor.max_iterations,
+    )
+
+    assert result is False
+    summary = finalizer.last_failure_summary()
+    assert "Host validation failed" in summary
+    assert "exited 101" in summary
+    assert "unused assignment in validator.rs:90" in summary
