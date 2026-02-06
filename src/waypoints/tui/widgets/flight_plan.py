@@ -514,7 +514,76 @@ class WaypointPreviewPanel(VerticalScroll):
             content.mount(Static("Press Enter for details", classes="wp-hint"))
 
 
-class WaypointDetailModal(ModalScreen[str | None]):
+class WaypointModalBase(ModalScreen[Any]):
+    """Base class for all waypoint-related modals.
+
+    Provides shared CSS (centering, surface background, title bar, action bar,
+    button styling) and a convention-based button dispatch via on_button_pressed.
+    Subclasses override compose() to yield their specific content and define
+    BINDINGS / DEFAULT_CSS only for unique elements.
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    WaypointModalBase {
+        align: center middle;
+        background: $surface 60%;
+    }
+
+    WaypointModalBase > Vertical {
+        width: 70;
+        height: auto;
+        max-height: 80%;
+        background: $surface;
+        border: solid $surface-lighten-2;
+        padding: 1 2;
+    }
+
+    WaypointModalBase .modal-title {
+        text-style: bold;
+        color: $text;
+        text-align: center;
+        padding: 1 0;
+        margin-bottom: 1;
+        border-bottom: solid $surface-lighten-1;
+    }
+
+    WaypointModalBase .modal-content {
+        height: auto;
+        max-height: 40;
+        padding: 0;
+        scrollbar-gutter: stable;
+        scrollbar-size: 1 1;
+        scrollbar-background: transparent;
+        scrollbar-color: $surface-lighten-2;
+    }
+
+    WaypointModalBase .modal-actions {
+        dock: bottom;
+        height: auto;
+        padding: 1 0 0 0;
+        margin-top: 1;
+        border-top: solid $surface-lighten-1;
+        align: center middle;
+    }
+
+    WaypointModalBase Button {
+        margin: 0 1;
+        min-width: 10;
+        height: 3;
+        background: $surface-lighten-1;
+    }
+    """
+
+    def action_cancel(self) -> None:
+        """Cancel — dismiss with a falsy default."""
+        self.dismiss(None)
+
+
+class WaypointDetailModal(WaypointModalBase):
     """Modal screen showing full waypoint details."""
 
     BINDINGS = [
@@ -525,35 +594,21 @@ class WaypointDetailModal(ModalScreen[str | None]):
     ]
 
     DEFAULT_CSS = """
-    WaypointDetailModal {
-        align: center middle;
-        background: $surface 60%;
-    }
-
     WaypointDetailModal > Vertical {
         width: 70%;
         max-width: 80;
-        height: auto;
-        max-height: 80%;
-        background: $surface;
-        border: solid $surface-lighten-2;
         padding: 0 1;
     }
 
     WaypointDetailModal .modal-title {
-        text-style: bold;
-        color: $text;
-        text-align: center;
         padding: 0;
         margin: 0 0 1 0;
-        border-bottom: solid $surface-lighten-1;
     }
 
     WaypointDetailModal .modal-content {
         height: 1fr;
         min-height: 5;
         max-height: 50;
-        padding: 0;
         margin: 0;
     }
 
@@ -563,18 +618,11 @@ class WaypointDetailModal(ModalScreen[str | None]):
     }
 
     WaypointDetailModal .modal-actions {
-        dock: bottom;
-        height: auto;
         padding: 0;
-        margin-top: 1;
-        border-top: solid $surface-lighten-1;
-        align: center middle;
     }
 
     WaypointDetailModal Button {
-        margin: 0 1;
         min-width: 6;
-        background: $surface-lighten-1;
         color: $text-muted;
     }
 
@@ -685,7 +733,7 @@ class WaypointRequestBreakDown(Message):
         super().__init__()
 
 
-class ConfirmDeleteModal(ModalScreen[bool]):
+class ConfirmDeleteModal(WaypointModalBase):
     """Confirmation modal for deleting a waypoint."""
 
     BINDINGS = [
@@ -694,32 +742,14 @@ class ConfirmDeleteModal(ModalScreen[bool]):
     ]
 
     DEFAULT_CSS = """
-    ConfirmDeleteModal {
-        align: center middle;
-        background: $surface 60%;
-    }
-
     ConfirmDeleteModal > Vertical {
         width: 60;
-        height: auto;
         max-height: 24;
-        background: $surface;
-        border: solid $surface-lighten-2;
         border-top: solid $error;
-        padding: 1 2;
     }
 
     ConfirmDeleteModal .modal-title {
-        text-style: bold;
-        color: $text;
-        text-align: center;
-        padding: 1 0;
-        margin-bottom: 1;
-    }
-
-    ConfirmDeleteModal .modal-content {
-        height: auto;
-        padding: 0;
+        border-bottom: none;
     }
 
     ConfirmDeleteModal .waypoint-info {
@@ -731,20 +761,6 @@ class ConfirmDeleteModal(ModalScreen[bool]):
         color: $warning;
         margin-top: 1;
         padding: 0;
-    }
-
-    ConfirmDeleteModal .modal-actions {
-        dock: bottom;
-        height: auto;
-        padding: 1 0 0 0;
-        margin-top: 1;
-        border-top: solid $surface-lighten-1;
-        align: center middle;
-    }
-
-    ConfirmDeleteModal Button {
-        margin: 0 1;
-        min-width: 10;
     }
 
     ConfirmDeleteModal Button#btn-delete {
@@ -819,7 +835,7 @@ class WaypointUpdated(Message):
         super().__init__()
 
 
-class WaypointEditModal(ModalScreen[Waypoint | None]):
+class WaypointEditModal(WaypointModalBase):
     """Modal for editing waypoint details."""
 
     BINDINGS = [
@@ -828,28 +844,10 @@ class WaypointEditModal(ModalScreen[Waypoint | None]):
     ]
 
     DEFAULT_CSS = """
-    WaypointEditModal {
-        align: center middle;
-        background: $surface 60%;
-    }
-
     WaypointEditModal > Vertical {
         width: 80%;
         max-width: 90;
-        height: auto;
         max-height: 85%;
-        background: $surface;
-        border: solid $surface-lighten-2;
-        padding: 1 2;
-    }
-
-    WaypointEditModal .modal-title {
-        text-style: bold;
-        color: $text;
-        text-align: center;
-        padding: 1 0;
-        margin-bottom: 1;
-        border-bottom: solid $surface-lighten-1;
     }
 
     WaypointEditModal .form-content {
@@ -899,20 +897,6 @@ class WaypointEditModal(ModalScreen[Waypoint | None]):
         color: $text-disabled;
         text-style: italic;
         margin-bottom: 1;
-    }
-
-    WaypointEditModal .modal-actions {
-        dock: bottom;
-        height: auto;
-        padding: 1 0 0 0;
-        margin-top: 1;
-        border-top: solid $surface-lighten-1;
-        align: center middle;
-    }
-
-    WaypointEditModal Button {
-        margin: 0 1;
-        min-width: 10;
     }
 
     WaypointEditModal Button#btn-save {
@@ -1001,12 +985,8 @@ class WaypointEditModal(ModalScreen[Waypoint | None]):
 
         self.dismiss(updated)
 
-    def action_cancel(self) -> None:
-        """Cancel editing."""
-        self.dismiss(None)
 
-
-class BreakDownPreviewModal(ModalScreen[bool]):
+class BreakDownPreviewModal(WaypointModalBase):
     """Modal showing generated sub-waypoints for confirmation."""
 
     BINDINGS = [
@@ -1015,38 +995,9 @@ class BreakDownPreviewModal(ModalScreen[bool]):
     ]
 
     DEFAULT_CSS = """
-    BreakDownPreviewModal {
-        align: center middle;
-        background: $surface 60%;
-    }
-
     BreakDownPreviewModal > Vertical {
         width: 80%;
         max-width: 90;
-        height: auto;
-        max-height: 80%;
-        background: $surface;
-        border: solid $surface-lighten-2;
-        padding: 1 2;
-    }
-
-    BreakDownPreviewModal .modal-title {
-        text-style: bold;
-        color: $text;
-        text-align: center;
-        padding: 1 0;
-        margin-bottom: 1;
-        border-bottom: solid $surface-lighten-1;
-    }
-
-    BreakDownPreviewModal .modal-content {
-        height: auto;
-        max-height: 40;
-        padding: 0;
-        scrollbar-gutter: stable;
-        scrollbar-size: 1 1;
-        scrollbar-background: transparent;
-        scrollbar-color: $surface-lighten-2;
     }
 
     BreakDownPreviewModal .parent-info {
@@ -1070,20 +1021,6 @@ class BreakDownPreviewModal(ModalScreen[bool]):
     BreakDownPreviewModal .sub-objective {
         color: $text-muted;
         margin-top: 0;
-    }
-
-    BreakDownPreviewModal .modal-actions {
-        dock: bottom;
-        height: auto;
-        padding: 1 0 0 0;
-        margin-top: 1;
-        border-top: solid $surface-lighten-1;
-        align: center middle;
-    }
-
-    BreakDownPreviewModal Button {
-        margin: 0 1;
-        min-width: 10;
     }
 
     BreakDownPreviewModal Button#btn-confirm {
@@ -1141,11 +1078,10 @@ class BreakDownPreviewModal(ModalScreen[bool]):
         self.dismiss(True)
 
     def action_cancel(self) -> None:
-        """Cancel."""
         self.dismiss(False)
 
 
-class AddWaypointModal(ModalScreen[str | None]):
+class AddWaypointModal(WaypointModalBase):
     """Modal for describing a new waypoint for AI generation."""
 
     BINDINGS = [
@@ -1154,27 +1090,8 @@ class AddWaypointModal(ModalScreen[str | None]):
     ]
 
     DEFAULT_CSS = """
-    AddWaypointModal {
-        align: center middle;
-        background: $surface 60%;
-    }
-
     AddWaypointModal > Vertical {
-        width: 70;
-        height: auto;
         max-height: 24;
-        background: $surface;
-        border: solid $surface-lighten-2;
-        padding: 1 2;
-    }
-
-    AddWaypointModal .modal-title {
-        text-style: bold;
-        color: $text;
-        text-align: center;
-        padding: 1 0;
-        margin-bottom: 1;
-        border-bottom: solid $surface-lighten-1;
     }
 
     AddWaypointModal .modal-label {
@@ -1192,22 +1109,6 @@ class AddWaypointModal(ModalScreen[str | None]):
     AddWaypointModal TextArea:focus {
         background: $surface-lighten-2;
         border: none;
-    }
-
-    AddWaypointModal .modal-actions {
-        dock: bottom;
-        height: auto;
-        padding: 1 0 0 0;
-        margin-top: 1;
-        border-top: solid $surface-lighten-1;
-        align: center middle;
-    }
-
-    AddWaypointModal Button {
-        margin: 0 1;
-        min-width: 10;
-        height: 3;
-        background: $surface-lighten-1;
     }
     """
 
@@ -1246,12 +1147,8 @@ class AddWaypointModal(ModalScreen[str | None]):
         """Add waypoint from description."""
         self._submit()
 
-    def action_cancel(self) -> None:
-        """Cancel."""
-        self.dismiss(None)
 
-
-class DebugWaypointModal(ModalScreen[str | None]):
+class DebugWaypointModal(WaypointModalBase):
     """Modal for describing a debug waypoint fork."""
 
     BINDINGS = [
@@ -1260,27 +1157,8 @@ class DebugWaypointModal(ModalScreen[str | None]):
     ]
 
     DEFAULT_CSS = """
-    DebugWaypointModal {
-        align: center middle;
-        background: $surface 60%;
-    }
-
     DebugWaypointModal > Vertical {
-        width: 70;
-        height: auto;
         max-height: 24;
-        background: $surface;
-        border: solid $surface-lighten-2;
-        padding: 1 2;
-    }
-
-    DebugWaypointModal .modal-title {
-        text-style: bold;
-        color: $text;
-        text-align: center;
-        padding: 1 0;
-        margin-bottom: 1;
-        border-bottom: solid $surface-lighten-1;
     }
 
     DebugWaypointModal .modal-label {
@@ -1298,22 +1176,6 @@ class DebugWaypointModal(ModalScreen[str | None]):
     DebugWaypointModal TextArea:focus {
         background: $surface-lighten-2;
         border: none;
-    }
-
-    DebugWaypointModal .modal-actions {
-        dock: bottom;
-        height: auto;
-        padding: 1 0 0 0;
-        margin-top: 1;
-        border-top: solid $surface-lighten-1;
-        align: center middle;
-    }
-
-    DebugWaypointModal Button {
-        margin: 0 1;
-        min-width: 10;
-        height: 3;
-        background: $surface-lighten-1;
     }
     """
 
@@ -1352,12 +1214,8 @@ class DebugWaypointModal(ModalScreen[str | None]):
         """Fork a debug waypoint from the brief."""
         self._submit()
 
-    def action_cancel(self) -> None:
-        """Cancel."""
-        self.dismiss(None)
 
-
-class AddWaypointPreviewModal(ModalScreen[bool]):
+class AddWaypointPreviewModal(WaypointModalBase):
     """Preview modal for AI-generated waypoint before adding."""
 
     BINDINGS = [
@@ -1366,37 +1224,12 @@ class AddWaypointPreviewModal(ModalScreen[bool]):
     ]
 
     DEFAULT_CSS = """
-    AddWaypointPreviewModal {
-        align: center middle;
-        background: $surface 60%;
-    }
-
     AddWaypointPreviewModal > Vertical {
-        width: 70;
-        height: auto;
         max-height: 32;
-        background: $surface;
-        border: solid $surface-lighten-2;
-        padding: 1 2;
-    }
-
-    AddWaypointPreviewModal .modal-title {
-        text-style: bold;
-        color: $text;
-        text-align: center;
-        padding: 1 0;
-        margin-bottom: 1;
-        border-bottom: solid $surface-lighten-1;
     }
 
     AddWaypointPreviewModal .modal-content {
-        height: auto;
         max-height: 18;
-        padding: 0;
-        scrollbar-gutter: stable;
-        scrollbar-size: 1 1;
-        scrollbar-background: transparent;
-        scrollbar-color: $surface-lighten-2;
     }
 
     AddWaypointPreviewModal .waypoint-id {
@@ -1430,22 +1263,6 @@ class AddWaypointPreviewModal(ModalScreen[bool]):
         color: $text-disabled;
         text-style: italic;
         margin-top: 1;
-    }
-
-    AddWaypointPreviewModal .modal-actions {
-        dock: bottom;
-        height: auto;
-        padding: 1 0 0 0;
-        margin-top: 1;
-        border-top: solid $surface-lighten-1;
-        align: center middle;
-    }
-
-    AddWaypointPreviewModal Button {
-        margin: 0 1;
-        min-width: 10;
-        height: 3;
-        background: $surface-lighten-1;
     }
     """
 
@@ -1504,7 +1321,7 @@ class AddWaypointPreviewModal(ModalScreen[bool]):
         self.dismiss(False)
 
 
-class ReprioritizePreviewModal(ModalScreen[bool]):
+class ReprioritizePreviewModal(WaypointModalBase):
     """Modal showing before/after waypoint order comparison."""
 
     BINDINGS = [
@@ -1513,28 +1330,10 @@ class ReprioritizePreviewModal(ModalScreen[bool]):
     ]
 
     DEFAULT_CSS = """
-    ReprioritizePreviewModal {
-        align: center middle;
-        background: $surface 60%;
-    }
-
     ReprioritizePreviewModal > Vertical {
         width: 90%;
         max-width: 100;
-        height: auto;
         max-height: 85%;
-        background: $surface;
-        border: solid $surface-lighten-2;
-        padding: 1 2;
-    }
-
-    ReprioritizePreviewModal .modal-title {
-        text-style: bold;
-        color: $text;
-        text-align: center;
-        padding: 1 0;
-        margin-bottom: 1;
-        border-bottom: solid $surface-lighten-1;
     }
 
     ReprioritizePreviewModal .rationale {
@@ -1581,19 +1380,8 @@ class ReprioritizePreviewModal(ModalScreen[bool]):
         color: $text-muted;
     }
 
-    ReprioritizePreviewModal .modal-actions {
-        dock: bottom;
-        height: auto;
-        padding: 1 0 0 0;
-        margin-top: 1;
-        border-top: solid $surface-lighten-1;
-        align: center middle;
-    }
-
     ReprioritizePreviewModal Button {
-        margin: 0 1;
         min-width: 12;
-        height: 3;
     }
 
     ReprioritizePreviewModal Button#btn-confirm {

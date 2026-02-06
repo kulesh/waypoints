@@ -109,9 +109,7 @@ class TestIntervention:
 
         assert intervention.suggested_action == InterventionAction.ABORT
 
-    def test_suggested_action_budget_exceeded(
-        self, sample_waypoint: Waypoint
-    ) -> None:
+    def test_suggested_action_budget_exceeded(self, sample_waypoint: Waypoint) -> None:
         """Budget exceeded should suggest WAIT."""
         intervention = Intervention(
             type=InterventionType.BUDGET_EXCEEDED,

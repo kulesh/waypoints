@@ -13,9 +13,10 @@ Benefits:
 """
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from waypoints.fly.executor import ExecutionResult
+from waypoints.fly.executor import ExecutionContext, ExecutionResult
 from waypoints.fly.intervention import Intervention, InterventionAction
 from waypoints.models import (
     DialogueHistory,
@@ -38,12 +39,18 @@ from waypoints.orchestration.types import (
 )
 
 if TYPE_CHECKING:
+    from waypoints.fly.executor import WaypointExecutor
     from waypoints.git.config import GitConfig
     from waypoints.git.service import GitService
     from waypoints.llm.client import ChatClient
     from waypoints.llm.metrics import MetricsCollector
 
-    from .types import CommitResult
+    from .types import (
+        BudgetWaitDetails,
+        CommitResult,
+        InterventionPresentation,
+        RollbackResult,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +157,58 @@ class JourneyCoordinator:
     def select_next_waypoint(self, include_failed: bool = False) -> Waypoint | None:
         return self._fly.select_next_waypoint(include_failed)
 
+    def create_executor(
+        self,
+        waypoint: Waypoint,
+        spec: str,
+        on_progress: "Callable[[ExecutionContext], None] | None" = None,
+        max_iterations: int = 10,
+        host_validations_enabled: bool = True,
+    ) -> "WaypointExecutor":
+        return self._fly.create_executor(
+            waypoint, spec, on_progress, max_iterations, host_validations_enabled
+        )
+
+    def cancel_execution(self) -> None:
+        self._fly.cancel_execution()
+
+    def clear_executor(self) -> None:
+        self._fly.clear_executor()
+
+    def log_pause(self) -> None:
+        self._fly.log_pause()
+
+    def log_git_commit(self, success: bool, commit_hash: str, message: str) -> None:
+        self._fly.log_git_commit(success, commit_hash, message)
+
+    def log_intervention_resolved(self, action: str, **params: Any) -> None:
+        self._fly.log_intervention_resolved(action, **params)
+
+    def classify_intervention(
+        self, intervention: "Intervention"
+    ) -> "InterventionPresentation":
+        return self._fly.classify_intervention(intervention)
+
+    def store_worker_intervention(self, intervention: "Intervention") -> None:
+        self._fly.store_worker_intervention(intervention)
+
+    def take_worker_intervention(self) -> "Intervention | None":
+        return self._fly.take_worker_intervention()
+
+    def clear_intervention(self) -> None:
+        self._fly.clear_intervention()
+
+    @property
+    def current_intervention(self) -> "Intervention | None":
+        return self._fly.current_intervention
+
+    def compute_budget_wait(
+        self,
+        intervention: "Intervention",
+        current_waypoint_id: str | None = None,
+    ) -> "BudgetWaitDetails":
+        return self._fly.compute_budget_wait(intervention, current_waypoint_id)
+
     async def execute_waypoint(
         self,
         waypoint: Waypoint,
@@ -175,6 +234,9 @@ class JourneyCoordinator:
         git_config: "GitConfig | None" = None,
     ) -> "CommitResult":
         return self._fly.commit_waypoint(waypoint, git_config)
+
+    def rollback_to_tag(self, tag: str | None) -> "RollbackResult":
+        return self._fly.rollback_to_tag(tag)
 
     def check_parent_completion(self, waypoint: Waypoint) -> None:
         self._fly.check_parent_completion(waypoint)

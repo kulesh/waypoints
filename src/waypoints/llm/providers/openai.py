@@ -595,9 +595,7 @@ class OpenAIProvider(LLMProvider):
         if len(messages) <= cls._MAX_RESUMABLE_MESSAGES:
             return messages
         first = (
-            messages[0]
-            if messages and messages[0].get("role") == "system"
-            else None
+            messages[0] if messages and messages[0].get("role") == "system" else None
         )
         body = messages[1:] if first is not None else messages
         trimmed_body = body[-cls._MAX_RESUMABLE_MESSAGES :]

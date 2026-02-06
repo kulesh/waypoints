@@ -159,6 +159,5 @@ def test_build_status_line_idle_shows_non_zero_cost() -> None:
         cost=0.5,
     )
     assert (
-        line
-        == "HostVal: OFF (LLM-as-judge)    $0.50    Paused. Press 'r' to continue"
+        line == "HostVal: OFF (LLM-as-judge)    $0.50    Paused. Press 'r' to continue"
     )

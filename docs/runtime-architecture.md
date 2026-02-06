@@ -75,9 +75,15 @@ main.py
 └──────────────────────────┘
 
 FLY execution path (from coordinator):
+┌──────────────────────────────────────────────────────────────┐
+│ src/waypoints/orchestration/fly_phase.py                     │
+│ FlyPhase: executor lifecycle, intervention, budget, rollback │
+└─────┬────────────────────────────────────────────────────────┘
+      │ creates + manages
+      ▼
 ┌─────────────────────────────────────────────────────┐
-│ src/waypoints/fly/executor.py                         │
-│ WaypointExecutor                                      │
+│ src/waypoints/fly/executor.py                       │
+│ WaypointExecutor (_LoopState + focused sub-methods) │
 └─────┬────────────────────────────────────────────────┘
       │ uses
       ▼
@@ -157,14 +163,16 @@ Genspec + verification paths (CLI + TUI export):
 ### FLY (Execution)
 
 - `src/waypoints/tui/screens/fly.py`
-  - Uses `JourneyCoordinator` for:
+  - Delegates all business logic to `JourneyCoordinator` / `FlyPhase`:
     - journey transitions (`FLY_READY`, `FLY_EXECUTING`, `FLY_PAUSED`, `FLY_INTERVENTION`, `LAND_REVIEW`)
-    - saving flight plan
-    - parent completion checks (`check_parent_completion`)
-  - Uses `WaypointExecutor` directly for execution loop and logs.
-  - Intervention handling:
-    - transitions state and shows `InterventionModal`
-    - uses coordinator for some waypoint status transitions and persistence
+    - executor lifecycle (`create_executor`, `cancel_execution`, `execute_waypoint`)
+    - waypoint status mutations (`mark_waypoint_status`)
+    - intervention classification and state (`classify_intervention`, `handle_intervention`)
+    - budget wait computation (`compute_budget_wait`)
+    - git rollback (`rollback_to_tag`) and commit (`commit_waypoint`)
+    - execution logging (`log_pause`, `log_git_commit`, `log_intervention_resolved`)
+    - flight plan persistence and parent completion checks
+  - FlyScreen is a pure UI layer: renders progress, manages timers, shows modals
 
 ### LAND (Completion Hub)
 
@@ -187,8 +195,9 @@ Genspec + verification paths (CLI + TUI export):
 
 ## Notes on Ownership
 
-- `JourneyCoordinator` owns most business logic and persistence for SHAPE/CHART/FLY.
-- `FlyScreen` still orchestrates execution directly via `WaypointExecutor`; this is
-  the largest remaining place where UI and business logic are interleaved.
+- `JourneyCoordinator` owns all business logic and persistence for SHAPE/CHART/FLY.
+  It delegates to phase-specific classes: `FlyPhase`, `ChartPhase`, `ShapePhase`.
+- `FlyPhase` manages executor lifecycle, intervention state, budget wait computation,
+  git rollback, and execution logging. FlyScreen delegates to it for all business logic.
 - `WaypointsApp` controls resume routing by journey phase and loads docs/plan
   from disk before entering screens.

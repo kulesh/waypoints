@@ -252,18 +252,17 @@ class TestWorkerInterventionHandling:
                 )
                 raise InterventionNeededError(intervention)
 
-        screen = FlyScreen.__new__(FlyScreen)
-        screen._executor = FakeExecutor()
-        screen._pending_worker_intervention = None
+        fp = FlightPlan()
+        screen = make_test_screen(fp)
+        # Inject fake executor through the coordinator's fly phase
+        screen.coordinator._fly._active_executor = FakeExecutor()  # type: ignore[assignment]
 
         result = asyncio.run(screen._run_executor())
 
         assert result == ExecutionResult.INTERVENTION_NEEDED
-        assert screen._pending_worker_intervention is not None
-        assert (
-            screen._pending_worker_intervention.type
-            == InterventionType.BUDGET_EXCEEDED
-        )
+        pending = screen.coordinator.take_worker_intervention()
+        assert pending is not None
+        assert pending.type == InterventionType.BUDGET_EXCEEDED
 
 
 class TestSelectNextWaypoint:

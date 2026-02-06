@@ -6,11 +6,31 @@ to communicate with UI layers and external callers.
 
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from waypoints.fly.intervention import Intervention
+    from waypoints.models.flight_plan import FlightPlan
     from waypoints.models.waypoint import Waypoint
+
+
+# --- Intervention Presentation ---
+
+
+@dataclass
+class InterventionPresentation:
+    """How the UI should present an intervention to the user.
+
+    Returned by FlyPhase.classify_intervention() so FlyScreen only
+    deals with presentation, not business classification.
+    """
+
+    show_modal: bool
+    """True: show the intervention modal. False: auto-handle (budget wait)."""
+
+    intervention: "Intervention"
+    """The original intervention object."""
 
 
 # --- Callback Types ---
@@ -36,6 +56,36 @@ ChunkCallback = Callable[[str], None]
 
 
 # --- Result Types ---
+
+
+@dataclass
+class BudgetWaitDetails:
+    """Extracted budget wait information from an intervention.
+
+    Computed by FlyPhase so the UI doesn't need to parse intervention context.
+    """
+
+    waypoint_id: str
+    """The waypoint that was paused for budget."""
+
+    resume_at: "datetime | None" = None
+    """UTC timestamp when budget resets, or None if unknown."""
+
+    configured_budget_usd: float | None = None
+    """The configured budget limit."""
+
+    current_cost_usd: float | None = None
+    """How much has been spent so far."""
+
+
+@dataclass
+class RollbackResult:
+    """Result of a git rollback operation."""
+
+    success: bool
+    message: str
+    flight_plan: "FlightPlan | None" = None
+    """Reloaded flight plan after rollback, or None on failure."""
 
 
 @dataclass

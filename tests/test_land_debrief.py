@@ -188,9 +188,7 @@ def test_waypoint_costs_include_provenance_proxy(tmp_path: Path) -> None:
                     '{"type":"workspace_diff","iteration":1,"result":"success",'
                     '"approx_tokens_changed":1200,"total_files_changed":4,'
                     '"files_added":1,"files_modified":2,"files_deleted":1,'
-                    '"timestamp":"'
-                    + completed
-                    + '"}'
+                    '"timestamp":"' + completed + '"}'
                 ),
                 (
                     '{"type":"completion","result":"success","total_cost_usd":1.2,'

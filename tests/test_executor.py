@@ -1228,9 +1228,9 @@ async def test_finalize_exposes_host_failure_details(tmp_path: Path) -> None:
     executor._log_writer = DummyLogWriter()
 
     command = (
-        "python -c \"import sys; "
+        'python -c "import sys; '
         "print('unused assignment in validator.rs:90', file=sys.stderr); "
-        "sys.exit(101)\""
+        'sys.exit(101)"'
     )
     validation_commands = [
         ValidationCommand(name="linting", command=command, category="lint")

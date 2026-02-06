@@ -16,7 +16,7 @@
 | **P1** | Schema Versioning | Future-proofs persistence | Low |
 | **P1** | LLM Output Validation | Prevents silent failures | Medium |
 | **P1** | Centralized Paths | Reduces config bugs | Low |
-| **P2** | Orchestration Layer | Enables testing, headless mode | High |
+| **P2** | Orchestration Layer ✓ | Enables testing, headless mode | High |
 | **P2** | Execution Protocol | Deterministic FLY phase | High |
 
 ---
@@ -625,11 +625,18 @@ def get_paths() -> WaypointsPaths:
 
 ## P2: Valuable (Do When Ready)
 
-### 7. Orchestration Layer
+### 7. Orchestration Layer ✓ COMPLETE
 
 **Problem**: TUI screens contain business logic. Can't test without UI. Can't run headless.
 
 **Solution**: Extract coordination to `JourneyCoordinator`.
+
+**Status**: Implemented. `JourneyCoordinator` delegates to phase-specific classes
+(`FlyPhase`, `ChartPhase`, `ShapePhase`). FlyScreen no longer imports
+`WaypointExecutor`, `GitService`, or directly mutates waypoint status. All business
+logic flows through the orchestration layer. Executor internals decomposed from a
+single 715-line method into focused sub-methods sharing state via `_LoopState`.
+Modal CSS duplication eliminated via `WaypointModalBase`.
 
 ```python
 # orchestration/coordinator.py
@@ -889,7 +896,7 @@ orchestration/events.py     # Event types
 | `waypoints-f0p` | Schema Versioning for JSONL | P1 | Ready | — |
 | `waypoints-hpo` | LLM Output Validation | P1 | Ready | — |
 | `waypoints-15q` | Centralized Path Management | P1 | Ready | — |
-| `waypoints-vku` | Orchestration Layer | P2 | Blocked | `waypoints-4kn` |
+| `waypoints-vku` | Orchestration Layer | P2 | **Complete** | `waypoints-4kn` |
 | `waypoints-zgf` | Structured Execution Protocol | P2 | Blocked | `waypoints-d0j`, `waypoints-vku` |
 
 ### Dependency Graph

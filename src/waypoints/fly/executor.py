@@ -145,6 +145,42 @@ class ExecutionContext:
 ProgressCallback = Callable[[ExecutionContext], None]
 
 
+@dataclass
+class _LoopState:
+    """Mutable state accumulated across iterations of the execution loop.
+
+    Extracted so _execute_impl methods can read/modify shared state
+    without 26+ local variables threading through call signatures.
+    """
+
+    iteration: int = 0
+    full_output: str = ""
+    reported_validation_commands: list[str] = field(default_factory=list)
+    captured_criteria: dict[int, "CriterionVerification"] = field(default_factory=dict)
+    tool_validation_evidence: dict[str, "CapturedEvidence"] = field(
+        default_factory=dict
+    )
+    tool_validation_categories: dict[str, "CapturedEvidence"] = field(
+        default_factory=dict
+    )
+    logged_stage_reports: set[tuple[object, ...]] = field(default_factory=set)
+    completion_detected: bool = False
+    completion_iteration: int | None = None
+    completion_output: str | None = None
+    completion_criteria: set[int] | None = None
+    resume_session_id: str | None = None
+    next_reason_code: str = "initial"
+    next_reason_detail: str = "Initial waypoint execution."
+    protocol_derailment_streak: int = 0
+    protocol_derailments: list[str] = field(default_factory=list)
+    workspace_before: "WorkspaceSnapshot | None" = None
+    prompt: str = ""
+    completion_marker: str = ""
+    # Per-iteration state (reset at start of each _run_iteration)
+    iter_scope_drift_detected: bool = False
+    iter_stage_reports_logged: int = 0
+
+
 class WaypointExecutor:
     """Executes a waypoint using agentic AI.
 
@@ -232,11 +268,15 @@ class WaypointExecutor:
             os.chdir(original_cwd)
 
     async def _execute_impl(self, project_path: Path) -> ExecutionResult:
-        """Internal implementation of execute, runs in project directory."""
-        # Initialize execution log early — _make_finalizer requires it
+        """Internal implementation of execute, runs in project directory.
+
+        Orchestrates iterations by delegating to focused methods:
+        - _run_iteration: stream one agent turn, parse evidence
+        - _handle_completion: finalize receipt, return or retry
+        - _escalate_if_needed: check protocol derailments, stuck agent
+        """
         self._log_writer = ExecutionLogWriter(self.project, self.waypoint)
 
-        # Load checklist from project (creates default if not exists)
         checklist = Checklist.load(self.project)
         self._validation_commands = self._resolve_validation_commands(
             project_path, checklist
@@ -260,695 +300,690 @@ class WaypointExecutor:
             "Starting execution of %s: %s", self.waypoint.id, self.waypoint.title
         )
         logger.info("Execution log: %s", self._log_writer.file_path)
-        workspace_before = self._capture_workspace_snapshot(project_path)
 
-        iteration = 0
-        full_output = ""
-        reported_validation_commands: list[str] = []
-        # Criteria verification evidence
-        captured_criteria: dict[int, CriterionVerification] = {}
-        tool_validation_evidence: dict[str, CapturedEvidence] = {}
-        tool_validation_categories: dict[str, CapturedEvidence] = {}
-        logged_stage_reports: set[tuple[object, ...]] = set()
-        completion_marker = f"<waypoint-complete>{self.waypoint.id}</waypoint-complete>"
-        completion_detected = False
-        completion_iteration: int | None = None
-        completion_output: str | None = None
-        completion_criteria: set[int] | None = None
-        resume_session_id: str | None = None
-        next_reason_code = "initial"
-        next_reason_detail = "Initial waypoint execution."
-        protocol_derailment_streak = 0
-        protocol_derailments: list[str] = []
+        s = _LoopState(
+            workspace_before=self._capture_workspace_snapshot(project_path),
+            prompt=prompt,
+            completion_marker=(
+                f"<waypoint-complete>{self.waypoint.id}</waypoint-complete>"
+            ),
+        )
 
-        while iteration < self.max_iterations:
+        while s.iteration < self.max_iterations:
             if self._cancelled:
-                logger.info("Execution cancelled")
-                self._log_writer.log_completion(ExecutionResult.CANCELLED.value)
-                workspace_summary = self._log_workspace_provenance(
-                    project_path,
-                    workspace_before,
-                    iteration,
-                    ExecutionResult.CANCELLED.value,
-                )
-                self._persist_waypoint_memory(
-                    project_path=project_path,
-                    result=ExecutionResult.CANCELLED.value,
-                    iteration=iteration,
-                    reported_validation_commands=reported_validation_commands,
-                    captured_criteria=captured_criteria,
-                    tool_validation_evidence=tool_validation_evidence,
-                    protocol_derailments=protocol_derailments,
-                    workspace_summary=workspace_summary,
-                )
-                return ExecutionResult.CANCELLED
+                return self._finish(project_path, s, ExecutionResult.CANCELLED)
 
-            iteration += 1
-            logger.info("Iteration %d/%d", iteration, self.max_iterations)
-
+            s.iteration += 1
+            logger.info("Iteration %d/%d", s.iteration, self.max_iterations)
             self._report_progress(
-                iteration, self.max_iterations, "executing", f"Iteration {iteration}"
+                s.iteration,
+                self.max_iterations,
+                "executing",
+                f"Iteration {s.iteration}",
             )
 
-            # Log iteration start
-            reason_code = next_reason_code
-            reason_detail = next_reason_detail
             iter_prompt = (
-                prompt
-                if iteration == 1
+                s.prompt
+                if s.iteration == 1
                 else self._build_iteration_kickoff_prompt(
-                    reason_code=reason_code,
-                    reason_detail=reason_detail,
-                    completion_marker=completion_marker,
-                    captured_criteria=captured_criteria,
+                    reason_code=s.next_reason_code,
+                    reason_detail=s.next_reason_detail,
+                    completion_marker=s.completion_marker,
+                    captured_criteria=s.captured_criteria,
                 )
             )
-            self._log_writer.log_iteration_start(
-                iteration=iteration,
-                prompt=iter_prompt,
-                reason_code=reason_code,
-                reason_detail=reason_detail,
-                resume_session_id=resume_session_id,
-                memory_waypoint_ids=(
-                    list(self._waypoint_memory_ids) if iteration == 1 else None
-                ),
-                memory_context_chars=(
-                    len(self._waypoint_memory_context or "") if iteration == 1 else None
-                ),
-                spec_context_summary_chars=(
-                    len(self.waypoint.spec_context_summary.strip())
-                    if iteration == 1
-                    else None
-                ),
-                spec_section_ref_count=(
-                    len(self.waypoint.spec_section_refs) if iteration == 1 else None
-                ),
-                spec_context_hash=(
-                    self.waypoint.spec_context_hash if iteration == 1 else None
-                ),
-                current_spec_hash=(
-                    self._current_spec_hash if iteration == 1 else None
-                ),
-                spec_context_stale=(
-                    self._spec_context_stale if iteration == 1 else None
-                ),
-                full_spec_pointer=(
-                    "docs/product-spec.md" if iteration == 1 else None
-                ),
-            )
 
-            # Run agent query with file and bash tools
-            iteration_output = ""
-            iteration_cost: float | None = None
-            iteration_file_ops: list[FileOperation] = []
-            iteration_stage_reports_logged = 0
-            scope_drift_detected = False
+            self._log_iteration_start(s, iter_prompt)
+
             try:
-                async for chunk in agent_query(
-                    prompt=iter_prompt,
-                    system_prompt=self._get_system_prompt(),
-                    allowed_tools=[
-                        "Read",
-                        "Write",
-                        "Edit",
-                        "Bash",
-                        "Glob",
-                        "Grep",
-                        "WebSearch",
-                        "WebFetch",
-                    ],
-                    cwd=str(project_path),
-                    resume_session_id=resume_session_id,
-                    metrics_collector=self.metrics_collector,
-                    phase="fly",
-                    waypoint_id=self.waypoint.id,
-                ):
-                    if isinstance(chunk, StreamChunk):
-                        iteration_output += chunk.text
-                        full_output += chunk.text
-
-                        if not completion_detected:
-                            # Parse validation evidence markers BEFORE completion check
-                            for match in VALIDATION_PATTERN.findall(full_output):
-                                command, _, _ = match
-                                normalized_command = command.strip()
-                                if not normalized_command:
-                                    continue
-                                if normalized_command in reported_validation_commands:
-                                    continue
-
-                                reported_validation_commands.append(normalized_command)
-                                category = _detect_validation_category(
-                                    normalized_command
-                                )
-                                if category:
-                                    logger.info(
-                                        "Model reported validation command for %s: %s",
-                                        category,
-                                        normalized_command,
-                                    )
-
-                            # Parse criterion verification markers
-                            for match in CRITERION_PATTERN.findall(full_output):
-                                index, status, text, evidence = match
-                                idx = int(index)
-                                if idx not in captured_criteria:
-                                    captured_criteria[idx] = CriterionVerification(
-                                        index=idx,
-                                        criterion=text.strip(),
-                                        status=status,
-                                        evidence=evidence.strip(),
-                                        verified_at=datetime.now(UTC),
-                                    )
-                                    logger.info(
-                                        "Captured criterion verification: [%d] %s",
-                                        idx,
-                                        status,
-                                    )
-
-                            # Parse structured execution stage reports
-                            for report in parse_stage_reports(full_output):
-                                key = (
-                                    report.stage,
-                                    report.success,
-                                    report.output,
-                                    tuple(report.artifacts),
-                                    report.next_stage,
-                                )
-                                if key in logged_stage_reports:
-                                    continue
-                                logged_stage_reports.add(key)
-                                iteration_stage_reports_logged += 1
-                                self._log_writer.log_stage_report(iteration, report)
-                                output = report.output.strip()
-                                if len(output) > 400:
-                                    output = output[:400] + "..."
-                                summary = f"{report.stage.value}: {output}".strip()
-                                self._report_progress(
-                                    iteration,
-                                    self.max_iterations,
-                                    "stage",
-                                    summary,
-                                )
-
-                            # Check for completion marker in this iteration output.
-                            # Using iteration-local output avoids latching old markers
-                            # when a completion attempt fails receipt validation.
-                            if completion_marker in iteration_output:
-                                logger.info("Completion marker found!")
-                                completion_detected = True
-                                completion_iteration = iteration
-                                completion_output = iteration_output
-                                criterion_matches = CRITERION_PATTERN.findall(
-                                    iteration_output
-                                )
-                                completion_criteria = {
-                                    int(m[0]) for m in criterion_matches
-                                }
-                                self._log_writer.log_completion_detected(iteration)
-
-                        if completion_detected:
-                            continue
-
-                        # Parse criterion completion markers from full output
-                        criterion_matches = CRITERION_PATTERN.findall(full_output)
-                        completed_indices = {int(m[0]) for m in criterion_matches}
-
-                        # Report streaming progress with criteria status
-                        self._report_progress(
-                            iteration,
-                            self.max_iterations,
-                            "streaming",
-                            chunk.text,
-                            criteria_completed=completed_indices,
-                        )
-
-                    elif isinstance(chunk, StreamToolUse):
-                        # Log tool call (input only, output handled by SDK)
-                        self._log_writer.log_tool_call(
-                            iteration,
-                            chunk.tool_name,
-                            chunk.tool_input,
-                            chunk.tool_output,
-                        )
-                        if (
-                            isinstance(chunk.tool_output, str)
-                            and "Error: Access denied:" in chunk.tool_output
-                        ):
-                            scope_drift_detected = True
-                        if chunk.tool_name == "Bash":
-                            command = chunk.tool_input.get("command")
-                            if isinstance(command, str) and chunk.tool_output:
-                                category = _detect_validation_category(command)
-                                stdout, stderr, exit_code = _parse_tool_output(
-                                    chunk.tool_output
-                                )
-                                evidence = CapturedEvidence(
-                                    command=command,
-                                    exit_code=exit_code,
-                                    stdout=stdout,
-                                    stderr=stderr,
-                                    captured_at=datetime.now(UTC),
-                                )
-                                tool_validation_evidence[
-                                    _normalize_command(command)
-                                ] = evidence
-                                if category:
-                                    tool_validation_categories[category] = evidence
-                        # Extract and track file operation
-                        file_op = _extract_file_operation(
-                            chunk.tool_name, chunk.tool_input
-                        )
-                        if file_op:
-                            iteration_file_ops.append(file_op)
-                            self._file_operations.append(file_op)
-                            # Report progress with updated file operations
-                            self._report_progress(
-                                iteration,
-                                self.max_iterations,
-                                "tool_use",
-                                f"{file_op.tool_name}: {file_op.file_path}",
-                                file_operations=iteration_file_ops,
-                            )
-
-                    elif isinstance(chunk, StreamComplete):
-                        iteration_cost = chunk.cost_usd
-                        if chunk.session_id:
-                            resume_session_id = chunk.session_id
-                        logger.info(
-                            "Iteration %d complete, cost: $%.4f",
-                            iteration,
-                            chunk.cost_usd or 0,
-                        )
-
-                if completion_detected:
-                    self.steps.append(
-                        ExecutionStep(
-                            iteration=completion_iteration or iteration,
-                            action="complete",
-                            output=completion_output or iteration_output,
-                        )
-                    )
-                    final_completed = completion_criteria or set()
-                    self._log_writer.log_output(
-                        iteration,
-                        completion_output or iteration_output,
-                        final_completed,
-                    )
-                    self._log_writer.log_iteration_end(iteration, iteration_cost)
-
-                    finalizer = self._make_finalizer()
-                    receipt_valid = await finalizer.finalize(
-                        project_path=project_path,
-                        captured_criteria=captured_criteria,
-                        validation_commands=self._validation_commands,
-                        reported_validation_commands=reported_validation_commands,
-                        tool_validation_evidence=tool_validation_evidence,
-                        tool_validation_categories=tool_validation_categories,
-                        host_validations_enabled=self.host_validations_enabled,
-                        max_iterations=self.max_iterations,
-                    )
-
-                    if receipt_valid:
-                        self._report_progress(
-                            iteration,
-                            MAX_ITERATIONS,
-                            "complete",
-                            "Waypoint complete with valid receipt!",
-                        )
-                        self._log_writer.log_completion(ExecutionResult.SUCCESS.value)
-                        workspace_summary = self._log_workspace_provenance(
-                            project_path,
-                            workspace_before,
-                            iteration,
-                            ExecutionResult.SUCCESS.value,
-                        )
-                        self._persist_waypoint_memory(
-                            project_path=project_path,
-                            result=ExecutionResult.SUCCESS.value,
-                            iteration=iteration,
-                            reported_validation_commands=reported_validation_commands,
-                            captured_criteria=captured_criteria,
-                            tool_validation_evidence=tool_validation_evidence,
-                            protocol_derailments=protocol_derailments,
-                            workspace_summary=workspace_summary,
-                        )
-                        return ExecutionResult.SUCCESS
-
-                    failure_summary = "Receipt validation failed."
-                    if hasattr(finalizer, "last_failure_summary"):
-                        summary_func = getattr(finalizer, "last_failure_summary")
-                        if callable(summary_func):
-                            failure_summary = summary_func()
-                    logger.warning(
-                        "Receipt invalid for %s at iteration %d. Retrying: %s",
-                        self.waypoint.id,
-                        iteration,
-                        failure_summary,
-                    )
-                    self._report_progress(
-                        iteration,
-                        MAX_ITERATIONS,
-                        "validation_failed",
-                        f"Host validation failed; retrying. {failure_summary}",
-                    )
-                    self._log_writer.log_error(
-                        iteration,
-                        (
-                            "Completion marker emitted but receipt was invalid: "
-                            f"{failure_summary}"
-                        ),
-                    )
-                    next_reason_code = "host_validation_failed"
-                    next_reason_detail = failure_summary
-                    completion_detected = False
-                    completion_iteration = None
-                    completion_output = None
-                    completion_criteria = None
-                    self.steps.append(
-                        ExecutionStep(
-                            iteration=iteration,
-                            action="receipt_retry",
-                            output=failure_summary,
-                        )
-                    )
-                    continue
-
+                iteration_output, iteration_cost = await self._run_iteration(
+                    project_path, s, iter_prompt
+                )
             except Exception as e:
-                logger.exception("Error during iteration %d: %s", iteration, e)
+                self._handle_iteration_error(project_path, s, e)
+                # _handle_iteration_error always raises
+                raise  # unreachable, satisfies type checker
 
-                # Classify the error for better user feedback
-                api_error_type = classify_api_error(e)
-                # If output mentions budget/rate-limit issues, override classification
-                lower_output = full_output.lower()
-                if api_error_type == APIErrorType.UNKNOWN:
-                    for pattern in BUDGET_PATTERNS:
-                        if pattern in lower_output:
-                            api_error_type = APIErrorType.BUDGET_EXCEEDED
-                            break
-                    if api_error_type == APIErrorType.UNKNOWN:
-                        for pattern in RATE_LIMIT_PATTERNS:
-                            if pattern in lower_output:
-                                api_error_type = APIErrorType.RATE_LIMITED
-                                break
-                        if api_error_type == APIErrorType.UNKNOWN:
-                            for pattern in UNAVAILABLE_PATTERNS:
-                                if pattern in lower_output:
-                                    api_error_type = APIErrorType.API_UNAVAILABLE
-                                    break
+            if s.completion_detected:
+                result = await self._handle_completion(
+                    project_path, s, iteration_output, iteration_cost
+                )
+                if result is not None:
+                    return result
+                continue  # receipt failed, retry
 
-                # Map API error type to intervention type
-                intervention_type = {
-                    APIErrorType.RATE_LIMITED: InterventionType.RATE_LIMITED,
-                    APIErrorType.API_UNAVAILABLE: InterventionType.API_UNAVAILABLE,
-                    APIErrorType.BUDGET_EXCEEDED: InterventionType.BUDGET_EXCEEDED,
-                }.get(api_error_type, InterventionType.EXECUTION_ERROR)
-
-                # Create user-friendly error summary
-                error_summaries = {
-                    APIErrorType.RATE_LIMITED: (
-                        "Model provider rate limit reached. "
-                        "Wait a few minutes and retry."
-                    ),
-                    APIErrorType.API_UNAVAILABLE: (
-                        "Model provider temporarily unavailable. Try again shortly."
-                    ),
-                    APIErrorType.BUDGET_EXCEEDED: (
-                        "Model usage budget exceeded. "
-                        "Execution paused until budget resets."
-                    ),
-                }
-                error_summary = error_summaries.get(api_error_type, str(e))
-
-                # For budget errors, include additional budget context when possible.
-                # Some providers wrap errors in generic subprocess failures while the
-                # streamed text still includes reset timing (e.g. "resets 1am (...)").
-                reset_at = extract_reset_datetime(str(e))
-                if reset_at is None and full_output:
-                    reset_at = extract_reset_datetime(full_output)
-                if api_error_type == APIErrorType.BUDGET_EXCEEDED:
-                    if isinstance(e, BudgetExceededError):
-                        error_summary = (
-                            f"Configured budget ${e.limit_value:.2f} reached "
-                            f"(current ${e.current_value:.2f}). "
-                            "Execution paused until you increase the budget."
-                        )
-                    elif (reset_time := extract_reset_time(str(e))) is not None:
-                        error_summary = (
-                            f"Model usage budget exceeded. Resets {reset_time}."
-                        )
-                    elif (reset_time := extract_reset_time(full_output)) is not None:
-                        error_summary = (
-                            f"Model usage budget exceeded. Resets {reset_time}."
-                        )
-
-                self._report_progress(
-                    iteration, self.max_iterations, "error", f"Error: {error_summary}"
-                )
-                self.steps.append(
-                    ExecutionStep(
-                        iteration=iteration,
-                        action="error",
-                        output=str(e),
-                    )
-                )
-                # Log error
-                self._log_writer.log_error(iteration, str(e))
-                self._log_writer.log_completion(ExecutionResult.FAILED.value)
-
-                # Raise InterventionNeededError with classified type
-                intervention = Intervention(
-                    type=intervention_type,
-                    waypoint=self.waypoint,
-                    iteration=iteration,
-                    max_iterations=self.max_iterations,
-                    error_summary=error_summary,
-                    context={
-                        "full_output": full_output[-2000:],
-                        "api_error_type": api_error_type.value,
-                        "original_error": str(e),
-                        "configured_budget_usd": settings.llm_budget_usd,
-                        "current_cost_usd": (
-                            self.metrics_collector.total_cost
-                            if self.metrics_collector
-                            else None
-                        ),
-                        "resume_at_utc": (
-                            reset_at.astimezone(UTC).isoformat() if reset_at else None
-                        ),
-                    },
-                )
-                self._log_writer.log_intervention_needed(
-                    iteration, intervention.type.value, error_summary
-                )
-                workspace_summary = self._log_workspace_provenance(
-                    project_path,
-                    workspace_before,
-                    iteration,
-                    ExecutionResult.INTERVENTION_NEEDED.value,
-                )
-                self._persist_waypoint_memory(
-                    project_path=project_path,
-                    result=ExecutionResult.INTERVENTION_NEEDED.value,
-                    iteration=iteration,
-                    reported_validation_commands=reported_validation_commands,
-                    captured_criteria=captured_criteria,
-                    tool_validation_evidence=tool_validation_evidence,
-                    protocol_derailments=protocol_derailments,
-                    workspace_summary=workspace_summary,
-                    error_summary=error_summary,
-                )
-                raise InterventionNeededError(intervention) from e
-
-            # Parse final criteria state and log iteration output
-            final_criteria = CRITERION_PATTERN.findall(full_output)
-            final_completed = {int(m[0]) for m in final_criteria}
-            self._log_writer.log_output(iteration, iteration_output, final_completed)
-            self._log_writer.log_iteration_end(iteration, iteration_cost)
-            verified_criteria = {
-                idx
-                for idx, criterion in captured_criteria.items()
-                if criterion.status == "verified"
-            }
-            unresolved_criteria = sorted(
-                set(range(len(self.waypoint.acceptance_criteria))) - verified_criteria
-            )
-            protocol_issues = self._detect_protocol_issues(
-                iteration_output=iteration_output,
-                completion_marker=completion_marker,
-                stage_reports_logged=iteration_stage_reports_logged,
-                scope_drift_detected=scope_drift_detected,
-            )
-            if protocol_issues:
-                escalation_issues = [
-                    issue
-                    for issue in protocol_issues
-                    if issue != "missing structured stage report"
-                ]
-                protocol_derailments.extend(protocol_issues)
-                if escalation_issues:
-                    protocol_derailment_streak += 1
-                else:
-                    protocol_derailment_streak = 0
-                next_reason_code = "protocol_violation"
-                next_reason_detail = "; ".join(protocol_issues)
-                self._log_writer.log_protocol_derailment(
-                    iteration=iteration,
-                    issues=protocol_issues,
-                    action=(
-                        "escalate_intervention"
-                        if protocol_derailment_streak >= MAX_PROTOCOL_DERAILMENT_STREAK
-                        else "nudge_and_retry"
-                    ),
-                )
-            elif unresolved_criteria:
-                protocol_derailment_streak = 0
-                remaining_labels = ", ".join(
-                    f"[{idx}] {self.waypoint.acceptance_criteria[idx]}"
-                    for idx in unresolved_criteria
-                )
-                next_reason_code = "incomplete_criteria"
-                next_reason_detail = (
-                    f"{len(unresolved_criteria)} criteria unresolved: "
-                    f"{remaining_labels}"
-                )
-            else:
-                protocol_derailment_streak = 0
-                next_reason_code = "validation_failure"
-                next_reason_detail = (
-                    "Criteria appear complete, but completion protocol was "
-                    "not satisfied."
-                )
-
-            if protocol_derailment_streak >= MAX_PROTOCOL_DERAILMENT_STREAK:
-                summary = (
-                    "Execution repeatedly violated waypoint protocol. "
-                    f"Issues: {next_reason_detail}"
-                )
-                self._log_writer.log_error(iteration, summary)
-                self._log_writer.log_completion(
-                    ExecutionResult.INTERVENTION_NEEDED.value
-                )
-                intervention = Intervention(
-                    type=InterventionType.EXECUTION_ERROR,
-                    waypoint=self.waypoint,
-                    iteration=iteration,
-                    max_iterations=self.max_iterations,
-                    error_summary=summary,
-                    context={
-                        "full_output": full_output[-2000:],
-                        "reason_code": next_reason_code,
-                    },
-                )
-                self._log_writer.log_intervention_needed(
-                    iteration, intervention.type.value, summary
-                )
-                workspace_summary = self._log_workspace_provenance(
-                    project_path,
-                    workspace_before,
-                    iteration,
-                    ExecutionResult.INTERVENTION_NEEDED.value,
-                )
-                self._persist_waypoint_memory(
-                    project_path=project_path,
-                    result=ExecutionResult.INTERVENTION_NEEDED.value,
-                    iteration=iteration,
-                    reported_validation_commands=reported_validation_commands,
-                    captured_criteria=captured_criteria,
-                    tool_validation_evidence=tool_validation_evidence,
-                    protocol_derailments=protocol_derailments,
-                    workspace_summary=workspace_summary,
-                    error_summary=summary,
-                )
-                raise InterventionNeededError(intervention)
-
-            # Record step
-            self.steps.append(
-                ExecutionStep(
-                    iteration=iteration,
-                    action="iterate",
-                    output=iteration_output,
-                )
-            )
-
-            # Check if agent is stuck or needs human help
-            if self._needs_intervention(iteration_output):
-                logger.info("Human intervention needed")
-                reason = self._extract_intervention_reason(iteration_output)
-                self._log_writer.log_error(iteration, f"Intervention needed: {reason}")
-                self._log_writer.log_completion(
-                    ExecutionResult.INTERVENTION_NEEDED.value
-                )
-                intervention = Intervention(
-                    type=InterventionType.USER_REQUESTED,
-                    waypoint=self.waypoint,
-                    iteration=iteration,
-                    max_iterations=self.max_iterations,
-                    error_summary=reason,
-                    context={"full_output": full_output[-2000:]},
-                )
-                self._log_writer.log_intervention_needed(
-                    iteration, intervention.type.value, reason
-                )
-                workspace_summary = self._log_workspace_provenance(
-                    project_path,
-                    workspace_before,
-                    iteration,
-                    ExecutionResult.INTERVENTION_NEEDED.value,
-                )
-                self._persist_waypoint_memory(
-                    project_path=project_path,
-                    result=ExecutionResult.INTERVENTION_NEEDED.value,
-                    iteration=iteration,
-                    reported_validation_commands=reported_validation_commands,
-                    captured_criteria=captured_criteria,
-                    tool_validation_evidence=tool_validation_evidence,
-                    protocol_derailments=protocol_derailments,
-                    workspace_summary=workspace_summary,
-                    error_summary=reason,
-                )
-                raise InterventionNeededError(intervention)
+            # Log output and check for escalation
+            self._log_iteration_output(s, iteration_output, iteration_cost)
+            self._escalate_if_needed(project_path, s, iteration_output)
 
         # Max iterations reached
+        self._raise_max_iterations(project_path, s)
+        raise AssertionError("unreachable")  # _raise_max_iterations always raises
+
+    # ─── Iteration Helpers ────────────────────────────────────────────
+
+    def _log_iteration_start(self, s: _LoopState, iter_prompt: str) -> None:
+        """Log the start of an iteration with context metadata."""
+        assert self._log_writer is not None
+        is_first = s.iteration == 1
+        self._log_writer.log_iteration_start(
+            iteration=s.iteration,
+            prompt=iter_prompt,
+            reason_code=s.next_reason_code,
+            reason_detail=s.next_reason_detail,
+            resume_session_id=s.resume_session_id,
+            memory_waypoint_ids=(list(self._waypoint_memory_ids) if is_first else None),
+            memory_context_chars=(
+                len(self._waypoint_memory_context or "") if is_first else None
+            ),
+            spec_context_summary_chars=(
+                len(self.waypoint.spec_context_summary.strip()) if is_first else None
+            ),
+            spec_section_ref_count=(
+                len(self.waypoint.spec_section_refs) if is_first else None
+            ),
+            spec_context_hash=(self.waypoint.spec_context_hash if is_first else None),
+            current_spec_hash=(self._current_spec_hash if is_first else None),
+            spec_context_stale=(self._spec_context_stale if is_first else None),
+            full_spec_pointer=("docs/product-spec.md" if is_first else None),
+        )
+
+    async def _run_iteration(
+        self,
+        project_path: Path,
+        s: _LoopState,
+        iter_prompt: str,
+    ) -> tuple[str, float | None]:
+        """Run one agent iteration: stream chunks, parse evidence.
+
+        Returns (iteration_output, iteration_cost).
+        Raises on API/execution error (caught by caller).
+        Updates s.full_output, s.captured_criteria, etc. in place.
+        """
+        assert self._log_writer is not None
+        iteration_output = ""
+        iteration_cost: float | None = None
+        iteration_file_ops: list[FileOperation] = []
+        s.iter_scope_drift_detected = False
+        s.iter_stage_reports_logged = 0
+
+        async for chunk in agent_query(
+            prompt=iter_prompt,
+            system_prompt=self._get_system_prompt(),
+            allowed_tools=[
+                "Read",
+                "Write",
+                "Edit",
+                "Bash",
+                "Glob",
+                "Grep",
+                "WebSearch",
+                "WebFetch",
+            ],
+            cwd=str(project_path),
+            resume_session_id=s.resume_session_id,
+            metrics_collector=self.metrics_collector,
+            phase="fly",
+            waypoint_id=self.waypoint.id,
+        ):
+            if isinstance(chunk, StreamChunk):
+                iteration_output += chunk.text
+                s.full_output += chunk.text
+
+                if not s.completion_detected:
+                    self._parse_evidence(s)
+                    self._parse_stage_reports(s)
+
+                    if s.completion_marker in iteration_output:
+                        logger.info("Completion marker found!")
+                        s.completion_detected = True
+                        s.completion_iteration = s.iteration
+                        s.completion_output = iteration_output
+                        criterion_matches = CRITERION_PATTERN.findall(iteration_output)
+                        s.completion_criteria = {int(m[0]) for m in criterion_matches}
+                        self._log_writer.log_completion_detected(s.iteration)
+
+                if s.completion_detected:
+                    continue
+
+                criterion_matches = CRITERION_PATTERN.findall(s.full_output)
+                completed_indices = {int(m[0]) for m in criterion_matches}
+                self._report_progress(
+                    s.iteration,
+                    self.max_iterations,
+                    "streaming",
+                    chunk.text,
+                    criteria_completed=completed_indices,
+                )
+
+            elif isinstance(chunk, StreamToolUse):
+                self._log_writer.log_tool_call(
+                    s.iteration,
+                    chunk.tool_name,
+                    chunk.tool_input,
+                    chunk.tool_output,
+                )
+                if (
+                    isinstance(chunk.tool_output, str)
+                    and "Error: Access denied:" in chunk.tool_output
+                ):
+                    s.iter_scope_drift_detected = True
+                if chunk.tool_name == "Bash":
+                    command = chunk.tool_input.get("command")
+                    if isinstance(command, str) and chunk.tool_output:
+                        category = _detect_validation_category(command)
+                        stdout, stderr, exit_code = _parse_tool_output(
+                            chunk.tool_output
+                        )
+                        evidence = CapturedEvidence(
+                            command=command,
+                            exit_code=exit_code,
+                            stdout=stdout,
+                            stderr=stderr,
+                            captured_at=datetime.now(UTC),
+                        )
+                        s.tool_validation_evidence[_normalize_command(command)] = (
+                            evidence
+                        )
+                        if category:
+                            s.tool_validation_categories[category] = evidence
+                file_op = _extract_file_operation(chunk.tool_name, chunk.tool_input)
+                if file_op:
+                    iteration_file_ops.append(file_op)
+                    self._file_operations.append(file_op)
+                    self._report_progress(
+                        s.iteration,
+                        self.max_iterations,
+                        "tool_use",
+                        f"{file_op.tool_name}: {file_op.file_path}",
+                        file_operations=iteration_file_ops,
+                    )
+
+            elif isinstance(chunk, StreamComplete):
+                iteration_cost = chunk.cost_usd
+                if chunk.session_id:
+                    s.resume_session_id = chunk.session_id
+                logger.info(
+                    "Iteration %d complete, cost: $%.4f",
+                    s.iteration,
+                    chunk.cost_usd or 0,
+                )
+
+        return iteration_output, iteration_cost
+
+    def _parse_evidence(self, s: _LoopState) -> None:
+        """Parse validation and criterion evidence from accumulated output."""
+        for match in VALIDATION_PATTERN.findall(s.full_output):
+            command, _, _ = match
+            normalized_command = command.strip()
+            if not normalized_command:
+                continue
+            if normalized_command in s.reported_validation_commands:
+                continue
+            s.reported_validation_commands.append(normalized_command)
+            category = _detect_validation_category(normalized_command)
+            if category:
+                logger.info(
+                    "Model reported validation command for %s: %s",
+                    category,
+                    normalized_command,
+                )
+
+        for match in CRITERION_PATTERN.findall(s.full_output):
+            index, status, text, evidence = match
+            idx = int(index)
+            if idx not in s.captured_criteria:
+                s.captured_criteria[idx] = CriterionVerification(
+                    index=idx,
+                    criterion=text.strip(),
+                    status=status,
+                    evidence=evidence.strip(),
+                    verified_at=datetime.now(UTC),
+                )
+                logger.info(
+                    "Captured criterion verification: [%d] %s",
+                    idx,
+                    status,
+                )
+
+    def _parse_stage_reports(self, s: _LoopState) -> None:
+        """Parse structured stage reports from accumulated output."""
+        assert self._log_writer is not None
+        for report in parse_stage_reports(s.full_output):
+            key = (
+                report.stage,
+                report.success,
+                report.output,
+                tuple(report.artifacts),
+                report.next_stage,
+            )
+            if key in s.logged_stage_reports:
+                continue
+            s.logged_stage_reports.add(key)
+            s.iter_stage_reports_logged += 1
+            self._log_writer.log_stage_report(s.iteration, report)
+            output = report.output.strip()
+            if len(output) > 400:
+                output = output[:400] + "..."
+            summary = f"{report.stage.value}: {output}".strip()
+            self._report_progress(
+                s.iteration,
+                self.max_iterations,
+                "stage",
+                summary,
+            )
+
+    async def _handle_completion(
+        self,
+        project_path: Path,
+        s: _LoopState,
+        iteration_output: str,
+        iteration_cost: float | None,
+    ) -> ExecutionResult | None:
+        """Finalize after completion marker detected.
+
+        Returns ExecutionResult.SUCCESS if receipt is valid, or None
+        to signal the caller to retry (receipt failed).
+        """
+        assert self._log_writer is not None
+        self.steps.append(
+            ExecutionStep(
+                iteration=s.completion_iteration or s.iteration,
+                action="complete",
+                output=s.completion_output or iteration_output,
+            )
+        )
+        final_completed = s.completion_criteria or set()
+        self._log_writer.log_output(
+            s.iteration,
+            s.completion_output or iteration_output,
+            final_completed,
+        )
+        self._log_writer.log_iteration_end(s.iteration, iteration_cost)
+
+        finalizer = self._make_finalizer()
+        receipt_valid = await finalizer.finalize(
+            project_path=project_path,
+            captured_criteria=s.captured_criteria,
+            validation_commands=self._validation_commands,
+            reported_validation_commands=s.reported_validation_commands,
+            tool_validation_evidence=s.tool_validation_evidence,
+            tool_validation_categories=s.tool_validation_categories,
+            host_validations_enabled=self.host_validations_enabled,
+            max_iterations=self.max_iterations,
+        )
+
+        if receipt_valid:
+            self._report_progress(
+                s.iteration,
+                MAX_ITERATIONS,
+                "complete",
+                "Waypoint complete with valid receipt!",
+            )
+            return self._finish(project_path, s, ExecutionResult.SUCCESS)
+
+        # Receipt invalid — prepare retry
+        failure_summary = "Receipt validation failed."
+        if hasattr(finalizer, "last_failure_summary"):
+            summary_func = getattr(finalizer, "last_failure_summary")
+            if callable(summary_func):
+                failure_summary = summary_func()
         logger.warning(
-            "Max iterations (%d) reached without completion", self.max_iterations
+            "Receipt invalid for %s at iteration %d. Retrying: %s",
+            self.waypoint.id,
+            s.iteration,
+            failure_summary,
         )
-        error_msg = (
-            f"Waypoint did not complete after {self.max_iterations} iterations. "
-            "The agent may be stuck or the task may be too complex."
+        self._report_progress(
+            s.iteration,
+            MAX_ITERATIONS,
+            "validation_failed",
+            f"Host validation failed; retrying. {failure_summary}",
         )
-        self._log_writer.log_error(iteration, error_msg)
-        self._log_writer.log_completion(ExecutionResult.MAX_ITERATIONS.value)
+        self._log_writer.log_error(
+            s.iteration,
+            f"Completion marker emitted but receipt was invalid: {failure_summary}",
+        )
+        s.next_reason_code = "host_validation_failed"
+        s.next_reason_detail = failure_summary
+        s.completion_detected = False
+        s.completion_iteration = None
+        s.completion_output = None
+        s.completion_criteria = None
+        self.steps.append(
+            ExecutionStep(
+                iteration=s.iteration,
+                action="receipt_retry",
+                output=failure_summary,
+            )
+        )
+        return None  # signal retry
+
+    def _log_iteration_output(
+        self,
+        s: _LoopState,
+        iteration_output: str,
+        iteration_cost: float | None,
+    ) -> None:
+        """Log iteration output and update criteria after a non-completion iteration."""
+        assert self._log_writer is not None
+        final_criteria = CRITERION_PATTERN.findall(s.full_output)
+        final_completed = {int(m[0]) for m in final_criteria}
+        self._log_writer.log_output(s.iteration, iteration_output, final_completed)
+        self._log_writer.log_iteration_end(s.iteration, iteration_cost)
+
+    def _escalate_if_needed(
+        self,
+        project_path: Path,
+        s: _LoopState,
+        iteration_output: str,
+    ) -> None:
+        """Check for protocol derailments and stuck agent; raise if needed.
+
+        Also records iteration step and determines next iteration reason.
+        """
+        assert self._log_writer is not None
+        verified_criteria = {
+            idx
+            for idx, criterion in s.captured_criteria.items()
+            if criterion.status == "verified"
+        }
+        unresolved_criteria = sorted(
+            set(range(len(self.waypoint.acceptance_criteria))) - verified_criteria
+        )
+
+        protocol_issues = self._detect_protocol_issues(
+            iteration_output=iteration_output,
+            completion_marker=s.completion_marker,
+            stage_reports_logged=s.iter_stage_reports_logged,
+            scope_drift_detected=s.iter_scope_drift_detected,
+        )
+        if protocol_issues:
+            escalation_issues = [
+                issue
+                for issue in protocol_issues
+                if issue != "missing structured stage report"
+            ]
+            s.protocol_derailments.extend(protocol_issues)
+            if escalation_issues:
+                s.protocol_derailment_streak += 1
+            else:
+                s.protocol_derailment_streak = 0
+            s.next_reason_code = "protocol_violation"
+            s.next_reason_detail = "; ".join(protocol_issues)
+            self._log_writer.log_protocol_derailment(
+                iteration=s.iteration,
+                issues=protocol_issues,
+                action=(
+                    "escalate_intervention"
+                    if s.protocol_derailment_streak >= MAX_PROTOCOL_DERAILMENT_STREAK
+                    else "nudge_and_retry"
+                ),
+            )
+        elif unresolved_criteria:
+            s.protocol_derailment_streak = 0
+            remaining_labels = ", ".join(
+                f"[{idx}] {self.waypoint.acceptance_criteria[idx]}"
+                for idx in unresolved_criteria
+            )
+            s.next_reason_code = "incomplete_criteria"
+            s.next_reason_detail = (
+                f"{len(unresolved_criteria)} criteria unresolved: {remaining_labels}"
+            )
+        else:
+            s.protocol_derailment_streak = 0
+            s.next_reason_code = "validation_failure"
+            s.next_reason_detail = (
+                "Criteria appear complete, but completion protocol was not satisfied."
+            )
+
+        if s.protocol_derailment_streak >= MAX_PROTOCOL_DERAILMENT_STREAK:
+            summary = (
+                "Execution repeatedly violated waypoint protocol. "
+                f"Issues: {s.next_reason_detail}"
+            )
+            self._raise_intervention(
+                project_path,
+                s,
+                InterventionType.EXECUTION_ERROR,
+                summary,
+            )
+
+        # Record step
+        self.steps.append(
+            ExecutionStep(
+                iteration=s.iteration,
+                action="iterate",
+                output=iteration_output,
+            )
+        )
+
+        # Check if agent is stuck or needs human help
+        if self._needs_intervention(iteration_output):
+            logger.info("Human intervention needed")
+            reason = self._extract_intervention_reason(iteration_output)
+            self._raise_intervention(
+                project_path,
+                s,
+                InterventionType.USER_REQUESTED,
+                reason,
+            )
+
+    def _handle_iteration_error(
+        self,
+        project_path: Path,
+        s: _LoopState,
+        e: Exception,
+    ) -> None:
+        """Classify an iteration exception and raise InterventionNeededError.
+
+        Always raises — never returns.
+        """
+        assert self._log_writer is not None
+        logger.exception("Error during iteration %d: %s", s.iteration, e)
+
+        api_error_type = classify_api_error(e)
+        lower_output = s.full_output.lower()
+        if api_error_type == APIErrorType.UNKNOWN:
+            for pattern in BUDGET_PATTERNS:
+                if pattern in lower_output:
+                    api_error_type = APIErrorType.BUDGET_EXCEEDED
+                    break
+            if api_error_type == APIErrorType.UNKNOWN:
+                for pattern in RATE_LIMIT_PATTERNS:
+                    if pattern in lower_output:
+                        api_error_type = APIErrorType.RATE_LIMITED
+                        break
+                if api_error_type == APIErrorType.UNKNOWN:
+                    for pattern in UNAVAILABLE_PATTERNS:
+                        if pattern in lower_output:
+                            api_error_type = APIErrorType.API_UNAVAILABLE
+                            break
+
+        intervention_type = {
+            APIErrorType.RATE_LIMITED: InterventionType.RATE_LIMITED,
+            APIErrorType.API_UNAVAILABLE: InterventionType.API_UNAVAILABLE,
+            APIErrorType.BUDGET_EXCEEDED: InterventionType.BUDGET_EXCEEDED,
+        }.get(api_error_type, InterventionType.EXECUTION_ERROR)
+
+        error_summaries = {
+            APIErrorType.RATE_LIMITED: (
+                "Model provider rate limit reached. Wait a few minutes and retry."
+            ),
+            APIErrorType.API_UNAVAILABLE: (
+                "Model provider temporarily unavailable. Try again shortly."
+            ),
+            APIErrorType.BUDGET_EXCEEDED: (
+                "Model usage budget exceeded. Execution paused until budget resets."
+            ),
+        }
+        error_summary = error_summaries.get(api_error_type, str(e))
+
+        reset_at = extract_reset_datetime(str(e))
+        if reset_at is None and s.full_output:
+            reset_at = extract_reset_datetime(s.full_output)
+        if api_error_type == APIErrorType.BUDGET_EXCEEDED:
+            if isinstance(e, BudgetExceededError):
+                error_summary = (
+                    f"Configured budget ${e.limit_value:.2f} reached "
+                    f"(current ${e.current_value:.2f}). "
+                    "Execution paused until you increase the budget."
+                )
+            elif (reset_time := extract_reset_time(str(e))) is not None:
+                error_summary = f"Model usage budget exceeded. Resets {reset_time}."
+            elif (reset_time := extract_reset_time(s.full_output)) is not None:
+                error_summary = f"Model usage budget exceeded. Resets {reset_time}."
+
+        self._report_progress(
+            s.iteration,
+            self.max_iterations,
+            "error",
+            f"Error: {error_summary}",
+        )
+        self.steps.append(
+            ExecutionStep(
+                iteration=s.iteration,
+                action="error",
+                output=str(e),
+            )
+        )
+        self._log_writer.log_error(s.iteration, str(e))
+        self._log_writer.log_completion(ExecutionResult.FAILED.value)
 
         intervention = Intervention(
-            type=InterventionType.ITERATION_LIMIT,
+            type=intervention_type,
             waypoint=self.waypoint,
-            iteration=iteration,
+            iteration=s.iteration,
             max_iterations=self.max_iterations,
-            error_summary=error_msg,
-            context={"full_output": full_output[-2000:]},
+            error_summary=error_summary,
+            context={
+                "full_output": s.full_output[-2000:],
+                "api_error_type": api_error_type.value,
+                "original_error": str(e),
+                "configured_budget_usd": settings.llm_budget_usd,
+                "current_cost_usd": (
+                    self.metrics_collector.total_cost
+                    if self.metrics_collector
+                    else None
+                ),
+                "resume_at_utc": (
+                    reset_at.astimezone(UTC).isoformat() if reset_at else None
+                ),
+            },
         )
         self._log_writer.log_intervention_needed(
-            iteration, intervention.type.value, error_msg
+            s.iteration,
+            intervention.type.value,
+            error_summary,
         )
         workspace_summary = self._log_workspace_provenance(
             project_path,
-            workspace_before,
-            iteration,
+            s.workspace_before,
+            s.iteration,
             ExecutionResult.INTERVENTION_NEEDED.value,
         )
         self._persist_waypoint_memory(
             project_path=project_path,
             result=ExecutionResult.INTERVENTION_NEEDED.value,
-            iteration=iteration,
-            reported_validation_commands=reported_validation_commands,
-            captured_criteria=captured_criteria,
-            tool_validation_evidence=tool_validation_evidence,
-            protocol_derailments=protocol_derailments,
+            iteration=s.iteration,
+            reported_validation_commands=s.reported_validation_commands,
+            captured_criteria=s.captured_criteria,
+            tool_validation_evidence=s.tool_validation_evidence,
+            protocol_derailments=s.protocol_derailments,
             workspace_summary=workspace_summary,
-            error_summary=error_msg,
+            error_summary=error_summary,
+        )
+        raise InterventionNeededError(intervention) from e
+
+    def _raise_intervention(
+        self,
+        project_path: Path,
+        s: _LoopState,
+        intervention_type: InterventionType,
+        error_summary: str,
+    ) -> None:
+        """Log and raise an InterventionNeededError. Always raises."""
+        assert self._log_writer is not None
+        self._log_writer.log_error(s.iteration, error_summary)
+        self._log_writer.log_completion(ExecutionResult.INTERVENTION_NEEDED.value)
+        intervention = Intervention(
+            type=intervention_type,
+            waypoint=self.waypoint,
+            iteration=s.iteration,
+            max_iterations=self.max_iterations,
+            error_summary=error_summary,
+            context={
+                "full_output": s.full_output[-2000:],
+                "reason_code": s.next_reason_code,
+            },
+        )
+        self._log_writer.log_intervention_needed(
+            s.iteration,
+            intervention.type.value,
+            error_summary,
+        )
+        workspace_summary = self._log_workspace_provenance(
+            project_path,
+            s.workspace_before,
+            s.iteration,
+            ExecutionResult.INTERVENTION_NEEDED.value,
+        )
+        self._persist_waypoint_memory(
+            project_path=project_path,
+            result=ExecutionResult.INTERVENTION_NEEDED.value,
+            iteration=s.iteration,
+            reported_validation_commands=s.reported_validation_commands,
+            captured_criteria=s.captured_criteria,
+            tool_validation_evidence=s.tool_validation_evidence,
+            protocol_derailments=s.protocol_derailments,
+            workspace_summary=workspace_summary,
+            error_summary=error_summary,
         )
         raise InterventionNeededError(intervention)
+
+    def _raise_max_iterations(self, project_path: Path, s: _LoopState) -> None:
+        """Handle max iterations exhausted. Always raises."""
+        logger.warning(
+            "Max iterations (%d) reached without completion",
+            self.max_iterations,
+        )
+        error_msg = (
+            f"Waypoint did not complete after {self.max_iterations} iterations. "
+            "The agent may be stuck or the task may be too complex."
+        )
+        self._raise_intervention(
+            project_path,
+            s,
+            InterventionType.ITERATION_LIMIT,
+            error_msg,
+        )
+
+    def _finish(
+        self,
+        project_path: Path,
+        s: _LoopState,
+        result: ExecutionResult,
+    ) -> ExecutionResult:
+        """Log completion, workspace provenance, memory, and return result."""
+        assert self._log_writer is not None
+        self._log_writer.log_completion(result.value)
+        workspace_summary = self._log_workspace_provenance(
+            project_path,
+            s.workspace_before,
+            s.iteration,
+            result.value,
+        )
+        self._persist_waypoint_memory(
+            project_path=project_path,
+            result=result.value,
+            iteration=s.iteration,
+            reported_validation_commands=s.reported_validation_commands,
+            captured_criteria=s.captured_criteria,
+            tool_validation_evidence=s.tool_validation_evidence,
+            protocol_derailments=s.protocol_derailments,
+            workspace_summary=workspace_summary,
+        )
+        return result
 
     def _build_iteration_kickoff_prompt(
         self,
@@ -1082,8 +1117,7 @@ When complete, output the completion marker specified in the instructions."""
         )
         if self._spec_context_stale:
             logger.warning(
-                "Waypoint spec context appears stale for %s "
-                "(waypoint=%s current=%s)",
+                "Waypoint spec context appears stale for %s (waypoint=%s current=%s)",
                 self.waypoint.id,
                 waypoint_hash,
                 self._current_spec_hash,

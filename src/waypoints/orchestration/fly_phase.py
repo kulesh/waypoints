@@ -8,17 +8,24 @@ completion, managing interventions, and committing to git.
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from waypoints.fly.executor import ExecutionContext, ExecutionResult, WaypointExecutor
-from waypoints.fly.intervention import Intervention, InterventionAction
+from waypoints.fly.intervention import (
+    Intervention,
+    InterventionAction,
+    InterventionType,
+)
 from waypoints.models import Waypoint, WaypointStatus
 from waypoints.orchestration.types import (
+    BudgetWaitDetails,
     CommitResult,
     CompletionStatus,
+    InterventionPresentation,
     NextAction,
     ProgressCallback,
     ProgressUpdate,
+    RollbackResult,
 )
 
 if TYPE_CHECKING:
@@ -33,6 +40,9 @@ class FlyPhase:
 
     def __init__(self, coordinator: "JourneyCoordinator") -> None:
         self._coord = coordinator
+        self._active_executor: WaypointExecutor | None = None
+        self._current_intervention: Intervention | None = None
+        self._pending_worker_intervention: Intervention | None = None
 
     # ─── Waypoint Selection ───────────────────────────────────────────
 
@@ -109,6 +119,76 @@ class FlyPhase:
 
     # ─── Execution ────────────────────────────────────────────────────
 
+    def create_executor(
+        self,
+        waypoint: Waypoint,
+        spec: str,
+        on_progress: Callable[[ExecutionContext], None] | None = None,
+        max_iterations: int = 10,
+        host_validations_enabled: bool = True,
+    ) -> WaypointExecutor:
+        """Create and store the active executor for a waypoint.
+
+        FlyScreen calls this instead of constructing WaypointExecutor directly.
+        The executor is stored so cancel_execution() can reach it.
+
+        Args:
+            waypoint: The waypoint to execute
+            spec: Product specification text
+            on_progress: Raw ExecutionContext callback (UI layer provides this)
+            max_iterations: Maximum execution iterations
+            host_validations_enabled: Whether to run host validations
+
+        Returns:
+            The WaypointExecutor instance (caller runs it via worker)
+        """
+        self._active_executor = WaypointExecutor(
+            project=self._coord.project,
+            waypoint=waypoint,
+            spec=spec,
+            on_progress=on_progress,
+            max_iterations=max_iterations,
+            metrics_collector=self._coord.metrics,
+            host_validations_enabled=host_validations_enabled,
+        )
+        return self._active_executor
+
+    def cancel_execution(self) -> None:
+        """Cancel the active executor, if any."""
+        if self._active_executor is not None:
+            self._active_executor.cancel()
+
+    def clear_executor(self) -> None:
+        """Clear the stored executor reference after execution completes."""
+        self._active_executor = None
+
+    @property
+    def active_executor(self) -> WaypointExecutor | None:
+        """The currently active executor, or None."""
+        return self._active_executor
+
+    # ─── Execution Logging ────────────────────────────────────────────
+
+    def log_pause(self) -> None:
+        """Log a pause event to the active executor's log."""
+        ex = self._active_executor
+        if ex and ex._log_writer:
+            ex._log_writer.log_pause()
+
+    def log_git_commit(self, success: bool, commit_hash: str, message: str) -> None:
+        """Log a git commit event to the active executor's log."""
+        ex = self._active_executor
+        if ex and ex._log_writer:
+            ex._log_writer.log_git_commit(success, commit_hash, message)
+
+    def log_intervention_resolved(self, action: str, **params: Any) -> None:
+        """Log intervention resolution to the active executor's log."""
+        ex = self._active_executor
+        if ex and ex._log_writer:
+            ex._log_writer.log_intervention_resolved(action, **params)
+
+    # ─── Legacy execute_waypoint (used by headless callers) ──────────
+
     async def execute_waypoint(
         self,
         waypoint: Waypoint,
@@ -117,6 +197,9 @@ class FlyPhase:
         host_validations_enabled: bool = True,
     ) -> ExecutionResult:
         """Execute a waypoint using the AI executor.
+
+        This is the self-contained path for headless/CI callers.
+        TUI callers use create_executor() + their own worker pattern.
 
         Args:
             waypoint: The waypoint to execute
@@ -134,22 +217,19 @@ class FlyPhase:
         waypoint.status = WaypointStatus.IN_PROGRESS
         self._coord.save_flight_plan()
 
-        # Get product spec for context
         spec = self._coord.product_spec
-
-        # Create executor
-        executor = WaypointExecutor(
-            project=self._coord.project,
+        executor = self.create_executor(
             waypoint=waypoint,
             spec=spec,
             on_progress=self._wrap_progress_callback(on_progress),
             max_iterations=max_iterations,
-            metrics_collector=self._coord.metrics,
             host_validations_enabled=host_validations_enabled,
         )
 
-        # Execute (may raise InterventionNeededError)
-        return await executor.execute()
+        try:
+            return await executor.execute()
+        finally:
+            self.clear_executor()
 
     def _wrap_progress_callback(
         self,
@@ -171,6 +251,79 @@ class FlyPhase:
             callback(update)
 
         return wrapper
+
+    # ─── Intervention Classification ─────────────────────────────────
+
+    def classify_intervention(
+        self, intervention: Intervention
+    ) -> InterventionPresentation:
+        """Decide how the UI should present an intervention.
+
+        Budget-exceeded interventions are auto-handled (budget wait).
+        Everything else requires a modal.
+        """
+        self._current_intervention = intervention
+        show_modal = intervention.type != InterventionType.BUDGET_EXCEEDED
+        return InterventionPresentation(
+            show_modal=show_modal,
+            intervention=intervention,
+        )
+
+    def store_worker_intervention(self, intervention: Intervention) -> None:
+        """Store an intervention caught by the worker thread for main-thread pickup."""
+        self._pending_worker_intervention = intervention
+
+    def take_worker_intervention(self) -> Intervention | None:
+        """Consume and return the pending worker intervention, if any."""
+        intervention = self._pending_worker_intervention
+        self._pending_worker_intervention = None
+        return intervention
+
+    def clear_intervention(self) -> None:
+        """Clear the current intervention state."""
+        self._current_intervention = None
+
+    @property
+    def current_intervention(self) -> Intervention | None:
+        """The active intervention, or None."""
+        return self._current_intervention
+
+    def compute_budget_wait(
+        self,
+        intervention: Intervention,
+        current_waypoint_id: str | None = None,
+    ) -> BudgetWaitDetails:
+        """Extract budget wait details from an intervention.
+
+        Parses the intervention context to determine resume timestamp,
+        configured budget, and current cost. UI uses these to display
+        a countdown and auto-resume.
+        """
+        waypoint_id = current_waypoint_id or intervention.waypoint.id
+
+        resume_at: datetime | None = None
+        resume_at_raw = intervention.context.get("resume_at_utc")
+        if isinstance(resume_at_raw, str):
+            try:
+                resume_at = datetime.fromisoformat(resume_at_raw)
+                if resume_at.tzinfo is None:
+                    resume_at = resume_at.replace(tzinfo=UTC)
+            except ValueError:
+                pass
+
+        configured = intervention.context.get("configured_budget_usd")
+        current = intervention.context.get("current_cost_usd")
+
+        return BudgetWaitDetails(
+            waypoint_id=waypoint_id,
+            resume_at=resume_at,
+            configured_budget_usd=(
+                float(configured) if isinstance(configured, (int, float)) else None
+            ),
+            current_cost_usd=(
+                float(current) if isinstance(current, (int, float)) else None
+            ),
+        )
 
     # ─── Result Handling ──────────────────────────────────────────────
 
@@ -506,4 +659,48 @@ class FlyPhase:
             commit_hash=commit_hash,
             tag_name=tag_name,
             initialized_repo=initialized,
+        )
+
+    def rollback_to_tag(self, tag: str | None) -> RollbackResult:
+        """Rollback git to the specified tag and reload the flight plan.
+
+        Args:
+            tag: Git tag to reset to, or None for manual rollback.
+
+        Returns:
+            RollbackResult with success status, message, and reloaded plan.
+        """
+        from waypoints.git.service import GitService
+
+        project_path = self._coord.project.get_path()
+        git = self._coord.git or GitService(project_path)
+
+        if not git.is_git_repo():
+            return RollbackResult(success=False, message="Not a git repository")
+
+        if not tag:
+            return RollbackResult(
+                success=False,
+                message="No rollback tag specified",
+            )
+
+        result = git.reset_hard(tag)
+        if not result.success:
+            return RollbackResult(
+                success=False,
+                message=f"Rollback failed: {result.message}",
+            )
+
+        # Reload flight plan from disk after reset
+        from waypoints.models.flight_plan import FlightPlanReader
+
+        loaded = FlightPlanReader.load(self._coord.project)
+        if loaded:
+            self._coord.flight_plan = loaded
+
+        logger.info("Rolled back to %s", tag)
+        return RollbackResult(
+            success=True,
+            message=f"Rolled back to {tag}",
+            flight_plan=loaded,
         )

@@ -33,16 +33,14 @@ from waypoints.fly.execution_log import (
 from waypoints.fly.executor import (
     ExecutionContext,
     ExecutionResult,
-    WaypointExecutor,
 )
 from waypoints.fly.intervention import (
     Intervention,
     InterventionAction,
     InterventionNeededError,
     InterventionResult,
-    InterventionType,
 )
-from waypoints.git import GitConfig, GitService, ReceiptValidator
+from waypoints.git import GitConfig, ReceiptValidator
 from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
@@ -1333,9 +1331,6 @@ class FlyScreen(Screen[None]):
             flight_plan=flight_plan,
         )
 
-        self._executor: WaypointExecutor | None = None
-        self._current_intervention: Intervention | None = None
-        self._pending_worker_intervention: Intervention | None = None
         self._additional_iterations: int = 0
 
         # Timer tracking
@@ -1681,23 +1676,15 @@ class FlyScreen(Screen[None]):
         self, intervention: Intervention, log: ExecutionLog
     ) -> None:
         """Pause execution with budget-specific messaging and optional countdown."""
-        waypoint_id = (
-            self.current_waypoint.id
-            if self.current_waypoint
-            else intervention.waypoint.id
+        # Delegate business logic: extract budget details and mark pending
+        details = self.coordinator.compute_budget_wait(
+            intervention,
+            current_waypoint_id=(
+                self.current_waypoint.id if self.current_waypoint else None
+            ),
         )
-        self._budget_resume_waypoint_id = waypoint_id
-
-        resume_at_raw = intervention.context.get("resume_at_utc")
-        resume_at: datetime | None = None
-        if isinstance(resume_at_raw, str):
-            try:
-                resume_at = datetime.fromisoformat(resume_at_raw)
-                if resume_at.tzinfo is None:
-                    resume_at = resume_at.replace(tzinfo=UTC)
-            except ValueError:
-                resume_at = None
-        self._budget_resume_at = resume_at
+        self._budget_resume_waypoint_id = details.waypoint_id
+        self._budget_resume_at = details.resume_at
 
         # Budget pause is recoverable work: keep waypoint pending, not failed.
         if self.current_waypoint:
@@ -1706,17 +1693,17 @@ class FlyScreen(Screen[None]):
                 WaypointStatus.PENDING,
             )
 
-        configured_budget = intervention.context.get("configured_budget_usd")
-        current_cost = intervention.context.get("current_cost_usd")
-        if isinstance(configured_budget, (int, float)) and isinstance(
-            current_cost, (int, float)
+        # Log budget usage
+        if (
+            details.configured_budget_usd is not None
+            and details.current_cost_usd is not None
         ):
             log.write_log(
-                f"Budget usage: ${float(current_cost):.2f} / "
-                f"${float(configured_budget):.2f}"
+                f"Budget usage: ${details.current_cost_usd:.2f} / "
+                f"${details.configured_budget_usd:.2f}"
             )
-        elif isinstance(current_cost, (int, float)):
-            log.write_log(f"Budget usage so far: ${float(current_cost):.2f}")
+        elif details.current_cost_usd is not None:
+            log.write_log(f"Budget usage so far: ${details.current_cost_usd:.2f}")
         log.write_log("Progress saved. Workspace state is preserved for resume.")
 
         # Transition to paused and surface clear status.
@@ -1775,8 +1762,9 @@ class FlyScreen(Screen[None]):
             self.current_waypoint
             and self.current_waypoint.status == WaypointStatus.FAILED
         ):
-            self.current_waypoint.status = WaypointStatus.PENDING
-            self._save_flight_plan()
+            self.coordinator.mark_waypoint_status(
+                self.current_waypoint, WaypointStatus.PENDING
+            )
 
         if not self.current_waypoint:
             self._select_next_waypoint(include_in_progress=True)
@@ -1887,8 +1875,7 @@ class FlyScreen(Screen[None]):
 
         if selected and selected.status == WaypointStatus.FAILED:
             # User wants to retry this specific failed waypoint
-            selected.status = WaypointStatus.PENDING
-            self._save_flight_plan()
+            self.coordinator.mark_waypoint_status(selected, WaypointStatus.PENDING)
             self._refresh_waypoint_list()
             self.current_waypoint = selected
             self.notify(f"Retrying {selected.id}")
@@ -1988,11 +1975,8 @@ class FlyScreen(Screen[None]):
         """Pause execution after current waypoint."""
         if self.execution_state == ExecutionState.RUNNING:
             self.execution_state = ExecutionState.PAUSE_PENDING
-            if self._executor:
-                self._executor.cancel()
-                # Log pause request
-                if self._executor._log_writer:
-                    self._executor._log_writer.log_pause()
+            self.coordinator.cancel_execution()
+            self.coordinator.log_pause()
             self.notify("Will pause after current waypoint")
 
     def action_skip(self) -> None:
@@ -2092,8 +2076,9 @@ class FlyScreen(Screen[None]):
         log = detail_panel.execution_log
 
         # Update status to IN_PROGRESS
-        self.current_waypoint.status = WaypointStatus.IN_PROGRESS
-        self._save_flight_plan()
+        self.coordinator.mark_waypoint_status(
+            self.current_waypoint, WaypointStatus.IN_PROGRESS
+        )
 
         # Mark this as the active waypoint for output tracking
         detail_panel._showing_output_for = self.current_waypoint.id
@@ -2118,18 +2103,14 @@ class FlyScreen(Screen[None]):
         max_iters = MAX_ITERATIONS + self._additional_iterations
         self._additional_iterations = 0  # Reset for next execution
 
-        # Create executor with progress callback
-        self._executor = WaypointExecutor(
-            project=self.project,
+        # Create executor via coordinator (stores it for cancel/logging)
+        self.coordinator.create_executor(
             waypoint=self.current_waypoint,
             spec=self.spec,
             on_progress=self._on_execution_progress,
             max_iterations=max_iters,
-            metrics_collector=self.waypoints_app.metrics_collector,
             host_validations_enabled=self.waypoints_app.host_validations_enabled,
         )
-        self._pending_worker_intervention = None
-
         # Run execution in background worker
         self.run_worker(
             self._run_executor(),
@@ -2141,12 +2122,13 @@ class FlyScreen(Screen[None]):
 
     async def _run_executor(self) -> ExecutionResult:
         """Run the executor asynchronously."""
-        if not self._executor:
+        executor = self.coordinator._fly.active_executor
+        if not executor:
             return ExecutionResult.FAILED
         try:
-            return await self._executor.execute()
+            return await executor.execute()
         except InterventionNeededError as err:
-            self._pending_worker_intervention = err.intervention
+            self.coordinator.store_worker_intervention(err.intervention)
             return ExecutionResult.INTERVENTION_NEEDED
 
     def _on_execution_progress(self, ctx: ExecutionContext) -> None:
@@ -2249,8 +2231,7 @@ class FlyScreen(Screen[None]):
 
             result = event.worker.result
             if result == ExecutionResult.INTERVENTION_NEEDED:
-                intervention = self._pending_worker_intervention
-                self._pending_worker_intervention = None
+                intervention = self.coordinator.take_worker_intervention()
                 if intervention is not None:
                     self._handle_intervention(intervention)
                     return
@@ -2337,15 +2318,11 @@ class FlyScreen(Screen[None]):
         cr = next_action.commit_result
         if cr and cr.committed:
             self.notify(f"Committed: {self.current_waypoint.id}")
-            if self._executor and self._executor._log_writer:
-                self._executor._log_writer.log_git_commit(
-                    True, cr.commit_hash or "", cr.message
-                )
+            self.coordinator.log_git_commit(True, cr.commit_hash or "", cr.message)
         elif cr and not cr.committed and cr.message:
             if "Nothing to commit" not in cr.message:
                 self.notify(f"Skipping commit: {cr.message}", severity="warning")
-            if self._executor and self._executor._log_writer:
-                self._executor._log_writer.log_git_commit(False, "", cr.message)
+            self.coordinator.log_git_commit(False, "", cr.message)
         if cr and cr.initialized_repo:
             self.notify("Initialized git repository")
 
@@ -2370,7 +2347,7 @@ class FlyScreen(Screen[None]):
             self.execution_state = ExecutionState.PAUSED
 
     def _handle_intervention(self, intervention: Intervention) -> None:
-        """Handle an intervention request by showing the modal."""
+        """Handle an intervention request by classifying and presenting it."""
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
         log = detail_panel.execution_log
 
@@ -2379,12 +2356,13 @@ class FlyScreen(Screen[None]):
         log.log_error(f"Intervention needed: {type_label}")
         log.write_log(intervention.error_summary[:500])
 
-        # Store the intervention for retry handling
-        self._current_intervention = intervention
+        # Classify: business logic decides modal vs auto-handle
+        presentation = self.coordinator.classify_intervention(intervention)
 
-        if intervention.type == InterventionType.BUDGET_EXCEEDED:
+        if not presentation.show_modal:
+            # Budget-exceeded: auto-handle without user interaction
             self._activate_budget_wait(intervention, log)
-            self._current_intervention = None
+            self.coordinator.clear_intervention()
             return
 
         # Mark waypoint as failed (can be retried) via coordinator
@@ -2410,25 +2388,20 @@ class FlyScreen(Screen[None]):
         if result is None:
             # User cancelled - treat as abort
             self.notify("Intervention cancelled")
-            # Log cancellation
-            if self._executor and self._executor._log_writer:
-                self._executor._log_writer.log_intervention_resolved("cancelled")
-            self._current_intervention = None
+            self.coordinator.log_intervention_resolved("cancelled")
+            self.coordinator.clear_intervention()
             return
 
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
         log = detail_panel.execution_log
 
         # Log the intervention resolution to execution log
-        if self._executor and self._executor._log_writer:
-            params: dict[str, Any] = {}
-            if result.action == InterventionAction.RETRY:
-                params["additional_iterations"] = result.additional_iterations
-            elif result.action == InterventionAction.ROLLBACK:
-                params["rollback_tag"] = result.rollback_tag
-            self._executor._log_writer.log_intervention_resolved(
-                result.action.value, **params
-            )
+        params: dict[str, Any] = {}
+        if result.action == InterventionAction.RETRY:
+            params["additional_iterations"] = result.additional_iterations
+        elif result.action == InterventionAction.ROLLBACK:
+            params["rollback_tag"] = result.rollback_tag
+        self.coordinator.log_intervention_resolved(result.action.value, **params)
 
         if result.action == InterventionAction.RETRY:
             # Retry with additional iterations
@@ -2439,8 +2412,9 @@ class FlyScreen(Screen[None]):
 
             # Reset waypoint status for retry
             if self.current_waypoint:
-                self.current_waypoint.status = WaypointStatus.IN_PROGRESS
-                self._save_flight_plan()
+                self.coordinator.mark_waypoint_status(
+                    self.current_waypoint, WaypointStatus.IN_PROGRESS
+                )
                 self._refresh_waypoint_list()
 
             # Transition: FLY_INTERVENTION -> FLY_EXECUTING
@@ -2453,8 +2427,9 @@ class FlyScreen(Screen[None]):
             # Skip this waypoint and move to next
             log.write_log("Skipping waypoint")
             if self.current_waypoint:
-                self.current_waypoint.status = WaypointStatus.SKIPPED
-                self._save_flight_plan()
+                self.coordinator.mark_waypoint_status(
+                    self.current_waypoint, WaypointStatus.SKIPPED
+                )
                 self._refresh_waypoint_list()
 
             # Transition: FLY_INTERVENTION -> FLY_PAUSED -> FLY_EXECUTING
@@ -2497,8 +2472,9 @@ class FlyScreen(Screen[None]):
             self.query_one(StatusHeader).set_normal()
 
         elif result.action == InterventionAction.WAIT:
-            if self._current_intervention is not None:
-                self._activate_budget_wait(self._current_intervention, log)
+            current = self.coordinator.current_intervention
+            if current is not None:
+                self._activate_budget_wait(current, log)
             else:
                 log.write_log("Execution paused waiting for budget reset")
                 self.coordinator.transition(JourneyState.FLY_PAUSED)
@@ -2516,43 +2492,20 @@ class FlyScreen(Screen[None]):
             self.notify("Execution aborted")
 
         # Clear the current intervention
-        self._current_intervention = None
+        self.coordinator.clear_intervention()
 
     def _rollback_to_safe_tag(self, tag: str | None) -> None:
         """Rollback git to the specified tag or find the last safe one."""
-        git = GitService(self.project.get_path())
-
-        if not git.is_git_repo():
-            self.notify("Not a git repository - cannot rollback", severity="error")
-            return
-
-        if tag:
-            # Use specified tag
-            target_tag = tag
-        else:
-            # Find last safe tag (project/WP-* pattern)
-            # This is a simplified version - a full implementation would list tags
-            self.notify(
-                "No rollback tag specified - please use git manually",
-                severity="warning",
-            )
-            return
-
-        # Perform the rollback
-        result = git.reset_hard(target_tag)
+        result = self.coordinator.rollback_to_tag(tag)
         if result.success:
-            self.notify(f"Rolled back to {target_tag}")
-            # Reload flight plan from disk after reset
-            flight_plan_path = self.project.get_path() / "flight-plan.jsonl"
-            if flight_plan_path.exists():
-                from waypoints.models.flight_plan import FlightPlanReader
-
-                loaded = FlightPlanReader.load(self.project)
-                if loaded:
-                    self.flight_plan = loaded
-                    self._refresh_waypoint_list()
+            self.notify(result.message)
+            if result.flight_plan:
+                self.flight_plan = result.flight_plan
+                self._refresh_waypoint_list()
+        elif "No rollback tag" in result.message:
+            self.notify(result.message, severity="warning")
         else:
-            self.notify(f"Rollback failed: {result.message}", severity="error")
+            self.notify(result.message, severity="error")
 
     def _refresh_waypoint_list(
         self, execution_state: ExecutionState | None = None

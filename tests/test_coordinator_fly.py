@@ -53,8 +53,9 @@ def test_build_completion_status_counts_skipped_as_complete() -> None:
     assert status.all_complete is True
 
 
-def test_build_completion_status_splits_pending_failed_blocked_and_in_progress(
-) -> None:
+def test_build_completion_status_splits_pending_failed_blocked_and_in_progress() -> (
+    None
+):
     plan = FlightPlan()
     plan.add_waypoint(
         Waypoint(
@@ -101,8 +102,7 @@ def test_build_completion_status_splits_pending_failed_blocked_and_in_progress(
     assert status.all_complete is False
 
 
-def test_select_next_waypoint_candidate_returns_first_pending_with_met_dependencies(
-) -> None:
+def test_select_next_candidate_returns_first_pending_with_met_deps() -> None:
     plan = FlightPlan()
     done = Waypoint(
         id="WP-001",
@@ -134,8 +134,7 @@ def test_select_next_waypoint_candidate_returns_first_pending_with_met_dependenc
     assert waypoint.id == "WP-002"
 
 
-def test_select_next_waypoint_candidate_resumes_in_progress_or_failed_when_requested(
-) -> None:
+def test_select_next_candidate_resumes_in_progress_or_failed() -> None:
     plan = FlightPlan()
     in_progress = Waypoint(
         id="WP-010",

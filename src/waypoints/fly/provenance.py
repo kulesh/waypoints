@@ -180,9 +180,7 @@ def summarize_workspace_diff(
 
     for path in deleted_paths:
         before_state = before.files[path]
-        removed_chars = (
-            _estimate_text_size(before_state) if before_state.is_text else 0
-        )
+        removed_chars = _estimate_text_size(before_state) if before_state.is_text else 0
         changed_files.append(
             ChangedFile(
                 path=path,
@@ -276,9 +274,7 @@ def summarize_workspace_diff(
 
 def _iter_workspace_files(project_path: Path) -> Iterator[Path]:
     """Return candidate files for workspace snapshotting."""
-    for root, dirs, filenames in os.walk(
-        project_path, topdown=True, followlinks=False
-    ):
+    for root, dirs, filenames in os.walk(project_path, topdown=True, followlinks=False):
         dirs[:] = [d for d in dirs if d not in _IGNORED_DIRS]
         root_path = Path(root)
         for filename in filenames:
