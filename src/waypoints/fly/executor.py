@@ -202,6 +202,10 @@ class WaypointExecutor:
 
     async def _execute_impl(self, project_path: Path) -> ExecutionResult:
         """Internal implementation of execute, runs in project directory."""
+        # Initialize execution log early — _make_finalizer requires it
+        self._log_writer = ExecutionLogWriter(self.project, self.waypoint)
+        logger.info("Execution log: %s", self._log_writer.file_path)
+
         # Load checklist from project (creates default if not exists)
         checklist = Checklist.load(self.project)
         self._validation_commands = self._resolve_validation_commands(
@@ -215,10 +219,6 @@ class WaypointExecutor:
         logger.info(
             "Starting execution of %s: %s", self.waypoint.id, self.waypoint.title
         )
-
-        # Initialize execution log
-        self._log_writer = ExecutionLogWriter(self.project, self.waypoint)
-        logger.info("Execution log: %s", self._log_writer.file_path)
 
         iteration = 0
         full_output = ""
