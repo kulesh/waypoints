@@ -84,6 +84,9 @@ class TestWaypoint:
         assert data["status"] == "complete"
         assert data["parent_id"] is None
         assert data["dependencies"] == []
+        assert data["spec_context_summary"] == ""
+        assert data["spec_section_refs"] == []
+        assert data["spec_context_hash"] is None
         assert "created_at" in data
 
     def test_to_dict_with_completed_at(self) -> None:
@@ -123,6 +126,9 @@ class TestWaypoint:
             "acceptance_criteria": ["AC1", "AC2"],
             "parent_id": "WP-1",
             "dependencies": ["WP-2"],
+            "spec_context_summary": "Waypoint context summary from product spec.",
+            "spec_section_refs": ["Problem Statement"],
+            "spec_context_hash": "a1b2c3d4e5f6a7b8c9d0",
             "status": "in_progress",
             "created_at": "2026-01-10T10:00:00",
             "completed_at": None,
@@ -132,6 +138,9 @@ class TestWaypoint:
         assert wp.id == "WP-3"
         assert wp.parent_id == "WP-1"
         assert wp.dependencies == ["WP-2"]
+        assert wp.spec_context_summary == "Waypoint context summary from product spec."
+        assert wp.spec_section_refs == ["Problem Statement"]
+        assert wp.spec_context_hash == "a1b2c3d4e5f6a7b8c9d0"
         assert wp.status == WaypointStatus.IN_PROGRESS
         assert wp.created_at == datetime(2026, 1, 10, 10, 0, 0)
         assert wp.completed_at is None

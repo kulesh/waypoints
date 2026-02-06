@@ -24,6 +24,7 @@ from waypoints.llm.validation import (
 )
 from waypoints.models import FlightPlan, Waypoint, WaypointStatus
 from waypoints.orchestration.types import ChunkCallback
+from waypoints.spec import compute_spec_hash, extract_spec_section_headings
 
 if TYPE_CHECKING:
     from waypoints.orchestration.coordinator import JourneyCoordinator
@@ -38,7 +39,8 @@ def _build_chart_retry_prompt(prompt: str, errors: list[str]) -> str:
         "The previous response failed validation with these errors:\n"
         f"{error_text}\n\n"
         "Fix the issues and output ONLY the JSON array. Ensure every waypoint "
-        "has a non-empty acceptance_criteria list."
+        "has a non-empty acceptance_criteria list, a meaningful "
+        "spec_context_summary, and non-empty spec_section_refs."
     )
 
 
@@ -65,17 +67,27 @@ class ChartPhase:
             Generated FlightPlan
         """
         spec_with_notes = self._append_resolution_notes(spec)
+        spec_sections = set(extract_spec_section_headings(spec))
+        spec_hash = compute_spec_hash(spec)
         prompt = WAYPOINT_GENERATION_PROMPT.format(spec=spec_with_notes)
         logger.info("Generating waypoints from spec: %d chars", len(spec))
 
         full_response = self._stream_chart_response(prompt, on_chunk)
         try:
-            waypoints = self._parse_waypoints(full_response)
+            waypoints = self._parse_waypoints(
+                full_response,
+                spec_sections=spec_sections,
+                spec_hash=spec_hash,
+            )
         except WaypointValidationError as exc:
             logger.warning("Chart validation failed, retrying: %s", exc.errors)
             retry_prompt = _build_chart_retry_prompt(prompt, exc.errors)
             full_response = self._stream_chart_response(retry_prompt, on_chunk)
-            waypoints = self._parse_waypoints(full_response)
+            waypoints = self._parse_waypoints(
+                full_response,
+                spec_sections=spec_sections,
+                spec_hash=spec_hash,
+            )
 
         # Create flight plan
         flight_plan = FlightPlan(waypoints=waypoints)
@@ -120,6 +132,14 @@ class ChartPhase:
         resolution_notes = "\n".join(f"- {n}" for n in waypoint.resolution_notes)
         if not resolution_notes:
             resolution_notes = "(none)"
+        parent_refs = ", ".join(waypoint.spec_section_refs) or "(none)"
+        parent_spec_context = waypoint.spec_context_summary or "(none)"
+        spec_text = self._coord.product_spec
+        spec_sections = set(extract_spec_section_headings(spec_text))
+        spec_hash = compute_spec_hash(spec_text) if spec_text else None
+        spec_excerpt = spec_text[:4000] + ("..." if len(spec_text) > 4000 else "")
+        if not spec_excerpt:
+            spec_excerpt = "(no product spec available)"
 
         prompt = WAYPOINT_BREAKDOWN_PROMPT.format(
             parent_id=waypoint.id,
@@ -127,6 +147,9 @@ class ChartPhase:
             objective=waypoint.objective,
             criteria=criteria_str,
             resolution_notes=resolution_notes,
+            parent_spec_context_summary=parent_spec_context,
+            parent_spec_section_refs=parent_refs,
+            spec_excerpt=spec_excerpt,
         )
 
         logger.info("Breaking down waypoint: %s", waypoint.id)
@@ -140,12 +163,22 @@ class ChartPhase:
             else set()
         )
         try:
-            sub_waypoints = self._parse_waypoints(full_response, existing_ids)
+            sub_waypoints = self._parse_waypoints(
+                full_response,
+                existing_ids,
+                spec_sections=spec_sections,
+                spec_hash=spec_hash,
+            )
         except WaypointValidationError as exc:
             logger.warning("Chart validation failed, retrying: %s", exc.errors)
             retry_prompt = _build_chart_retry_prompt(prompt, exc.errors)
             full_response = self._stream_chart_response(retry_prompt, on_chunk)
-            sub_waypoints = self._parse_waypoints(full_response, existing_ids)
+            sub_waypoints = self._parse_waypoints(
+                full_response,
+                existing_ids,
+                spec_sections=spec_sections,
+                spec_hash=spec_hash,
+            )
 
         # Ensure all have correct parent_id
         for wp in sub_waypoints:
@@ -218,7 +251,10 @@ class ChartPhase:
         )
 
         # Use provided spec_summary or empty string
-        spec_context = spec_summary or "No product spec available"
+        spec_source = spec_summary or self._coord.product_spec
+        spec_sections = set(extract_spec_section_headings(spec_source or ""))
+        spec_hash = compute_spec_hash(spec_source) if spec_source else None
+        spec_context = spec_source or "No product spec available"
         spec_context = self._append_resolution_notes(spec_context)
 
         prompt = WAYPOINT_ADD_PROMPT.format(
@@ -242,7 +278,12 @@ class ChartPhase:
                     on_chunk(result.text)
 
         # Validate the response
-        validation = validate_single_waypoint(full_response, existing_ids)
+        validation = validate_single_waypoint(
+            full_response,
+            existing_ids,
+            require_spec_context=True,
+            spec_sections=spec_sections,
+        )
         if not validation.valid:
             raise WaypointValidationError(validation.errors)
 
@@ -257,6 +298,9 @@ class ChartPhase:
             debug_of=data.get("debug_of"),
             resolution_notes=data.get("resolution_notes", []),
             dependencies=data.get("dependencies", []),
+            spec_context_summary=data.get("spec_context_summary", ""),
+            spec_section_refs=data.get("spec_section_refs", []),
+            spec_context_hash=spec_hash,
             status=WaypointStatus.PENDING,
         )
 
@@ -341,7 +385,12 @@ class ChartPhase:
     # ─── Waypoint Parsing ─────────────────────────────────────────────
 
     def _parse_waypoints(
-        self, response: str, existing_ids: set[str] | None = None
+        self,
+        response: str,
+        existing_ids: set[str] | None = None,
+        *,
+        spec_sections: set[str] | None = None,
+        spec_hash: str | None = None,
     ) -> list[Waypoint]:
         """Parse and validate waypoints from LLM response.
 
@@ -355,7 +404,12 @@ class ChartPhase:
         Raises:
             WaypointValidationError: If validation fails
         """
-        result = validate_waypoints(response, existing_ids)
+        result = validate_waypoints(
+            response,
+            existing_ids,
+            require_spec_context=True,
+            spec_sections=spec_sections,
+        )
 
         if not result.valid:
             raise WaypointValidationError(result.errors)
@@ -371,6 +425,9 @@ class ChartPhase:
                 debug_of=item.get("debug_of"),
                 resolution_notes=item.get("resolution_notes", []),
                 dependencies=item.get("dependencies", []),
+                spec_context_summary=item.get("spec_context_summary", ""),
+                spec_section_refs=item.get("spec_section_refs", []),
+                spec_context_hash=spec_hash,
                 status=WaypointStatus.PENDING,
             )
             waypoints.append(wp)
@@ -562,6 +619,9 @@ class ChartPhase:
             debug_of=waypoint.id,
             resolution_notes=combined_notes,
             dependencies=[waypoint.id],
+            spec_context_summary=waypoint.spec_context_summary,
+            spec_section_refs=list(waypoint.spec_section_refs),
+            spec_context_hash=waypoint.spec_context_hash,
             status=WaypointStatus.PENDING,
         )
 

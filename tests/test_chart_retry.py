@@ -42,11 +42,19 @@ def test_generate_flight_plan_retries_on_validation_error(
 
     invalid = (
         '[{"id":"WP-001","title":"Bad","objective":"Implement the core flow",'
-        '"acceptance_criteria":[]}]'
+        '"acceptance_criteria":[],'
+        '"spec_context_summary":"This waypoint implements core flow behaviors from the'
+        ' product specification and should be covered by end-to-end checks before'
+        ' moving to integration work.",'
+        '"spec_section_refs":["Product Specification"]}]'
     )
     valid = (
         '[{"id":"WP-001","title":"Good","objective":"Implement the core flow",'
-        '"acceptance_criteria":["Meets requirements"]}]'
+        '"acceptance_criteria":["Meets requirements"],'
+        '"spec_context_summary":"This waypoint implements core flow behaviors from the'
+        ' product specification and should be covered by end-to-end checks before'
+        ' moving to integration work.",'
+        '"spec_section_refs":["Product Specification"]}]'
     )
     coordinator = JourneyCoordinator(project=project, llm=StubLLM([invalid, valid]))
 

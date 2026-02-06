@@ -642,6 +642,9 @@ def _collect_artifacts(project: "Project", spec: GenerativeSpec) -> None:
                     "debug_of": wp.debug_of,
                     "resolution_notes": wp.resolution_notes,
                     "dependencies": wp.dependencies,
+                    "spec_context_summary": wp.spec_context_summary,
+                    "spec_section_refs": wp.spec_section_refs,
+                    "spec_context_hash": wp.spec_context_hash,
                     "status": wp.status.value,
                 }
                 for wp in flight_plan.waypoints
