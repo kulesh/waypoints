@@ -372,6 +372,23 @@ class TestExecutionLogWriter:
         assert entries[1]["reason_detail"] == "missing completion marker"
         assert entries[1]["resume_session_id"] == "session-123"
 
+    def test_log_iteration_start_with_memory_context_metadata(
+        self, mock_project: MockProject, mock_waypoint: Waypoint
+    ) -> None:
+        """Iteration start can capture memory retrieval metadata."""
+        writer = ExecutionLogWriter(mock_project, mock_waypoint)
+        writer.log_iteration_start(
+            1,
+            "Initial prompt",
+            memory_waypoint_ids=["WP-001", "WP-003"],
+            memory_context_chars=512,
+        )
+
+        entries = _read_jsonl_entries(writer.file_path)
+
+        assert entries[1]["memory_waypoint_ids"] == ["WP-001", "WP-003"]
+        assert entries[1]["memory_context_chars"] == 512
+
     def test_log_output(
         self, mock_project: MockProject, mock_waypoint: Waypoint
     ) -> None:

@@ -21,6 +21,7 @@ from waypoints.git.config import Checklist
 from waypoints.git.receipt import CapturedEvidence, ChecklistReceipt
 from waypoints.llm.prompts import build_execution_prompt
 from waypoints.llm.providers.base import StreamChunk, StreamComplete
+from waypoints.memory import WaypointMemoryRecord, save_waypoint_memory
 from waypoints.models.waypoint import Waypoint
 
 
@@ -496,6 +497,39 @@ class TestWaypointExecutor:
         assert "<waypoint-complete>WP-1</waypoint-complete>" in prompt
         assert "Do not use aliases" in prompt
 
+    def test_refresh_project_memory_builds_waypoint_context(
+        self, mock_project: MagicMock, waypoint: Waypoint, tmp_path: Path
+    ) -> None:
+        """Project memory refresh should include prior waypoint memory context."""
+        mock_project.get_path.return_value = tmp_path
+        dependency_record = WaypointMemoryRecord(
+            schema_version="v1",
+            saved_at_utc="2026-02-07T02:00:00+00:00",
+            waypoint_id="WP-000",
+            title="Bootstrap stack",
+            objective="Initialize project",
+            dependencies=(),
+            result="success",
+            iterations_used=1,
+            max_iterations=10,
+            protocol_derailments=(),
+            error_summary=None,
+            changed_files=("src/main.py",),
+            approx_tokens_changed=120,
+            validation_commands=("pytest -v",),
+            useful_commands=("pytest -v",),
+            verified_criteria=(0,),
+        )
+        save_waypoint_memory(tmp_path, dependency_record)
+
+        waypoint.dependencies = ["WP-000"]
+        executor = WaypointExecutor(mock_project, waypoint, "spec")
+        executor._refresh_project_memory(tmp_path)
+
+        assert executor._waypoint_memory_context is not None
+        assert "WP-000 (dependency" in executor._waypoint_memory_context
+        assert executor._waypoint_memory_ids == ("WP-000",)
+
     def test_detect_protocol_issues_claimed_complete_without_marker(
         self, mock_project: MagicMock, waypoint: Waypoint
     ) -> None:
@@ -731,7 +765,7 @@ async def test_finalize_runs_host_validation_commands(
             text='<receipt-verdict status="valid">looks good</receipt-verdict>'
         )
 
-    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr("waypoints.fly.receipt_finalizer.agent_query", fake_agent_query)
 
     project = SimpleNamespace(get_path=lambda: tmp_path)
     waypoint = Waypoint(
@@ -785,7 +819,7 @@ async def test_finalize_host_validation_records_soft_evidence(
             text='<receipt-verdict status="valid">looks good</receipt-verdict>'
         )
 
-    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr("waypoints.fly.receipt_finalizer.agent_query", fake_agent_query)
 
     project = SimpleNamespace(get_path=lambda: tmp_path)
     waypoint = Waypoint(
@@ -840,7 +874,7 @@ async def test_finalize_falls_back_to_model_commands(
             text='<receipt-verdict status="valid">looks good</receipt-verdict>'
         )
 
-    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr("waypoints.fly.receipt_finalizer.agent_query", fake_agent_query)
 
     project = SimpleNamespace(get_path=lambda: tmp_path)
     waypoint = Waypoint(
@@ -941,7 +975,7 @@ async def test_finalize_requires_soft_evidence(
             text='<receipt-verdict status="valid">looks good</receipt-verdict>'
         )
 
-    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr("waypoints.fly.receipt_finalizer.agent_query", fake_agent_query)
 
     project = SimpleNamespace(get_path=lambda: tmp_path)
     waypoint = Waypoint(

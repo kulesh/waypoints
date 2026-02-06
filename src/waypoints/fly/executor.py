@@ -51,6 +51,7 @@ from waypoints.fly.intervention import (
 )
 from waypoints.fly.protocol import parse_stage_reports
 from waypoints.fly.provenance import (
+    WorkspaceDiffSummary,
     WorkspaceSnapshot,
     capture_workspace_snapshot,
     summarize_workspace_diff,
@@ -80,8 +81,11 @@ from waypoints.llm.providers.base import (
 )
 from waypoints.memory import (
     ProjectMemoryIndex,
+    WaypointMemoryRecord,
+    build_waypoint_memory_context_details,
     format_directory_policy_for_prompt,
     load_or_build_project_memory,
+    save_waypoint_memory,
 )
 from waypoints.models.project import Project
 from waypoints.models.waypoint import Waypoint
@@ -171,6 +175,8 @@ class WaypointExecutor:
         self._file_operations: list[FileOperation] = []
         self._project_memory_index: ProjectMemoryIndex | None = None
         self._directory_policy_context: str | None = None
+        self._waypoint_memory_context: str | None = None
+        self._waypoint_memory_ids: tuple[str, ...] = ()
 
     def cancel(self) -> None:
         """Cancel the execution."""
@@ -240,6 +246,7 @@ class WaypointExecutor:
             project_path,
             checklist,
             directory_policy_context=self._directory_policy_context,
+            waypoint_memory_context=self._waypoint_memory_context,
         )
 
         logger.info(
@@ -265,16 +272,27 @@ class WaypointExecutor:
         next_reason_code = "initial"
         next_reason_detail = "Initial waypoint execution."
         protocol_derailment_streak = 0
+        protocol_derailments: list[str] = []
 
         while iteration < self.max_iterations:
             if self._cancelled:
                 logger.info("Execution cancelled")
                 self._log_writer.log_completion(ExecutionResult.CANCELLED.value)
-                self._log_workspace_provenance(
+                workspace_summary = self._log_workspace_provenance(
                     project_path,
                     workspace_before,
                     iteration,
                     ExecutionResult.CANCELLED.value,
+                )
+                self._persist_waypoint_memory(
+                    project_path=project_path,
+                    result=ExecutionResult.CANCELLED.value,
+                    iteration=iteration,
+                    reported_validation_commands=reported_validation_commands,
+                    captured_criteria=captured_criteria,
+                    tool_validation_evidence=tool_validation_evidence,
+                    protocol_derailments=protocol_derailments,
+                    workspace_summary=workspace_summary,
                 )
                 return ExecutionResult.CANCELLED
 
@@ -304,6 +322,12 @@ class WaypointExecutor:
                 reason_code=reason_code,
                 reason_detail=reason_detail,
                 resume_session_id=resume_session_id,
+                memory_waypoint_ids=(
+                    list(self._waypoint_memory_ids) if iteration == 1 else None
+                ),
+                memory_context_chars=(
+                    len(self._waypoint_memory_context or "") if iteration == 1 else None
+                ),
             )
 
             # Run agent query with file and bash tools
@@ -524,11 +548,21 @@ class WaypointExecutor:
                             "Waypoint complete with valid receipt!",
                         )
                         self._log_writer.log_completion(ExecutionResult.SUCCESS.value)
-                        self._log_workspace_provenance(
+                        workspace_summary = self._log_workspace_provenance(
                             project_path,
                             workspace_before,
                             iteration,
                             ExecutionResult.SUCCESS.value,
+                        )
+                        self._persist_waypoint_memory(
+                            project_path=project_path,
+                            result=ExecutionResult.SUCCESS.value,
+                            iteration=iteration,
+                            reported_validation_commands=reported_validation_commands,
+                            captured_criteria=captured_criteria,
+                            tool_validation_evidence=tool_validation_evidence,
+                            protocol_derailments=protocol_derailments,
+                            workspace_summary=workspace_summary,
                         )
                         return ExecutionResult.SUCCESS
 
@@ -543,11 +577,22 @@ class WaypointExecutor:
                         "Complete (receipt missing/invalid)",
                     )
                     self._log_writer.log_completion(ExecutionResult.SUCCESS.value)
-                    self._log_workspace_provenance(
+                    workspace_summary = self._log_workspace_provenance(
                         project_path,
                         workspace_before,
                         iteration,
                         ExecutionResult.SUCCESS.value,
+                    )
+                    self._persist_waypoint_memory(
+                        project_path=project_path,
+                        result=ExecutionResult.SUCCESS.value,
+                        iteration=iteration,
+                        reported_validation_commands=reported_validation_commands,
+                        captured_criteria=captured_criteria,
+                        tool_validation_evidence=tool_validation_evidence,
+                        protocol_derailments=protocol_derailments,
+                        workspace_summary=workspace_summary,
+                        error_summary="Receipt invalid or missing despite completion.",
                     )
                     return ExecutionResult.SUCCESS
 
@@ -658,11 +703,22 @@ class WaypointExecutor:
                 self._log_writer.log_intervention_needed(
                     iteration, intervention.type.value, error_summary
                 )
-                self._log_workspace_provenance(
+                workspace_summary = self._log_workspace_provenance(
                     project_path,
                     workspace_before,
                     iteration,
                     ExecutionResult.INTERVENTION_NEEDED.value,
+                )
+                self._persist_waypoint_memory(
+                    project_path=project_path,
+                    result=ExecutionResult.INTERVENTION_NEEDED.value,
+                    iteration=iteration,
+                    reported_validation_commands=reported_validation_commands,
+                    captured_criteria=captured_criteria,
+                    tool_validation_evidence=tool_validation_evidence,
+                    protocol_derailments=protocol_derailments,
+                    workspace_summary=workspace_summary,
+                    error_summary=error_summary,
                 )
                 raise InterventionNeededError(intervention) from e
 
@@ -691,6 +747,7 @@ class WaypointExecutor:
                     for issue in protocol_issues
                     if issue != "missing structured stage report"
                 ]
+                protocol_derailments.extend(protocol_issues)
                 if escalation_issues:
                     protocol_derailment_streak += 1
                 else:
@@ -748,11 +805,22 @@ class WaypointExecutor:
                 self._log_writer.log_intervention_needed(
                     iteration, intervention.type.value, summary
                 )
-                self._log_workspace_provenance(
+                workspace_summary = self._log_workspace_provenance(
                     project_path,
                     workspace_before,
                     iteration,
                     ExecutionResult.INTERVENTION_NEEDED.value,
+                )
+                self._persist_waypoint_memory(
+                    project_path=project_path,
+                    result=ExecutionResult.INTERVENTION_NEEDED.value,
+                    iteration=iteration,
+                    reported_validation_commands=reported_validation_commands,
+                    captured_criteria=captured_criteria,
+                    tool_validation_evidence=tool_validation_evidence,
+                    protocol_derailments=protocol_derailments,
+                    workspace_summary=workspace_summary,
+                    error_summary=summary,
                 )
                 raise InterventionNeededError(intervention)
 
@@ -784,11 +852,22 @@ class WaypointExecutor:
                 self._log_writer.log_intervention_needed(
                     iteration, intervention.type.value, reason
                 )
-                self._log_workspace_provenance(
+                workspace_summary = self._log_workspace_provenance(
                     project_path,
                     workspace_before,
                     iteration,
                     ExecutionResult.INTERVENTION_NEEDED.value,
+                )
+                self._persist_waypoint_memory(
+                    project_path=project_path,
+                    result=ExecutionResult.INTERVENTION_NEEDED.value,
+                    iteration=iteration,
+                    reported_validation_commands=reported_validation_commands,
+                    captured_criteria=captured_criteria,
+                    tool_validation_evidence=tool_validation_evidence,
+                    protocol_derailments=protocol_derailments,
+                    workspace_summary=workspace_summary,
+                    error_summary=reason,
                 )
                 raise InterventionNeededError(intervention)
 
@@ -814,11 +893,22 @@ class WaypointExecutor:
         self._log_writer.log_intervention_needed(
             iteration, intervention.type.value, error_msg
         )
-        self._log_workspace_provenance(
+        workspace_summary = self._log_workspace_provenance(
             project_path,
             workspace_before,
             iteration,
             ExecutionResult.INTERVENTION_NEEDED.value,
+        )
+        self._persist_waypoint_memory(
+            project_path=project_path,
+            result=ExecutionResult.INTERVENTION_NEEDED.value,
+            iteration=iteration,
+            reported_validation_commands=reported_validation_commands,
+            captured_criteria=captured_criteria,
+            tool_validation_evidence=tool_validation_evidence,
+            protocol_derailments=protocol_derailments,
+            workspace_summary=workspace_summary,
+            error_summary=error_msg,
         )
         raise InterventionNeededError(intervention)
 
@@ -927,6 +1017,20 @@ When complete, output the completion marker specified in the instructions."""
             )
             self._project_memory_index = None
             self._directory_policy_context = None
+        try:
+            memory_context = build_waypoint_memory_context_details(
+                project_root=project_path,
+                waypoint=self.waypoint,
+            )
+            self._waypoint_memory_context = memory_context.text or None
+            self._waypoint_memory_ids = memory_context.waypoint_ids
+        except Exception:
+            logger.exception(
+                "Failed to build waypoint memory context for %s",
+                self.waypoint.id,
+            )
+            self._waypoint_memory_context = None
+            self._waypoint_memory_ids = ()
 
     def _report_progress(
         self,
@@ -1024,10 +1128,10 @@ When complete, output the completion marker specified in the instructions."""
         before_snapshot: WorkspaceSnapshot | None,
         iteration: int,
         result: str,
-    ) -> None:
+    ) -> WorkspaceDiffSummary | None:
         """Write a workspace diff summary into the execution log."""
         if before_snapshot is None or self._log_writer is None:
-            return
+            return None
         try:
             after_snapshot = capture_workspace_snapshot(project_path)
             summary = summarize_workspace_diff(before_snapshot, after_snapshot)
@@ -1036,9 +1140,72 @@ When complete, output the completion marker specified in the instructions."""
                 result=result,
                 summary=summary.to_dict(),
             )
+            return summary
         except Exception:
             logger.exception(
                 "Failed to log workspace provenance for %s",
+                self.waypoint.id,
+            )
+            return None
+
+    def _persist_waypoint_memory(
+        self,
+        *,
+        project_path: Path,
+        result: str,
+        iteration: int,
+        reported_validation_commands: list[str],
+        captured_criteria: dict[int, CriterionVerification],
+        tool_validation_evidence: dict[str, CapturedEvidence],
+        protocol_derailments: list[str],
+        workspace_summary: WorkspaceDiffSummary | None,
+        error_summary: str | None = None,
+    ) -> None:
+        """Persist waypoint execution memory for future waypoint retrieval."""
+        try:
+            verified_criteria = sorted(
+                idx
+                for idx, criterion in captured_criteria.items()
+                if criterion.status == "verified"
+            )
+            validation_commands = tuple(dict.fromkeys(reported_validation_commands))
+            useful_commands = tuple(
+                command
+                for command in dict.fromkeys(
+                    [*reported_validation_commands, *tool_validation_evidence.keys()]
+                )
+                if command
+            )
+            changed_files: tuple[str, ...] = ()
+            approx_tokens_changed: int | None = None
+            if workspace_summary is not None:
+                changed_files = tuple(
+                    item.path for item in workspace_summary.top_changed_files
+                )
+                approx_tokens_changed = workspace_summary.approx_tokens_changed
+
+            record = WaypointMemoryRecord(
+                schema_version="v1",
+                saved_at_utc=datetime.now(UTC).isoformat(),
+                waypoint_id=self.waypoint.id,
+                title=self.waypoint.title,
+                objective=self.waypoint.objective,
+                dependencies=tuple(self.waypoint.dependencies),
+                result=result,
+                iterations_used=iteration,
+                max_iterations=self.max_iterations,
+                protocol_derailments=tuple(protocol_derailments[-8:]),
+                error_summary=error_summary,
+                changed_files=changed_files,
+                approx_tokens_changed=approx_tokens_changed,
+                validation_commands=validation_commands,
+                useful_commands=useful_commands[:8],
+                verified_criteria=tuple(verified_criteria),
+            )
+            save_waypoint_memory(project_path, record)
+        except Exception:
+            logger.exception(
+                "Failed to persist waypoint memory for %s",
                 self.waypoint.id,
             )
 

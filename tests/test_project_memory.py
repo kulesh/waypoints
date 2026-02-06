@@ -1,11 +1,14 @@
 """Tests for persistent project memory index."""
 
+import json
 from pathlib import Path
 
 from waypoints.memory import (
     format_directory_policy_for_prompt,
     load_or_build_project_memory,
     memory_dir,
+    policy_overrides_path,
+    write_default_policy_overrides,
 )
 
 
@@ -52,3 +55,42 @@ def test_project_memory_rebuilds_when_top_level_layout_changes(tmp_path: Path) -
 
     refreshed = load_or_build_project_memory(tmp_path)
     assert "node_modules" in set(refreshed.index.blocked_top_level_dirs)
+
+
+def test_project_memory_applies_policy_overrides(tmp_path: Path) -> None:
+    """Project-authored policy overrides should alter block/ignore/focus sets."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "generated").mkdir()
+    (tmp_path / "tmp").mkdir()
+    (tmp_path / "custom").mkdir()
+
+    overrides = {
+        "schema_version": "v1",
+        "block_dirs": ["generated"],
+        "ignore_dirs": ["tmp"],
+        "focus_dirs": ["custom"],
+    }
+    overrides_path = policy_overrides_path(tmp_path)
+    overrides_path.parent.mkdir(parents=True, exist_ok=True)
+    overrides_path.write_text(json.dumps(overrides), encoding="utf-8")
+
+    memory = load_or_build_project_memory(tmp_path, force_refresh=True)
+
+    blocked = set(memory.index.blocked_top_level_dirs)
+    ignored = set(memory.index.ignored_top_level_dirs)
+    focus = set(memory.index.focus_top_level_dirs)
+
+    assert "generated" in blocked
+    assert "generated" in ignored
+    assert "tmp" in ignored
+    assert "custom" in focus
+    assert "generated" not in focus
+
+
+def test_write_default_policy_overrides_creates_template(tmp_path: Path) -> None:
+    """Default override template can be initialized for manual editing."""
+    path = write_default_policy_overrides(tmp_path)
+    assert path.exists()
+    contents = path.read_text(encoding="utf-8")
+    assert '"block_dirs"' in contents
+    assert '"ignore_dirs"' in contents

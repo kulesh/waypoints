@@ -25,6 +25,13 @@ This memory is generated from filesystem and manifest signals, then reused by bo
   - `ignored_top_level_dirs`
   - `focus_top_level_dirs`
   - `top_level_fingerprint` for stale-index detection
+- `waypoint/*.json`
+  - one file per waypoint execution outcome
+  - includes result, iterations used, key changed files, validation commands,
+    protocol derailments, and verified criteria
+- `policy-overrides.v1.json`
+  - optional project-authored top-level policy adjustments
+  - keys: `block_dirs`, `unblock_dirs`, `ignore_dirs`, `unignore_dirs`, `focus_dirs`
 
 ## Generation and Refresh
 
@@ -37,6 +44,14 @@ When fly execution starts (and when tools need policy), Waypoints:
 
 This keeps policy adaptive as the project evolves.
 
+Manual refresh:
+
+```bash
+waypoints memory refresh <project-slug>
+waypoints memory refresh --all
+waypoints memory refresh <project-slug> --init-overrides
+```
+
 ## Safety Model
 
 There are immutable safety boundaries that are always blocked:
@@ -47,6 +62,7 @@ There are immutable safety boundaries that are always blocked:
 - `receipts`
 
 Stack/generation-specific directories are added dynamically based on detected signals and directory classification.
+Policy overrides cannot remove immutable safety boundaries.
 
 ## Prompt + Tool Alignment
 
@@ -56,6 +72,12 @@ The same `project-index.v1.json` policy is used in two places:
 2. **Tool enforcement**: `Read`/`Write`/`Edit`/`Glob`/`Grep` path checks deny blocked roots.
 
 This avoids drift between “what the model is told” and “what the runtime enforces”.
+
+Waypoint memory is also injected into new waypoint execution prompts as a compact,
+token-bounded context block. Selection priority:
+
+1. dependency waypoint memory
+2. lexically similar recent waypoint memory
 
 ## Next Step
 

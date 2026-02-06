@@ -213,6 +213,36 @@ def parse_args() -> argparse.Namespace:
         help="Lines per artifact preview (0 to disable)",
     )
 
+    # Memory command
+    memory_parser = subparsers.add_parser(
+        "memory",
+        help="Project memory utilities",
+    )
+    memory_subparsers = memory_parser.add_subparsers(
+        dest="memory_action",
+        help="Memory actions",
+    )
+
+    refresh_parser = memory_subparsers.add_parser(
+        "refresh",
+        help="Refresh project memory index from current filesystem",
+    )
+    refresh_parser.add_argument(
+        "project",
+        nargs="?",
+        help="Project slug to refresh (default: all projects)",
+    )
+    refresh_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Refresh memory for all projects",
+    )
+    refresh_parser.add_argument(
+        "--init-overrides",
+        action="store_true",
+        help="Create policy override template if missing",
+    )
+
     return parser.parse_args()
 
 
@@ -500,6 +530,55 @@ def cmd_verify(args: argparse.Namespace) -> int:
     )
 
 
+def cmd_memory(args: argparse.Namespace) -> int:
+    """Manage project memory artifacts."""
+    from waypoints.memory import (
+        load_or_build_project_memory,
+        waypoint_memory_dir,
+        write_default_policy_overrides,
+    )
+    from waypoints.models.project import Project
+
+    if args.memory_action != "refresh":
+        print("Error: Unknown memory action", file=sys.stderr)
+        return 2
+
+    projects: list[Project]
+    if args.all or not args.project:
+        projects = Project.list_all()
+        if not projects:
+            print("No projects found to refresh.")
+            return 0
+    else:
+        projects_root = get_projects_root()
+        project_path = projects_root / args.project
+        if not project_path.exists():
+            print(f"Error: Project '{args.project}' not found", file=sys.stderr)
+            print(f"  Looked in: {projects_root}", file=sys.stderr)
+            return 1
+        projects = [Project.load(args.project)]
+
+    for project in projects:
+        project_root = project.get_path()
+        memory = load_or_build_project_memory(project_root, force_refresh=True)
+        if args.init_overrides:
+            write_default_policy_overrides(project_root)
+        waypoint_records = 0
+        waypoint_root = waypoint_memory_dir(project_root)
+        if waypoint_root.exists():
+            waypoint_records = len(list(waypoint_root.glob("*.json")))
+        print(
+            (
+                f"{project.slug}: refreshed memory "
+                f"(focus={len(memory.index.focus_top_level_dirs)} "
+                f"ignored={len(memory.index.ignored_top_level_dirs)} "
+                f"blocked={len(memory.index.blocked_top_level_dirs)} "
+                f"waypoint_records={waypoint_records})"
+            )
+        )
+    return 0
+
+
 def cmd_tui(args: argparse.Namespace) -> int:
     """Launch the TUI application."""
     from waypoints.tui.app import WaypointsApp
@@ -535,6 +614,8 @@ def main() -> None:
         sys.exit(cmd_view(args))
     elif args.command == "verify":
         sys.exit(cmd_verify(args))
+    elif args.command == "memory":
+        sys.exit(cmd_memory(args))
     else:
         # Default: launch TUI
         sys.exit(cmd_tui(args))
