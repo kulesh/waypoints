@@ -28,6 +28,9 @@ class Waypoint:
     debug_of: str | None = None
     resolution_notes: list[str] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
+    spec_context_summary: str = ""
+    spec_section_refs: list[str] = field(default_factory=list)
+    spec_context_hash: str | None = None
     status: WaypointStatus = WaypointStatus.PENDING
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
@@ -43,6 +46,9 @@ class Waypoint:
             "debug_of": self.debug_of,
             "resolution_notes": self.resolution_notes,
             "dependencies": self.dependencies,
+            "spec_context_summary": self.spec_context_summary,
+            "spec_section_refs": self.spec_section_refs,
+            "spec_context_hash": self.spec_context_hash,
             "status": self.status.value,
             "created_at": self.created_at.isoformat(),
             "completed_at": (
@@ -62,6 +68,9 @@ class Waypoint:
             debug_of=data.get("debug_of"),
             resolution_notes=data.get("resolution_notes", []),
             dependencies=data.get("dependencies", []),
+            spec_context_summary=data.get("spec_context_summary", ""),
+            spec_section_refs=data.get("spec_section_refs", []),
+            spec_context_hash=data.get("spec_context_hash"),
             status=WaypointStatus(data.get("status", "pending")),
             created_at=(
                 datetime.fromisoformat(data["created_at"])

@@ -25,6 +25,9 @@ Output as a JSON array of waypoints. Each waypoint has:
 - acceptance_criteria: Array of testable criteria (1-5 items, must be non-empty)
 - parent_id: ID of parent waypoint (null for top-level)
 - dependencies: Array of waypoint IDs this depends on
+- spec_context_summary: 2-5 sentences focused ONLY on spec details
+  needed for this waypoint
+- spec_section_refs: Array of product-spec section headings relevant to this waypoint
 
 Generate 8-15 waypoints for MVP scope. Group related work into epics where appropriate.
 
@@ -44,6 +47,11 @@ Parent Waypoint:
 - Objective: {objective}
 - Acceptance Criteria: {criteria}
 - Resolution Notes: {resolution_notes}
+- Parent Spec Context: {parent_spec_context_summary}
+- Parent Spec Section Refs: {parent_spec_section_refs}
+
+Product Specification (for section references):
+{spec_excerpt}
 
 Each sub-waypoint should:
 1. Be independently testable
@@ -59,6 +67,10 @@ Output as a JSON array. Each sub-waypoint has:
 - acceptance_criteria: Array of testable criteria (1-5 items, must be non-empty)
 - parent_id: "{parent_id}" (the parent waypoint ID)
 - dependencies: Array of sibling waypoint IDs this depends on (or empty)
+- spec_context_summary: 2-5 sentences focused ONLY on spec details
+  needed for this sub-waypoint
+- spec_section_refs: Array of product-spec section headings relevant
+  to this sub-waypoint
 
 Output ONLY the JSON array, no markdown code blocks or other text.
 
@@ -87,6 +99,9 @@ Output a JSON object with:
 - objective: What this waypoint accomplishes (1-2 sentences)
 - acceptance_criteria: Array of 2-5 testable success criteria
 - dependencies: Array of waypoint IDs this depends on (empty array if none)
+- spec_context_summary: 2-5 sentences focused ONLY on spec details
+  needed for this waypoint
+- spec_section_refs: Array of product-spec section headings relevant to this waypoint
 - insert_after: ID of waypoint to insert after, or null to append at end
 
 Output ONLY the JSON object, no markdown code blocks or other text.

@@ -594,8 +594,8 @@ class ChartScreen(Screen[None]):
             self.notify, "Generating waypoint...", severity="information"
         )
 
-        # Truncate spec for prompt context
-        spec_summary = self.spec[:2000] if self.spec else None
+        # Use full spec so chart-time context generation has complete section refs.
+        spec_summary = self.spec or None
 
         try:
             # Coordinator generates waypoint and returns it with insert position

@@ -11,6 +11,12 @@ from typing import Any
 
 import jsonschema
 
+from waypoints.spec import section_ref_exists
+
+_SPEC_SUMMARY_MIN_CHARS = 40
+_SPEC_SUMMARY_MAX_CHARS = 1200
+_SPEC_REFS_MAX_ITEMS = 8
+
 # JSON Schema for a single waypoint (used when adding new waypoints)
 SINGLE_WAYPOINT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -36,6 +42,13 @@ SINGLE_WAYPOINT_SCHEMA: dict[str, Any] = {
             "items": {"type": "string"},
             "default": [],
         },
+        "spec_context_summary": {"type": "string"},
+        "spec_section_refs": {
+            "type": "array",
+            "items": {"type": "string"},
+            "default": [],
+        },
+        "spec_context_hash": {"type": ["string", "null"]},
         "insert_after": {"type": ["string", "null"]},
     },
     "additionalProperties": False,
@@ -68,6 +81,13 @@ WAYPOINT_SCHEMA: dict[str, Any] = {
                 "items": {"type": "string"},
                 "default": [],
             },
+            "spec_context_summary": {"type": "string"},
+            "spec_section_refs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": [],
+            },
+            "spec_context_hash": {"type": ["string", "null"]},
         },
         "additionalProperties": False,
     },
@@ -203,8 +223,86 @@ def validate_semantics(
     return errors
 
 
+def validate_spec_context(
+    data: list[dict[str, Any]],
+    *,
+    require_spec_context: bool,
+    spec_sections: set[str] | None,
+) -> list[str]:
+    """Validate waypoint spec-context fields."""
+    errors: list[str] = []
+    for index, item in enumerate(data):
+        path_prefix = f"$[{index}]"
+        errors.extend(
+            _validate_spec_context_item(
+                item,
+                path_prefix=path_prefix,
+                require_spec_context=require_spec_context,
+                spec_sections=spec_sections,
+            )
+        )
+    return errors
+
+
+def _validate_spec_context_item(
+    item: dict[str, Any],
+    *,
+    path_prefix: str,
+    require_spec_context: bool,
+    spec_sections: set[str] | None,
+) -> list[str]:
+    """Validate one waypoint spec-context payload."""
+    errors: list[str] = []
+    summary_value = item.get("spec_context_summary", "")
+    refs_value = item.get("spec_section_refs", [])
+
+    summary = summary_value if isinstance(summary_value, str) else ""
+    refs = refs_value if isinstance(refs_value, list) else []
+
+    if require_spec_context and len(summary.strip()) < _SPEC_SUMMARY_MIN_CHARS:
+        errors.append(
+            f"{path_prefix}.spec_context_summary: expected at least "
+            f"{_SPEC_SUMMARY_MIN_CHARS} characters"
+        )
+    if summary and len(summary) > _SPEC_SUMMARY_MAX_CHARS:
+        errors.append(
+            f"{path_prefix}.spec_context_summary: exceeds "
+            f"{_SPEC_SUMMARY_MAX_CHARS} characters"
+        )
+
+    if require_spec_context and not refs:
+        errors.append(
+            f"{path_prefix}.spec_section_refs: expected at least one reference"
+        )
+    if len(refs) > _SPEC_REFS_MAX_ITEMS:
+        errors.append(
+            f"{path_prefix}.spec_section_refs: max {_SPEC_REFS_MAX_ITEMS} references"
+        )
+
+    normalized_refs: list[str] = []
+    for ref in refs:
+        if not isinstance(ref, str) or not ref.strip():
+            errors.append(
+                f"{path_prefix}.spec_section_refs: references must be strings"
+            )
+            continue
+        normalized_refs.append(ref.strip())
+
+    if spec_sections:
+        for ref in normalized_refs:
+            if not section_ref_exists(ref, spec_sections):
+                errors.append(
+                    f"{path_prefix}.spec_section_refs: unknown spec section '{ref}'"
+                )
+    return errors
+
+
 def validate_waypoints(
-    response: str, existing_ids: set[str] | None = None
+    response: str,
+    existing_ids: set[str] | None = None,
+    *,
+    require_spec_context: bool = False,
+    spec_sections: set[str] | None = None,
 ) -> ValidationResult:
     """Full validation pipeline for waypoint JSON.
 
@@ -232,6 +330,14 @@ def validate_waypoints(
     semantic_errors = validate_semantics(data, existing_ids)
     if semantic_errors:
         return ValidationResult(valid=False, errors=semantic_errors)
+
+    context_errors = validate_spec_context(
+        data,
+        require_spec_context=require_spec_context,
+        spec_sections=spec_sections,
+    )
+    if context_errors:
+        return ValidationResult(valid=False, errors=context_errors)
 
     return ValidationResult(valid=True, data=data)
 
@@ -278,7 +384,11 @@ class SingleWaypointResult:
 
 
 def validate_single_waypoint(
-    response: str, existing_ids: set[str]
+    response: str,
+    existing_ids: set[str],
+    *,
+    require_spec_context: bool = False,
+    spec_sections: set[str] | None = None,
 ) -> SingleWaypointResult:
     """Validate a single waypoint from LLM response.
 
@@ -323,6 +433,14 @@ def validate_single_waypoint(
     insert_after = data.get("insert_after")
     if insert_after and insert_after not in existing_ids:
         errors.append(f"insert_after '{insert_after}' not found")
+
+    spec_context_errors = _validate_spec_context_item(
+        data,
+        path_prefix="$",
+        require_spec_context=require_spec_context,
+        spec_sections=spec_sections,
+    )
+    errors.extend(spec_context_errors)
 
     if errors:
         return SingleWaypointResult(valid=False, errors=errors)

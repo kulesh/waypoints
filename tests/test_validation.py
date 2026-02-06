@@ -9,6 +9,7 @@ from waypoints.llm.validation import (
     extract_json_array,
     validate_schema,
     validate_semantics,
+    validate_single_waypoint,
     validate_waypoints,
 )
 
@@ -397,6 +398,69 @@ class TestValidateWaypoints:
         # Without existing_ids, parent_id validation would fail
         result = validate_waypoints(response, existing_ids={"WP-1"})
         assert result.valid is True
+
+    def test_require_spec_context_rejects_missing_fields(self) -> None:
+        """Spec-context enforcement should reject missing summary/refs."""
+        response = """[
+            {
+                "id": "WP-1",
+                "title": "First waypoint",
+                "objective": "Implement the first feature",
+                "acceptance_criteria": ["Feature works", "Tests pass"]
+            }
+        ]"""
+        result = validate_waypoints(response, require_spec_context=True)
+        assert result.valid is False
+        assert any("spec_context_summary" in err for err in result.errors)
+        assert any("spec_section_refs" in err for err in result.errors)
+
+    def test_require_spec_context_validates_section_refs(self) -> None:
+        """Section references should map to known spec headings."""
+        response = json.dumps(
+            [
+                {
+                    "id": "WP-1",
+                    "title": "First waypoint",
+                    "objective": "Implement the first feature",
+                    "acceptance_criteria": ["Feature works", "Tests pass"],
+                    "spec_context_summary": (
+                        "Implementing this waypoint satisfies key user interactions "
+                        "defined in the product specification and ensures we can "
+                        "validate behavior through deterministic tests before "
+                        "integrating with downstream modules."
+                    ),
+                    "spec_section_refs": ["Unknown Heading"],
+                }
+            ]
+        )
+        result = validate_waypoints(
+            response,
+            require_spec_context=True,
+            spec_sections={"Product Specification", "Problem Statement"},
+        )
+        assert result.valid is False
+        assert any("unknown spec section" in err for err in result.errors)
+
+
+class TestValidateSingleWaypoint:
+    """Tests for single-waypoint validation."""
+
+    def test_single_waypoint_requires_spec_context_when_requested(self) -> None:
+        response = """{
+            "id": "WP-004",
+            "title": "Add waypoint",
+            "objective": "Implement a new feature waypoint in plan",
+            "acceptance_criteria": ["criterion one"],
+            "dependencies": [],
+            "insert_after": null
+        }"""
+        result = validate_single_waypoint(
+            response,
+            existing_ids={"WP-001"},
+            require_spec_context=True,
+        )
+        assert result.valid is False
+        assert any("spec_context_summary" in err for err in result.errors)
 
 
 class TestWaypointValidationError:
