@@ -1,6 +1,6 @@
 """Tests for land debrief formatting helpers."""
 
-from waypoints.tui.screens.land import _format_token_summary
+from waypoints.orchestration.debrief import _format_token_summary
 
 
 def test_format_token_summary_returns_none_when_empty() -> None:
