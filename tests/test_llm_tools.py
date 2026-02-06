@@ -1,5 +1,7 @@
 """Tests for shared LLM tool execution helpers."""
 
+from pathlib import Path
+
 from waypoints.llm.tools import execute_tool
 
 
@@ -7,3 +9,51 @@ def test_execute_tool_bash_echo() -> None:
     """Bash tool execution returns command output."""
     result = execute_tool("bash", {"command": "echo hello"}, cwd=None)
     assert "hello" in result
+
+
+def test_read_file_denies_sessions_path(tmp_path: Path) -> None:
+    """Read tool denies blocked project metadata directories."""
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir(parents=True)
+    blocked_file = sessions_dir / "run.jsonl"
+    blocked_file.write_text("{}", encoding="utf-8")
+
+    result = execute_tool(
+        "read_file",
+        {"file_path": str(blocked_file)},
+        cwd=str(tmp_path),
+    )
+
+    assert "Error: Access denied:" in result
+    assert "sessions" in result
+
+
+def test_read_file_denies_outside_project(tmp_path: Path) -> None:
+    """Read tool denies absolute paths outside project root."""
+    outside = tmp_path.parent / "outside.txt"
+    outside.write_text("nope", encoding="utf-8")
+    try:
+        result = execute_tool(
+            "read_file",
+            {"file_path": str(outside)},
+            cwd=str(tmp_path),
+        )
+        assert "Error: Access denied:" in result
+        assert "outside project root" in result
+    finally:
+        outside.unlink(missing_ok=True)
+
+
+def test_read_file_allows_workspace_code(tmp_path: Path) -> None:
+    """Read tool still works for normal source files in the project."""
+    src_file = tmp_path / "src" / "main.py"
+    src_file.parent.mkdir(parents=True)
+    src_file.write_text("print('ok')", encoding="utf-8")
+
+    result = execute_tool(
+        "read_file",
+        {"file_path": str(src_file)},
+        cwd=str(tmp_path),
+    )
+
+    assert "print('ok')" in result

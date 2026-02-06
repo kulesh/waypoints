@@ -321,6 +321,7 @@ class AnthropicProvider(LLMProvider):
         system_prompt: str | None = None,
         allowed_tools: list[str] | None = None,
         cwd: str | None = None,
+        resume_session_id: str | None = None,
         metrics_collector: "MetricsCollector | None" = None,
         phase: str = "fly",
         waypoint_id: str | None = None,
@@ -335,6 +336,8 @@ class AnthropicProvider(LLMProvider):
         options = ClaudeAgentOptions(
             allowed_tools=allowed_tools or [],
             system_prompt=system_prompt,
+            continue_conversation=resume_session_id is not None,
+            resume=resume_session_id,
             cwd=cwd,
             env=env_config,
         )
@@ -368,6 +371,7 @@ class AnthropicProvider(LLMProvider):
             tokens_in: int | None = None
             tokens_out: int | None = None
             cached_tokens_in: int | None = None
+            session_id: str | None = None
             has_yielded = False
 
             try:
@@ -396,6 +400,7 @@ class AnthropicProvider(LLMProvider):
                                 )
                     elif isinstance(message, ResultMessage):
                         cost = message.total_cost_usd
+                        session_id = getattr(message, "session_id", None)
                         cached_tokens_in = _extract_cached_input_tokens(
                             getattr(message, "usage", None)
                         )
@@ -426,6 +431,7 @@ class AnthropicProvider(LLMProvider):
                     tokens_in=tokens_in,
                     tokens_out=tokens_out,
                     cached_tokens_in=cached_tokens_in,
+                    session_id=session_id,
                 )
 
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)

@@ -351,6 +351,27 @@ class TestExecutionLogWriter:
         assert entries[1]["iteration"] == 1
         assert entries[1]["prompt"] == "Test prompt"
 
+    def test_log_iteration_start_with_reason_and_resume(
+        self, mock_project: MockProject, mock_waypoint: Waypoint
+    ) -> None:
+        """Iteration start includes optional reason and session metadata."""
+        writer = ExecutionLogWriter(mock_project, mock_waypoint)
+        writer.log_iteration_start(
+            2,
+            "Kickoff prompt",
+            reason_code="protocol_violation",
+            reason_detail="missing completion marker",
+            resume_session_id="session-123",
+        )
+
+        entries = _read_jsonl_entries(writer.file_path)
+
+        assert entries[1]["type"] == "iteration_start"
+        assert entries[1]["iteration"] == 2
+        assert entries[1]["reason_code"] == "protocol_violation"
+        assert entries[1]["reason_detail"] == "missing completion marker"
+        assert entries[1]["resume_session_id"] == "session-123"
+
     def test_log_output(
         self, mock_project: MockProject, mock_waypoint: Waypoint
     ) -> None:
@@ -572,6 +593,24 @@ class TestExecutionLogWriter:
         assert entries[1]["result"] == "success"
         assert entries[1]["total_files_changed"] == 3
         assert entries[1]["approx_tokens_changed"] == 120
+
+    def test_log_protocol_derailment(
+        self, mock_project: MockProject, mock_waypoint: Waypoint
+    ) -> None:
+        """Protocol derailment entry captures issues and recovery action."""
+        writer = ExecutionLogWriter(mock_project, mock_waypoint)
+        writer.log_protocol_derailment(
+            iteration=3,
+            issues=["missing structured stage report"],
+            action="nudge_and_retry",
+        )
+
+        entries = _read_jsonl_entries(writer.file_path)
+
+        assert entries[1]["type"] == "protocol_derailment"
+        assert entries[1]["iteration"] == 3
+        assert entries[1]["issues"] == ["missing structured stage report"]
+        assert entries[1]["action"] == "nudge_and_retry"
 
     def test_log_finalize_phases(
         self, mock_project: MockProject, mock_waypoint: Waypoint

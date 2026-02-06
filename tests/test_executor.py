@@ -20,7 +20,7 @@ from waypoints.fly.stack import ValidationCommand
 from waypoints.git.config import Checklist
 from waypoints.git.receipt import CapturedEvidence, ChecklistReceipt
 from waypoints.llm.prompts import build_execution_prompt
-from waypoints.llm.providers.base import StreamChunk
+from waypoints.llm.providers.base import StreamChunk, StreamComplete
 from waypoints.models.waypoint import Waypoint
 
 
@@ -480,6 +480,37 @@ class TestWaypointExecutor:
         assert "NEVER" in prompt
         assert "working directory" in prompt.lower()
 
+    def test_build_iteration_kickoff_prompt(
+        self, mock_project: MagicMock, waypoint: Waypoint
+    ) -> None:
+        """Kickoff prompt includes explicit reason and strict completion rule."""
+        executor = WaypointExecutor(mock_project, waypoint, "spec")
+        prompt = executor._build_iteration_kickoff_prompt(
+            reason_code="protocol_violation",
+            reason_detail="missing completion marker",
+            completion_marker="<waypoint-complete>WP-1</waypoint-complete>",
+            captured_criteria={},
+        )
+        assert "Reason: protocol_violation" in prompt
+        assert "missing completion marker" in prompt
+        assert "<waypoint-complete>WP-1</waypoint-complete>" in prompt
+        assert "Do not use aliases" in prompt
+
+    def test_detect_protocol_issues_claimed_complete_without_marker(
+        self, mock_project: MagicMock, waypoint: Waypoint
+    ) -> None:
+        """Alias completion text should be treated as protocol violation."""
+        executor = WaypointExecutor(mock_project, waypoint, "spec")
+        issues = executor._detect_protocol_issues(
+            iteration_output="Implementation is complete. **WP-1 COMPLETE**",
+            completion_marker="<waypoint-complete>WP-1</waypoint-complete>",
+            stage_reports_logged=0,
+            scope_drift_detected=True,
+        )
+        assert "claimed completion without exact completion marker" in issues
+        assert "missing structured stage report" in issues
+        assert "attempted tool access to blocked project areas" in issues
+
 
 class TestExecutionResult:
     """Tests for ExecutionResult enum."""
@@ -498,6 +529,81 @@ class TestExecutionResult:
 
     def test_intervention_needed_value(self) -> None:
         assert ExecutionResult.INTERVENTION_NEEDED.value == "intervention_needed"
+
+
+class _TestProject:
+    """Minimal project double for execute-loop tests."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        self.slug = "test-project"
+
+    def get_path(self) -> Path:
+        return self._root
+
+    def get_sessions_path(self) -> Path:
+        return self._root / "sessions"
+
+
+class _StubFinalizer:
+    """Finalize stub used by execute-loop tests."""
+
+    async def finalize(self, **_: object) -> bool:
+        return True
+
+
+@pytest.mark.anyio
+async def test_execute_resumes_session_and_uses_protocol_nudge(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Iteration 2 should resume prior session and include protocol-violation reason."""
+    calls: list[dict[str, object]] = []
+
+    async def fake_agent_query(**kwargs: object):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            yield StreamChunk(text="Implementation is complete.\n**WP-1 COMPLETE**")
+            yield StreamComplete(
+                full_text="Implementation is complete.\n**WP-1 COMPLETE**",
+                session_id="session-abc",
+            )
+            return
+        yield StreamChunk(text="<waypoint-complete>WP-1</waypoint-complete>")
+        yield StreamComplete(
+            full_text="<waypoint-complete>WP-1</waypoint-complete>",
+            session_id="session-abc",
+        )
+
+    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_make_finalizer",
+        lambda self: _StubFinalizer(),
+    )
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_resolve_validation_commands",
+        lambda self, project_path, checklist: [],
+    )
+
+    project = _TestProject(tmp_path)
+    waypoint = Waypoint(
+        id="WP-1",
+        title="Protocol recovery",
+        objective="Validate session continuity",
+        acceptance_criteria=["Criterion 1"],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+
+    result = await executor.execute()
+
+    assert result == ExecutionResult.SUCCESS
+    assert len(calls) == 2
+    assert calls[0]["resume_session_id"] is None
+    assert calls[1]["resume_session_id"] == "session-abc"
+    assert isinstance(calls[1]["prompt"], str)
+    assert "Reason: protocol_violation" in calls[1]["prompt"]
+    assert "<waypoint-complete>WP-1</waypoint-complete>" in calls[1]["prompt"]
 
 
 class TestExecutionStep:
