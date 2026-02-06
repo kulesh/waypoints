@@ -144,6 +144,7 @@ class WaypointsApp(App[None]):
 
         try:
             header = self.screen.query_one(StatusHeader)
+            header.set_budget(settings.llm_budget_usd)
             header.update_cost(self._metrics_collector.total_cost)
         except Exception:
             # Header might not exist on all screens

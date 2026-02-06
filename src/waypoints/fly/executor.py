@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from waypoints.config.app_root import dangerous_app_root
+from waypoints.config.settings import settings
 from waypoints.fly.execution_log import ExecutionLogWriter
 from waypoints.fly.intervention import (
     Intervention,
@@ -45,8 +46,10 @@ from waypoints.llm.client import (
     StreamToolUse,
     agent_query,
     classify_api_error,
+    extract_reset_datetime,
     extract_reset_time,
 )
+from waypoints.llm.metrics import BudgetExceededError
 from waypoints.llm.prompts import build_execution_prompt
 from waypoints.llm.providers.base import (
     BUDGET_PATTERNS,
@@ -506,24 +509,39 @@ class WaypointExecutor:
                 # Create user-friendly error summary
                 error_summaries = {
                     APIErrorType.RATE_LIMITED: (
-                        "Claude API rate limit reached. Wait a few minutes and retry."
+                        "Model provider rate limit reached. "
+                        "Wait a few minutes and retry."
                     ),
                     APIErrorType.API_UNAVAILABLE: (
-                        "Claude service temporarily unavailable. Try again shortly."
+                        "Model provider temporarily unavailable. Try again shortly."
                     ),
                     APIErrorType.BUDGET_EXCEEDED: (
-                        "Claude usage limit exceeded. "
+                        "Model usage budget exceeded. "
                         "Execution paused until budget resets."
                     ),
                 }
                 error_summary = error_summaries.get(api_error_type, str(e))
 
-                # For budget errors, try to extract and include reset time
+                # For budget errors, include additional budget context when possible.
+                # Some providers wrap errors in generic subprocess failures while the
+                # streamed text still includes reset timing (e.g. "resets 1am (...)").
+                reset_at = extract_reset_datetime(str(e))
+                if reset_at is None and full_output:
+                    reset_at = extract_reset_datetime(full_output)
                 if api_error_type == APIErrorType.BUDGET_EXCEEDED:
-                    reset_time = extract_reset_time(str(e))
-                    if reset_time:
+                    if isinstance(e, BudgetExceededError):
                         error_summary = (
-                            f"Claude usage limit exceeded. Resets {reset_time}."
+                            f"Configured budget ${e.limit_value:.2f} reached "
+                            f"(current ${e.current_value:.2f}). "
+                            "Execution paused until you increase the budget."
+                        )
+                    elif (reset_time := extract_reset_time(str(e))) is not None:
+                        error_summary = (
+                            f"Model usage budget exceeded. Resets {reset_time}."
+                        )
+                    elif (reset_time := extract_reset_time(full_output)) is not None:
+                        error_summary = (
+                            f"Model usage budget exceeded. Resets {reset_time}."
                         )
 
                 self._report_progress(
@@ -551,6 +569,15 @@ class WaypointExecutor:
                         "full_output": full_output[-2000:],
                         "api_error_type": api_error_type.value,
                         "original_error": str(e),
+                        "configured_budget_usd": settings.llm_budget_usd,
+                        "current_cost_usd": (
+                            self.metrics_collector.total_cost
+                            if self.metrics_collector
+                            else None
+                        ),
+                        "resume_at_utc": (
+                            reset_at.astimezone(UTC).isoformat() if reset_at else None
+                        ),
                     },
                 )
                 self._log_writer.log_intervention_needed(

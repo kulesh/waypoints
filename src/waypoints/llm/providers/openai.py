@@ -250,6 +250,10 @@ class OpenAIProvider(LLMProvider):
         success = True
         error_msg: str | None = None
 
+        from waypoints.llm.metrics import enforce_configured_budget
+
+        enforce_configured_budget(metrics_collector)
+
         try:
             client = self._get_client()
 
@@ -355,6 +359,10 @@ class OpenAIProvider(LLMProvider):
                 )
                 await asyncio.sleep(delay)
 
+            from waypoints.llm.metrics import enforce_configured_budget
+
+            enforce_configured_budget(metrics_collector)
+
             has_yielded = False
 
             try:
@@ -369,6 +377,8 @@ class OpenAIProvider(LLMProvider):
                 # Tool loop
                 max_iterations = 50  # Prevent infinite loops
                 for _ in range(max_iterations):
+                    enforce_configured_budget(metrics_collector)
+
                     # Make API call
                     response = await client.chat.completions.create(
                         model=self.model,

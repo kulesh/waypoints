@@ -339,6 +339,12 @@ class FlyPhase:
             self._coord.save_flight_plan()
             return NextAction(action="abort", message="Execution aborted")
 
+        elif action == InterventionAction.WAIT:
+            # Keep waypoint resumable and pause until external budget reset
+            waypoint.status = WaypointStatus.PENDING
+            self._coord.save_flight_plan()
+            return NextAction(action="pause", message="Paused waiting for budget reset")
+
         elif action == InterventionAction.EDIT:
             # Return to CHART for editing
             return NextAction(action="pause", message="Edit waypoint and retry")

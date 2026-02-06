@@ -7,11 +7,13 @@ from pathlib import Path
 
 import pytest
 
+from waypoints.config.settings import settings
 from waypoints.llm.metrics import (
     Budget,
     BudgetExceededError,
     LLMCall,
     MetricsCollector,
+    enforce_configured_budget,
 )
 
 
@@ -326,3 +328,40 @@ class TestBudget:
         restored = Budget.from_dict(data)
 
         assert restored.max_usd == 50.0
+
+
+class TestConfiguredBudget:
+    """Tests for settings-driven budget enforcement."""
+
+    def test_no_configured_budget_returns_none(self, tmp_path: Path) -> None:
+        """No settings budget means no enforcement."""
+        settings.llm_budget_usd = None
+        collector = MetricsCollector(MockProject(tmp_path))
+        collector.record(
+            LLMCall.create(phase="ideation-qa", cost_usd=5.0, latency_ms=1000)
+        )
+
+        assert enforce_configured_budget(collector) is None
+
+    def test_configured_budget_under_limit(self, tmp_path: Path) -> None:
+        """Configured budget under limit should pass."""
+        settings.llm_budget_usd = 10.0
+        collector = MetricsCollector(MockProject(tmp_path))
+        collector.record(
+            LLMCall.create(phase="ideation-qa", cost_usd=3.0, latency_ms=1000)
+        )
+
+        budget = enforce_configured_budget(collector)
+        assert budget is not None
+        assert budget.max_usd == pytest.approx(10.0)
+
+    def test_configured_budget_exceeded(self, tmp_path: Path) -> None:
+        """Configured budget exceeded should raise."""
+        settings.llm_budget_usd = 1.0
+        collector = MetricsCollector(MockProject(tmp_path))
+        collector.record(
+            LLMCall.create(phase="ideation-qa", cost_usd=1.5, latency_ms=1000)
+        )
+
+        with pytest.raises(BudgetExceededError):
+            enforce_configured_budget(collector)

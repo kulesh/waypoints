@@ -183,6 +183,38 @@ class Settings:
         self.set("llm", llm)
 
     @property
+    def llm_budget_usd(self) -> float | None:
+        """Get optional LLM budget cap in USD.
+
+        Returns:
+            Configured budget cap, or None when no cap is configured.
+        """
+        llm = self._data.get("llm", {})
+        raw_value = llm.get("budget_usd")
+        if raw_value in (None, ""):
+            return None
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            return None
+        if value <= 0:
+            return None
+        return value
+
+    @llm_budget_usd.setter
+    def llm_budget_usd(self, value: float | None) -> None:
+        """Set optional LLM budget cap in USD.
+
+        Passing None or a non-positive value disables the cap.
+        """
+        llm = self._data.get("llm", {})
+        if value is None or value <= 0:
+            llm.pop("budget_usd", None)
+        else:
+            llm["budget_usd"] = float(value)
+        self.set("llm", llm)
+
+    @property
     def openai_api_key(self) -> str | None:
         """Get OpenAI API key from settings or environment.
 

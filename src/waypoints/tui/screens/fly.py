@@ -40,6 +40,7 @@ from waypoints.fly.intervention import (
     InterventionAction,
     InterventionNeededError,
     InterventionResult,
+    InterventionType,
 )
 from waypoints.git import GitConfig, GitService, ReceiptValidator
 from waypoints.models import JourneyState, Project
@@ -1260,12 +1261,16 @@ class FlyScreen(Screen[None]):
 
         self._executor: WaypointExecutor | None = None
         self._current_intervention: Intervention | None = None
+        self._pending_worker_intervention: Intervention | None = None
         self._additional_iterations: int = 0
 
         # Timer tracking
         self._execution_start: datetime | None = None
         self._elapsed_before_pause: float = 0.0
         self._ticker_timer: Timer | None = None
+        self._budget_wait_timer: Timer | None = None
+        self._budget_resume_at: datetime | None = None
+        self._budget_resume_waypoint_id: str | None = None
         # Track live criteria completion for cross-check with receipt
         self._live_criteria_completed: set[int] = set()
 
@@ -1335,6 +1340,18 @@ class FlyScreen(Screen[None]):
 
         # Update project metrics (cost and time)
         self._update_project_metrics()
+
+    def on_unmount(self) -> None:
+        """Stop active timers when leaving the screen."""
+        if self._ticker_timer:
+            self._ticker_timer.stop()
+            self._ticker_timer = None
+        if self._budget_wait_timer:
+            self._budget_wait_timer.stop()
+            self._budget_wait_timer = None
+        git_timer = getattr(self, "_git_status_timer", None)
+        if git_timer:
+            git_timer.stop()
 
     def _update_git_status(self) -> None:
         """Update git status indicator in the left panel."""
@@ -1499,6 +1516,26 @@ class FlyScreen(Screen[None]):
         elif state == ExecutionState.PAUSE_PENDING:
             return "Pausing after current waypoint..."
         elif state == ExecutionState.PAUSED:
+            budget_resume_waypoint_id = getattr(
+                self, "_budget_resume_waypoint_id", None
+            )
+            budget_resume_at = getattr(self, "_budget_resume_at", None)
+            if budget_resume_waypoint_id:
+                if budget_resume_at:
+                    remaining_secs = max(
+                        0,
+                        int(
+                            (budget_resume_at - datetime.now(UTC)).total_seconds()
+                        ),
+                    )
+                    return (
+                        f"Budget pause on {budget_resume_waypoint_id}. "
+                        f"Auto-resume in {self._format_countdown(remaining_secs)}"
+                    )
+                return (
+                    f"Budget pause on {budget_resume_waypoint_id}. "
+                    "Press 'r' after budget resets."
+                )
             if self.current_waypoint:
                 # If current waypoint failed, 'r' will skip to next
                 if self.current_waypoint.status == WaypointStatus.FAILED:
@@ -1526,6 +1563,139 @@ class FlyScreen(Screen[None]):
                 return f"Intervention needed for {self.current_waypoint.id}"
             return "Intervention needed"
         return ""
+
+    def _format_countdown(self, total_seconds: int) -> str:
+        """Format a countdown for status-bar display."""
+        hours, rem = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(rem, 60)
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _clear_budget_wait(self) -> None:
+        """Clear any active budget-wait countdown state."""
+        self._budget_resume_at = None
+        self._budget_resume_waypoint_id = None
+        budget_wait_timer = getattr(self, "_budget_wait_timer", None)
+        if budget_wait_timer:
+            budget_wait_timer.stop()
+        self._budget_wait_timer = None
+
+    def _activate_budget_wait(
+        self, intervention: Intervention, log: ExecutionLog
+    ) -> None:
+        """Pause execution with budget-specific messaging and optional countdown."""
+        waypoint_id = (
+            self.current_waypoint.id
+            if self.current_waypoint
+            else intervention.waypoint.id
+        )
+        self._budget_resume_waypoint_id = waypoint_id
+
+        resume_at_raw = intervention.context.get("resume_at_utc")
+        resume_at: datetime | None = None
+        if isinstance(resume_at_raw, str):
+            try:
+                resume_at = datetime.fromisoformat(resume_at_raw)
+                if resume_at.tzinfo is None:
+                    resume_at = resume_at.replace(tzinfo=UTC)
+            except ValueError:
+                resume_at = None
+        self._budget_resume_at = resume_at
+
+        # Budget pause is recoverable work: keep waypoint pending, not failed.
+        if self.current_waypoint:
+            self.coordinator.mark_waypoint_status(
+                self.current_waypoint,
+                WaypointStatus.PENDING,
+            )
+
+        configured_budget = intervention.context.get("configured_budget_usd")
+        current_cost = intervention.context.get("current_cost_usd")
+        if isinstance(configured_budget, (int, float)) and isinstance(
+            current_cost, (int, float)
+        ):
+            log.write_log(
+                f"Budget usage: ${float(current_cost):.2f} / "
+                f"${float(configured_budget):.2f}"
+            )
+        elif isinstance(current_cost, (int, float)):
+            log.write_log(f"Budget usage so far: ${float(current_cost):.2f}")
+        log.write_log("Progress saved. Workspace state is preserved for resume.")
+
+        # Transition to paused and surface clear status.
+        self.coordinator.transition(JourneyState.FLY_PAUSED)
+        self.execution_state = ExecutionState.PAUSED
+        self.query_one(StatusHeader).set_normal()
+        self._refresh_waypoint_list()
+
+        if self._budget_wait_timer:
+            self._budget_wait_timer.stop()
+            self._budget_wait_timer = None
+        if self._budget_resume_at:
+            self._budget_wait_timer = self.set_interval(1.0, self._on_budget_wait_tick)
+            remaining_secs = max(
+                0,
+                int((self._budget_resume_at - datetime.now(UTC)).total_seconds()),
+            )
+            self.notify(
+                "Budget limit reached. "
+                f"Auto-resume in {self._format_countdown(remaining_secs)}.",
+                severity="warning",
+            )
+        else:
+            self.notify(
+                "Budget limit reached. Execution paused; resume after budget reset.",
+                severity="warning",
+            )
+
+    def _on_budget_wait_tick(self) -> None:
+        """Update budget countdown and auto-resume when reset time is reached."""
+        if self._budget_resume_at is None:
+            if self._budget_wait_timer:
+                self._budget_wait_timer.stop()
+                self._budget_wait_timer = None
+            return
+
+        remaining_secs = int(
+            (self._budget_resume_at - datetime.now(UTC)).total_seconds()
+        )
+        if remaining_secs > 0:
+            self._update_status_bar(self.execution_state)
+            return
+
+        target_waypoint_id = self._budget_resume_waypoint_id
+        self._clear_budget_wait()
+
+        if self.execution_state != ExecutionState.PAUSED:
+            return
+
+        if target_waypoint_id and self.flight_plan:
+            resumed = self.flight_plan.get_waypoint(target_waypoint_id)
+            if resumed is not None:
+                self.current_waypoint = resumed
+
+        if (
+            self.current_waypoint
+            and self.current_waypoint.status == WaypointStatus.FAILED
+        ):
+            self.current_waypoint.status = WaypointStatus.PENDING
+            self._save_flight_plan()
+
+        if not self.current_waypoint:
+            self._select_next_waypoint(include_in_progress=True)
+            if not self.current_waypoint:
+                self.notify(
+                    "Budget reset reached, but no waypoint is ready to resume.",
+                    severity="warning",
+                )
+                return
+
+        self.notify("Budget reset window reached. Resuming execution.")
+        self.coordinator.transition(JourneyState.FLY_EXECUTING)
+        self.execution_state = ExecutionState.RUNNING
+        self.query_one(StatusHeader).set_normal()
+        self._execute_current_waypoint()
 
     def _update_ticker(self) -> None:
         """Update the status bar with elapsed time and cost."""
@@ -1602,6 +1772,7 @@ class FlyScreen(Screen[None]):
                 self._ticker_timer = None
             self._elapsed_before_pause = 0.0
             self._execution_start = None
+            self._clear_budget_wait()
 
         # Update status bar
         self._update_status_bar(state)
@@ -1612,6 +1783,8 @@ class FlyScreen(Screen[None]):
 
     def action_start(self) -> None:
         """Start or resume waypoint execution."""
+        self._clear_budget_wait()
+
         # Check if user has selected a specific failed waypoint to retry
         list_panel = self.query_one("#waypoint-list", WaypointListPanel)
         selected = list_panel.selected_waypoint
@@ -1813,6 +1986,8 @@ class FlyScreen(Screen[None]):
         if not self.current_waypoint:
             return
 
+        self._clear_budget_wait()
+
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
         log = detail_panel.execution_log
 
@@ -1853,6 +2028,7 @@ class FlyScreen(Screen[None]):
             metrics_collector=self.waypoints_app.metrics_collector,
             host_validations_enabled=self.waypoints_app.host_validations_enabled,
         )
+        self._pending_worker_intervention = None
 
         # Run execution in background worker
         self.run_worker(
@@ -1860,13 +2036,18 @@ class FlyScreen(Screen[None]):
             name="waypoint_executor",
             exclusive=True,
             thread=True,
+            exit_on_error=False,
         )
 
     async def _run_executor(self) -> ExecutionResult:
         """Run the executor asynchronously."""
         if not self._executor:
             return ExecutionResult.FAILED
-        return await self._executor.execute()
+        try:
+            return await self._executor.execute()
+        except InterventionNeededError as err:
+            self._pending_worker_intervention = err.intervention
+            return ExecutionResult.INTERVENTION_NEEDED
 
     def _on_execution_progress(self, ctx: ExecutionContext) -> None:
         """Handle progress updates from the executor.
@@ -1952,7 +2133,7 @@ class FlyScreen(Screen[None]):
                     _ = event.worker.result
                 except WorkerFailed as wf:
                     # Extract the original exception from WorkerFailed wrapper
-                    original = wf.error
+                    original = getattr(wf, "error", None) or wf.__cause__ or wf
                     if isinstance(original, InterventionNeededError):
                         self._handle_intervention(original.intervention)
                         return
@@ -1967,6 +2148,17 @@ class FlyScreen(Screen[None]):
                     return
 
             result = event.worker.result
+            if result == ExecutionResult.INTERVENTION_NEEDED:
+                intervention = self._pending_worker_intervention
+                self._pending_worker_intervention = None
+                if intervention is not None:
+                    self._handle_intervention(intervention)
+                    return
+                logger.error(
+                    "Executor reported intervention_needed without intervention context"
+                )
+                self._handle_execution_result(ExecutionResult.FAILED)
+                return
             self._handle_execution_result(result)
 
     def _handle_execution_result(self, result: ExecutionResult | None) -> None:
@@ -2087,6 +2279,11 @@ class FlyScreen(Screen[None]):
         # Store the intervention for retry handling
         self._current_intervention = intervention
 
+        if intervention.type == InterventionType.BUDGET_EXCEEDED:
+            self._activate_budget_wait(intervention, log)
+            self._current_intervention = None
+            return
+
         # Mark waypoint as failed (can be retried) via coordinator
         if self.current_waypoint:
             self.coordinator.mark_waypoint_status(
@@ -2113,6 +2310,7 @@ class FlyScreen(Screen[None]):
             # Log cancellation
             if self._executor and self._executor._log_writer:
                 self._executor._log_writer.log_intervention_resolved("cancelled")
+            self._current_intervention = None
             return
 
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
@@ -2194,6 +2392,16 @@ class FlyScreen(Screen[None]):
             self.coordinator.transition(JourneyState.FLY_READY)
             self.execution_state = ExecutionState.IDLE
             self.query_one(StatusHeader).set_normal()
+
+        elif result.action == InterventionAction.WAIT:
+            if self._current_intervention is not None:
+                self._activate_budget_wait(self._current_intervention, log)
+            else:
+                log.write_log("Execution paused waiting for budget reset")
+                self.coordinator.transition(JourneyState.FLY_PAUSED)
+                self.execution_state = ExecutionState.PAUSED
+                self.query_one(StatusHeader).set_normal()
+                self.notify("Execution paused")
 
         elif result.action == InterventionAction.ABORT:
             # Abort execution

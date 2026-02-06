@@ -4,8 +4,10 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime, time, timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if TYPE_CHECKING:
     from waypoints.llm.metrics import MetricsCollector
@@ -130,6 +132,94 @@ def extract_reset_time(error_msg: str) -> str | None:
         match = re.search(pattern, error_msg, re.IGNORECASE)
         if match:
             return match.group(1).strip()
+    return None
+
+
+def _parse_clock_time(raw_time: str) -> time | None:
+    """Parse a clock time like '7pm', '3:00pm', or '15:30'."""
+    text = raw_time.strip().lower().replace(" ", "")
+    formats = ("%I%p", "%I:%M%p", "%H:%M", "%H")
+    for fmt in formats:
+        try:
+            return datetime.strptime(text, fmt).time()
+        except ValueError:
+            continue
+    return None
+
+
+def _next_occurrence(clock: time, now_local: datetime) -> datetime:
+    """Build next local datetime occurrence for clock time."""
+    candidate = now_local.replace(
+        hour=clock.hour,
+        minute=clock.minute,
+        second=0,
+        microsecond=0,
+    )
+    if candidate <= now_local:
+        candidate += timedelta(days=1)
+    return candidate
+
+
+def extract_reset_datetime(
+    error_msg: str,
+    now: datetime | None = None,
+) -> datetime | None:
+    """Extract reset timestamp as UTC datetime when possible.
+
+    Supports:
+    - "resets in 2 hours"
+    - "resets 7pm (America/New_York)"
+    - "resets at 3:00pm"
+    - "resets 15:00"
+    """
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+
+    relative_match = re.search(
+        r"resets?\s+in\s+(\d+)\s+(hour|minute|second)s?",
+        error_msg,
+        re.IGNORECASE,
+    )
+    if relative_match:
+        quantity = int(relative_match.group(1))
+        unit = relative_match.group(2).lower()
+        if unit == "hour":
+            return current + timedelta(hours=quantity)
+        if unit == "minute":
+            return current + timedelta(minutes=quantity)
+        return current + timedelta(seconds=quantity)
+
+    zoned_match = re.search(
+        r"resets?\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm))\s*\(([^)]+)\)",
+        error_msg,
+        re.IGNORECASE,
+    )
+    if zoned_match:
+        clock = _parse_clock_time(zoned_match.group(1))
+        if clock is None:
+            return None
+        tz_name = zoned_match.group(2).strip()
+        try:
+            tz = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            return None
+        now_local = current.astimezone(tz)
+        return _next_occurrence(clock, now_local).astimezone(UTC)
+
+    local_match = re.search(
+        r"resets?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)",
+        error_msg,
+        re.IGNORECASE,
+    )
+    if local_match:
+        clock = _parse_clock_time(local_match.group(1))
+        if clock is None:
+            return None
+        local_tz = datetime.now().astimezone().tzinfo or UTC
+        now_local = current.astimezone(local_tz)
+        return _next_occurrence(clock, now_local).astimezone(UTC)
+
     return None
 
 

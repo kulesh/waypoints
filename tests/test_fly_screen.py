@@ -1,7 +1,15 @@
 """Tests for FlyScreen status bar behavior."""
 
+import asyncio
+
 import pytest
 
+from waypoints.fly.executor import ExecutionResult
+from waypoints.fly.intervention import (
+    Intervention,
+    InterventionNeededError,
+    InterventionType,
+)
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
@@ -219,6 +227,43 @@ class TestStatusBarMessage:
         # Should NOT say "Press 'r' to run WP-003a" since it failed
         assert "WP-003a failed" in message
         assert "continue" in message
+
+
+class TestWorkerInterventionHandling:
+    """Tests for worker-safe intervention flow."""
+
+    def test_run_executor_converts_intervention_error_to_result(self) -> None:
+        """Interventions should not escape worker execution as exceptions."""
+
+        class FakeExecutor:
+            async def execute(self) -> ExecutionResult:
+                waypoint = Waypoint(
+                    id="WP-001",
+                    title="Test",
+                    objective="Test objective",
+                    status=WaypointStatus.IN_PROGRESS,
+                )
+                intervention = Intervention(
+                    type=InterventionType.BUDGET_EXCEEDED,
+                    waypoint=waypoint,
+                    iteration=1,
+                    max_iterations=10,
+                    error_summary="Budget reached",
+                )
+                raise InterventionNeededError(intervention)
+
+        screen = FlyScreen.__new__(FlyScreen)
+        screen._executor = FakeExecutor()
+        screen._pending_worker_intervention = None
+
+        result = asyncio.run(screen._run_executor())
+
+        assert result == ExecutionResult.INTERVENTION_NEEDED
+        assert screen._pending_worker_intervention is not None
+        assert (
+            screen._pending_worker_intervention.type
+            == InterventionType.BUDGET_EXCEEDED
+        )
 
 
 class TestSelectNextWaypoint:

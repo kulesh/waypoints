@@ -14,6 +14,7 @@ from waypoints.fly.intervention import (
     Intervention,
     InterventionAction,
     InterventionResult,
+    InterventionType,
 )
 
 
@@ -26,6 +27,7 @@ class InterventionModal(ModalScreen[InterventionResult | None]):
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=True),
+        Binding("w", "wait", "Wait", show=True),
         Binding("r", "retry", "Retry", show=True),
         Binding("s", "skip", "Skip", show=True),
         Binding("e", "edit", "Edit", show=True),
@@ -130,6 +132,7 @@ class InterventionModal(ModalScreen[InterventionResult | None]):
         """Compose the modal layout."""
         intervention = self.intervention
         type_label = intervention.type.value.replace("_", " ").title()
+        is_budget_issue = intervention.type == InterventionType.BUDGET_EXCEEDED
 
         with Vertical():
             # Title
@@ -163,6 +166,8 @@ class InterventionModal(ModalScreen[InterventionResult | None]):
 
             # Action buttons - primary row
             with Horizontal(classes="button-row"):
+                if is_budget_issue:
+                    yield Button("Wait for Reset", id="btn-wait", variant="primary")
                 yield Button("Retry (+5 iterations)", id="btn-retry", variant="success")
                 yield Button("Skip Waypoint", id="btn-skip", variant="warning")
 
@@ -170,7 +175,8 @@ class InterventionModal(ModalScreen[InterventionResult | None]):
             with Horizontal(classes="button-row"):
                 yield Button("Edit & Retry", id="btn-edit", variant="primary")
                 yield Button("Rollback", id="btn-rollback", variant="error")
-                yield Button("Abort", id="btn-abort", variant="error")
+                if not is_budget_issue:
+                    yield Button("Abort", id="btn-abort", variant="error")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
@@ -180,6 +186,8 @@ class InterventionModal(ModalScreen[InterventionResult | None]):
             self.action_retry()
         elif button_id == "btn-skip":
             self.action_skip()
+        elif button_id == "btn-wait":
+            self.action_wait()
         elif button_id == "btn-edit":
             self.action_edit()
         elif button_id == "btn-rollback":
@@ -192,6 +200,13 @@ class InterventionModal(ModalScreen[InterventionResult | None]):
         result = InterventionResult(
             action=InterventionAction.RETRY,
             additional_iterations=5,
+        )
+        self.dismiss(result)
+
+    def action_wait(self) -> None:
+        """Pause and wait for external condition to clear."""
+        result = InterventionResult(
+            action=InterventionAction.WAIT,
         )
         self.dismiss(result)
 
@@ -222,11 +237,17 @@ class InterventionModal(ModalScreen[InterventionResult | None]):
 
     def action_abort(self) -> None:
         """Abort execution entirely."""
+        if self.intervention.type == InterventionType.BUDGET_EXCEEDED:
+            self.action_wait()
+            return
         result = InterventionResult(
             action=InterventionAction.ABORT,
         )
         self.dismiss(result)
 
     def action_cancel(self) -> None:
-        """Cancel the modal (same as abort)."""
+        """Cancel the modal."""
+        if self.intervention.type == InterventionType.BUDGET_EXCEEDED:
+            self.action_wait()
+            return
         self.dismiss(None)

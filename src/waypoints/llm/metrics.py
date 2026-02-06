@@ -344,3 +344,38 @@ class Budget:
     def from_dict(cls, data: dict[str, Any]) -> "Budget":
         """Create from dictionary."""
         return cls(max_usd=data.get("max_usd"))
+
+
+def get_configured_budget() -> Budget | None:
+    """Build a budget from global settings, if configured."""
+    from waypoints.config.settings import settings
+
+    max_usd = settings.llm_budget_usd
+    if max_usd is None:
+        return None
+    return Budget(max_usd=max_usd)
+
+
+def enforce_configured_budget(
+    collector: MetricsCollector | None,
+) -> Budget | None:
+    """Raise when configured budget is already exceeded.
+
+    Args:
+        collector: Metrics collector for the current project/session.
+
+    Returns:
+        The configured Budget when present, otherwise None.
+
+    Raises:
+        BudgetExceededError: When configured budget cap is exceeded.
+    """
+    if collector is None:
+        return None
+
+    budget = get_configured_budget()
+    if budget is None:
+        return None
+
+    budget.check(collector)
+    return budget

@@ -150,6 +150,10 @@ class AnthropicProvider(LLMProvider):
         success = True
         error_msg: str | None = None
 
+        from waypoints.llm.metrics import enforce_configured_budget
+
+        enforce_configured_budget(metrics_collector)
+
         try:
             for result in self._run_agent_query(prompt, system):
                 if isinstance(result, StreamComplete):
@@ -322,6 +326,10 @@ class AnthropicProvider(LLMProvider):
                     last_error,
                 )
                 await asyncio.sleep(delay)
+
+            from waypoints.llm.metrics import enforce_configured_budget
+
+            enforce_configured_budget(metrics_collector)
 
             full_text = ""
             cost: float | None = None

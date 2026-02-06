@@ -197,6 +197,24 @@ class SettingsModal(ModalScreen[None]):
                         id="model-input",
                     )
 
+                # Optional budget cap
+                with Vertical(classes="setting-row"):
+                    yield Static("Budget (USD)", classes="setting-label")
+                    yield Static(
+                        "Optional spend cap; pauses execution when exceeded",
+                        classes="setting-description",
+                    )
+                    budget_value = (
+                        ""
+                        if settings.llm_budget_usd is None
+                        else str(settings.llm_budget_usd)
+                    )
+                    yield Input(
+                        value=budget_value,
+                        placeholder="Optional, e.g. 25",
+                        id="budget-input",
+                    )
+
                 # Web auth toggle (Anthropic only)
                 with Vertical(classes="setting-row", id="web-auth-row"):
                     yield Static("Web Authentication", classes="setting-label")
@@ -262,7 +280,9 @@ class SettingsModal(ModalScreen[None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "btn-save":
-            self._save_settings()
+            if self._save_settings():
+                self.dismiss(None)
+            return
         self.dismiss(None)
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
@@ -308,8 +328,12 @@ class SettingsModal(ModalScreen[None]):
         except Exception:
             pass  # UI not ready yet
 
-    def _save_settings(self) -> None:
-        """Save all settings."""
+    def _save_settings(self) -> bool:
+        """Save all settings.
+
+        Returns:
+            True when settings were saved successfully, False on validation error.
+        """
         # General settings
         project_dir_input = self.query_one("#project-dir-input", Input)
         new_dir = project_dir_input.value.strip()
@@ -323,6 +347,20 @@ class SettingsModal(ModalScreen[None]):
         model_input = self.query_one("#model-input", Input)
         if model_input.value.strip():
             settings.llm_model = model_input.value.strip()
+
+        budget_text = self.query_one("#budget-input", Input).value.strip()
+        if budget_text:
+            try:
+                budget_value = float(budget_text)
+            except ValueError:
+                self.notify("Budget must be a number", severity="error")
+                return False
+            if budget_value <= 0:
+                self.notify("Budget must be greater than 0", severity="error")
+                return False
+            settings.llm_budget_usd = budget_value
+        else:
+            settings.llm_budget_usd = None
 
         web_auth_switch = self.query_one("#web-auth-switch", Switch)
         settings.use_web_auth = web_auth_switch.value
@@ -338,10 +376,12 @@ class SettingsModal(ModalScreen[None]):
 
         self.notify("Settings saved", severity="information")
         logger.info(
-            "Settings saved: provider=%s, model=%s",
+            "Settings saved: provider=%s, model=%s, budget=%s",
             settings.llm_provider,
             settings.llm_model,
+            settings.llm_budget_usd,
         )
+        return True
 
     def action_close(self) -> None:
         """Close the modal."""

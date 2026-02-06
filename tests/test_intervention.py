@@ -44,6 +44,7 @@ class TestInterventionAction:
 
     def test_action_values(self) -> None:
         """Test that action values are as expected."""
+        assert InterventionAction.WAIT.value == "wait"
         assert InterventionAction.RETRY.value == "retry"
         assert InterventionAction.SKIP.value == "skip"
         assert InterventionAction.EDIT.value == "edit"
@@ -108,6 +109,20 @@ class TestIntervention:
 
         assert intervention.suggested_action == InterventionAction.ABORT
 
+    def test_suggested_action_budget_exceeded(
+        self, sample_waypoint: Waypoint
+    ) -> None:
+        """Budget exceeded should suggest WAIT."""
+        intervention = Intervention(
+            type=InterventionType.BUDGET_EXCEEDED,
+            waypoint=sample_waypoint,
+            iteration=4,
+            max_iterations=10,
+            error_summary="Budget limit reached",
+        )
+
+        assert intervention.suggested_action == InterventionAction.WAIT
+
     def test_to_dict(self, sample_waypoint: Waypoint) -> None:
         """Test serialization to dict."""
         intervention = Intervention(
@@ -144,6 +159,14 @@ class TestInterventionResult:
 
         assert result.action == InterventionAction.RETRY
         assert result.additional_iterations == 5
+        assert result.modified_waypoint is None
+        assert result.rollback_tag is None
+
+    def test_create_wait_result(self) -> None:
+        """Test creating a wait result."""
+        result = InterventionResult(action=InterventionAction.WAIT)
+
+        assert result.action == InterventionAction.WAIT
         assert result.modified_waypoint is None
         assert result.rollback_tag is None
 

@@ -30,6 +30,7 @@ class InterventionType(Enum):
 class InterventionAction(Enum):
     """Actions the user can take when intervention is needed."""
 
+    WAIT = "wait"  # Pause until external condition (e.g. budget reset) clears
     RETRY = "retry"  # Try waypoint again (maybe with more iterations)
     SKIP = "skip"  # Mark waypoint skipped, continue to next
     EDIT = "edit"  # Open waypoint editor, then retry
@@ -48,7 +49,7 @@ SUGGESTED_ACTIONS: dict[InterventionType, InterventionAction] = {
     InterventionType.EXECUTION_ERROR: InterventionAction.RETRY,
     InterventionType.RATE_LIMITED: InterventionAction.RETRY,
     InterventionType.API_UNAVAILABLE: InterventionAction.RETRY,
-    InterventionType.BUDGET_EXCEEDED: InterventionAction.ABORT,
+    InterventionType.BUDGET_EXCEEDED: InterventionAction.WAIT,
 }
 
 
