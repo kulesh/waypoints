@@ -4,8 +4,9 @@ import pytest
 
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
-from waypoints.orchestration import JourneyCoordinator
-from waypoints.tui.screens.fly import ExecutionState, FlyScreen
+from waypoints.orchestration import ExecutionController, JourneyCoordinator
+from waypoints.fly.state import ExecutionState
+from waypoints.tui.screens.fly import FlyScreen
 
 
 def make_test_screen(flight_plan: FlightPlan) -> FlyScreen:
@@ -28,6 +29,7 @@ def make_test_screen(flight_plan: FlightPlan) -> FlyScreen:
         project=MockProject(),  # type: ignore
         flight_plan=flight_plan,
     )
+    screen.execution_controller = ExecutionController(screen.coordinator)
     return screen
 
 
