@@ -6,6 +6,7 @@ import json
 import re
 import shutil
 from dataclasses import dataclass, field
+from enum import Enum
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,6 +37,13 @@ def slugify(name: str) -> str:
     return slug or "unnamed-project"
 
 
+class ProjectStatus(Enum):
+    """Lifecycle status for a project."""
+
+    ACTIVE = "active"
+    CLOSED = "closed"
+
+
 @dataclass
 class Project:
     """A waypoints project containing sessions and documents."""
@@ -46,6 +54,7 @@ class Project:
     updated_at: datetime
     initial_idea: str = ""
     summary: str = ""  # LLM-generated project summary
+    status: ProjectStatus = ProjectStatus.ACTIVE
     journey: Journey | None = field(default=None, repr=False)
 
     @classmethod
@@ -107,6 +116,7 @@ class Project:
             "updated_at": self.updated_at.isoformat(),
             "initial_idea": self.initial_idea,
             "summary": self.summary,
+            "status": self.status.value,
         }
         if self.journey is not None:
             data["journey"] = self.journey.to_dict()
@@ -121,6 +131,12 @@ class Project:
         if "journey" in data:
             journey = Journey.from_dict(data["journey"])
 
+        status_value = data.get("status", ProjectStatus.ACTIVE.value)
+        try:
+            status = ProjectStatus(status_value)
+        except ValueError:
+            status = ProjectStatus.ACTIVE
+
         return cls(
             name=data["name"],
             slug=data["slug"],
@@ -128,6 +144,7 @@ class Project:
             updated_at=datetime.fromisoformat(data["updated_at"]),
             initial_idea=data.get("initial_idea", ""),
             summary=data.get("summary", ""),
+            status=status,
             journey=journey,
         )
 

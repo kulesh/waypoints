@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader, FlightPlanWriter
-from waypoints.models.project import Project, slugify
+from waypoints.models.project import Project, ProjectStatus, slugify
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 
 
@@ -663,6 +663,26 @@ class TestProject:
         assert project.initial_idea == "Build something cool"
         assert project.journey is not None
         assert (temp_projects_dir / "test-project" / "project.json").exists()
+
+    def test_project_status_defaults_active(self, temp_projects_dir: Path) -> None:
+        """New projects should default to ACTIVE status."""
+        project = Project.create("Status Test")
+
+        assert project.status == ProjectStatus.ACTIVE
+        assert project.to_dict()["status"] == ProjectStatus.ACTIVE.value
+
+    def test_project_status_from_dict(self) -> None:
+        """Deserialize project status from dictionary."""
+        data = {
+            "name": "Closed Project",
+            "slug": "closed-project",
+            "created_at": "2026-01-10T10:00:00",
+            "updated_at": "2026-01-10T11:00:00",
+            "status": "closed",
+        }
+        project = Project.from_dict(data)
+
+        assert project.status == ProjectStatus.CLOSED
 
     def test_project_directories_created(self, temp_projects_dir: Path) -> None:
         """Project directories are created on creation."""

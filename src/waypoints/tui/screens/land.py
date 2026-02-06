@@ -25,6 +25,7 @@ from waypoints.fly.execution_log import ExecutionLogReader
 from waypoints.git.service import GitService
 from waypoints.llm.metrics import MetricsCollector
 from waypoints.models import JourneyState, Project
+from waypoints.models.project import ProjectStatus
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader
 from waypoints.models.waypoint import WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
@@ -995,7 +996,8 @@ class LandScreen(Screen[None]):
 
     def action_close_project(self) -> None:
         """Mark project as closed."""
-        # TODO: Add status field to Project model
+        self.project.status = ProjectStatus.CLOSED
+        self.project.save()
         self.notify(f"Project '{self.project.name}' marked as closed")
         from waypoints.tui.screens.project_selection import ProjectSelectionScreen
 
