@@ -187,6 +187,7 @@ For full workflow details: `bd prime`
 **Execution + LLM**
 - `src/waypoints/fly/executor.py` - Waypoint execution loop
 - `src/waypoints/llm/` - Provider abstraction + prompts + validation
+- `src/waypoints/memory/` - Project/waypoint memory indexing + retrieval
 
 **Persistence + paths**
 - `src/waypoints/config/paths.py` - XDG + workspace paths

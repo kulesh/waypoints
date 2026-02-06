@@ -100,3 +100,26 @@ def test_execution_prompt_includes_directory_policy_context() -> None:
 
     assert "Project Memory (Directory Index)" in prompt
     assert "Focus your search in: src, tests" in prompt
+
+
+def test_execution_prompt_includes_prior_waypoint_memory_context() -> None:
+    """Prompt should include prior waypoint memory section when provided."""
+    waypoint = Waypoint(
+        id="WP-003",
+        title="Use Memory",
+        objective="Apply prior waypoint learnings",
+        acceptance_criteria=["memory appears in prompt"],
+    )
+
+    prompt = build_execution_prompt(
+        waypoint,
+        "Spec content",
+        Path("project"),
+        Checklist(items=["Run tests"]),
+        waypoint_memory_context=(
+            "- WP-001 (dependency, result=success, iterations=1/10)"
+        ),
+    )
+
+    assert "Prior Waypoint Memory" in prompt
+    assert "WP-001 (dependency, result=success, iterations=1/10)" in prompt
