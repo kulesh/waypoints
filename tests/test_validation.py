@@ -52,9 +52,7 @@ These waypoints cover the main requirements."""
 
     def test_with_trailing_json(self) -> None:
         """Extract first JSON array when extra data follows."""
-        response = (
-            '[{"id": "WP-1", "title": "Test"}]{"extra": true}'
-        )
+        response = '[{"id": "WP-1", "title": "Test"}]{"extra": true}'
         result = extract_json_array(response)
         assert result == [{"id": "WP-1", "title": "Test"}]
 

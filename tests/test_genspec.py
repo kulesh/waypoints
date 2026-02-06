@@ -591,9 +591,7 @@ def test_import_from_bundle(tmp_path: Path) -> None:
             output=StepOutput(content="A", output_type=OutputType.TEXT),
         )
     ]
-    spec.artifacts = [
-        Artifact(artifact_type=ArtifactType.IDEA_BRIEF, content="Brief")
-    ]
+    spec.artifacts = [Artifact(artifact_type=ArtifactType.IDEA_BRIEF, content="Brief")]
 
     bundle_path = tmp_path / "bundle.genspec.zip"
     export_bundle(spec, bundle_path)
@@ -627,9 +625,7 @@ def test_import_from_bundle_checksum_mismatch(tmp_path: Path) -> None:
             output=StepOutput(content="A", output_type=OutputType.TEXT),
         )
     ]
-    spec.artifacts = [
-        Artifact(artifact_type=ArtifactType.IDEA_BRIEF, content="Brief")
-    ]
+    spec.artifacts = [Artifact(artifact_type=ArtifactType.IDEA_BRIEF, content="Brief")]
 
     original_path = tmp_path / "bundle.genspec.zip"
     export_bundle(spec, original_path)

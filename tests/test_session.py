@@ -91,9 +91,7 @@ class TestSessionWriter:
         writer = SessionWriter(mock_project, "ideation", "session-abc")
 
         msg1 = Message(role=MessageRole.USER, content="First message", id="msg-1")
-        msg2 = Message(
-            role=MessageRole.ASSISTANT, content="Second message", id="msg-2"
-        )
+        msg2 = Message(role=MessageRole.ASSISTANT, content="Second message", id="msg-2")
         msg3 = Message(role=MessageRole.USER, content="Third message", id="msg-3")
 
         writer.append_message(msg1)

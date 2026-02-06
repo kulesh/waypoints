@@ -1,12 +1,16 @@
 """Tests for JourneyCoordinator business logic."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from waypoints.fly.executor import ExecutionResult
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
+from waypoints.orchestration.fly_phase import FlyPhase
+from waypoints.orchestration.types import CommitResult
 
 
 class MockProject:
@@ -497,3 +501,136 @@ def test_fork_debug_waypoint_updates_notes(tmp_path: Path) -> None:
     assert debug_wp.dependencies == [original.id]
     assert "Preview stays blank" in debug_wp.resolution_notes[0]
     assert "Preview stays blank" in original.resolution_notes[0]
+
+
+class TestExecutionResultHandling:
+    """Tests for handle_execution_result — single source of truth."""
+
+    @pytest.fixture
+    def two_waypoint_plan(self) -> FlightPlan:
+        fp = FlightPlan()
+        fp.add_waypoint(Waypoint(id="WP-001", title="First", objective="First task"))
+        fp.add_waypoint(Waypoint(id="WP-002", title="Second", objective="Second task"))
+        return fp
+
+    @pytest.fixture
+    def single_waypoint_plan(self) -> FlightPlan:
+        fp = FlightPlan()
+        fp.add_waypoint(Waypoint(id="WP-001", title="Only", objective="Only task"))
+        return fp
+
+    @patch.object(
+        FlyPhase,
+        "commit_waypoint",
+        return_value=CommitResult(committed=False, message="test"),
+    )
+    @patch.object(JourneyCoordinator, "save_flight_plan")
+    def test_success_sets_complete_and_returns_continue(
+        self, mock_save: object, mock_commit: object, two_waypoint_plan: FlightPlan
+    ) -> None:
+        """SUCCESS on a multi-waypoint plan sets COMPLETE and returns 'continue'."""
+        coordinator = JourneyCoordinator(
+            project=MockProject(),
+            flight_plan=two_waypoint_plan,  # type: ignore
+        )
+        wp = two_waypoint_plan.waypoints[0]
+
+        action = coordinator.handle_execution_result(wp, ExecutionResult.SUCCESS)
+
+        assert wp.status == WaypointStatus.COMPLETE
+        assert wp.completed_at is not None
+        assert action.action == "continue"
+        assert action.waypoint is not None
+        assert action.waypoint.id == "WP-002"
+
+    @patch.object(
+        FlyPhase,
+        "commit_waypoint",
+        return_value=CommitResult(committed=False, message="test"),
+    )
+    @patch.object(JourneyCoordinator, "save_flight_plan")
+    def test_success_returns_complete_when_last_waypoint(
+        self, mock_save: object, mock_commit: object, single_waypoint_plan: FlightPlan
+    ) -> None:
+        """SUCCESS on last waypoint returns 'complete'."""
+        coordinator = JourneyCoordinator(
+            project=MockProject(),
+            flight_plan=single_waypoint_plan,  # type: ignore
+        )
+        wp = single_waypoint_plan.waypoints[0]
+
+        action = coordinator.handle_execution_result(wp, ExecutionResult.SUCCESS)
+
+        assert wp.status == WaypointStatus.COMPLETE
+        assert action.action == "complete"
+        assert action.message == "All waypoints complete!"
+
+    @patch.object(JourneyCoordinator, "save_flight_plan")
+    def test_failed_sets_failed_and_returns_intervention(
+        self, mock_save: object, single_waypoint_plan: FlightPlan
+    ) -> None:
+        """FAILED sets FAILED status and returns 'intervention'."""
+        coordinator = JourneyCoordinator(
+            project=MockProject(),
+            flight_plan=single_waypoint_plan,  # type: ignore
+        )
+        wp = single_waypoint_plan.waypoints[0]
+
+        action = coordinator.handle_execution_result(wp, ExecutionResult.FAILED)
+
+        assert wp.status == WaypointStatus.FAILED
+        assert action.action == "intervention"
+        assert "failed" in (action.message or "").lower()
+
+    @patch.object(JourneyCoordinator, "save_flight_plan")
+    def test_max_iterations_sets_failed_and_returns_intervention(
+        self, mock_save: object, single_waypoint_plan: FlightPlan
+    ) -> None:
+        """MAX_ITERATIONS sets FAILED status and returns 'intervention'."""
+        coordinator = JourneyCoordinator(
+            project=MockProject(),
+            flight_plan=single_waypoint_plan,  # type: ignore
+        )
+        wp = single_waypoint_plan.waypoints[0]
+
+        action = coordinator.handle_execution_result(wp, ExecutionResult.MAX_ITERATIONS)
+
+        assert wp.status == WaypointStatus.FAILED
+        assert action.action == "intervention"
+        assert "max iterations" in (action.message or "").lower()
+
+    @patch.object(JourneyCoordinator, "save_flight_plan")
+    def test_intervention_needed_sets_failed_and_returns_intervention(
+        self, mock_save: object, single_waypoint_plan: FlightPlan
+    ) -> None:
+        """INTERVENTION_NEEDED sets FAILED status and returns 'intervention'."""
+        coordinator = JourneyCoordinator(
+            project=MockProject(),
+            flight_plan=single_waypoint_plan,  # type: ignore
+        )
+        wp = single_waypoint_plan.waypoints[0]
+
+        action = coordinator.handle_execution_result(
+            wp, ExecutionResult.INTERVENTION_NEEDED
+        )
+
+        assert wp.status == WaypointStatus.FAILED
+        assert action.action == "intervention"
+        assert "intervention" in (action.message or "").lower()
+
+    @patch.object(JourneyCoordinator, "save_flight_plan")
+    def test_cancelled_sets_pending_and_returns_pause(
+        self, mock_save: object, single_waypoint_plan: FlightPlan
+    ) -> None:
+        """CANCELLED resets to PENDING and returns 'pause'."""
+        coordinator = JourneyCoordinator(
+            project=MockProject(),
+            flight_plan=single_waypoint_plan,  # type: ignore
+        )
+        wp = single_waypoint_plan.waypoints[0]
+
+        action = coordinator.handle_execution_result(wp, ExecutionResult.CANCELLED)
+
+        assert wp.status == WaypointStatus.PENDING
+        assert action.action == "pause"
+        assert "cancelled" in (action.message or "").lower()

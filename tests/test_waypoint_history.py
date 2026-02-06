@@ -245,9 +245,7 @@ class TestWaypointHistoryWriter:
         writer.log_added({"id": "WP-2", "title": "Second"})
 
         # Update first waypoint
-        writer.log_updated(
-            "WP-1", {"title": "First"}, {"title": "First (updated)"}
-        )
+        writer.log_updated("WP-1", {"title": "First"}, {"title": "First (updated)"})
 
         # Break down second waypoint
         writer.log_broken_down("WP-2", [{"id": "WP-2a", "title": "Sub"}])

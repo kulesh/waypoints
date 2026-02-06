@@ -17,8 +17,6 @@ Model-centric architecture ("Pilot and Dog"):
 
 import logging
 import os
-import re
-import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -34,18 +32,11 @@ from waypoints.fly.intervention import (
     InterventionType,
 )
 from waypoints.fly.protocol import parse_stage_reports
-from waypoints.fly.stack import (
-    STACK_COMMANDS,
-    StackConfig,
-    ValidationCommand,
-    detect_stack,
-    detect_stack_from_spec,
-)
+from waypoints.fly.stack import ValidationCommand
 from waypoints.git.config import Checklist
 from waypoints.git.receipt import (
     CapturedEvidence,
     CriterionVerification,
-    ReceiptBuilder,
 )
 from waypoints.llm.client import (
     APIErrorType,
@@ -56,7 +47,7 @@ from waypoints.llm.client import (
     classify_api_error,
     extract_reset_time,
 )
-from waypoints.llm.prompts import build_execution_prompt, build_verification_prompt
+from waypoints.llm.prompts import build_execution_prompt
 from waypoints.llm.providers.base import (
     BUDGET_PATTERNS,
     RATE_LIMIT_PATTERNS,
@@ -66,37 +57,31 @@ from waypoints.models.project import Project
 from waypoints.models.waypoint import Waypoint
 
 if TYPE_CHECKING:
+    from waypoints.fly.receipt_finalizer import ReceiptFinalizer
     from waypoints.llm.metrics import MetricsCollector
+
+from waypoints.fly.evidence import (
+    CRITERION_PATTERN,
+    VALIDATION_PATTERN,
+    FileOperation,
+)
+from waypoints.fly.evidence import (
+    detect_validation_category as _detect_validation_category,
+)
+from waypoints.fly.evidence import (
+    extract_file_operation as _extract_file_operation,
+)
+from waypoints.fly.evidence import (
+    normalize_command as _normalize_command,
+)
+from waypoints.fly.evidence import (
+    parse_tool_output as _parse_tool_output,
+)
 
 logger = logging.getLogger(__name__)
 
 # Max iterations before giving up
 MAX_ITERATIONS = 10
-
-# Pattern to detect acceptance criterion verification markers in agent output
-# Model outputs nested elements for reliable parsing:
-#   <acceptance-criterion><index>N</index><status>verified|failed</status>
-#   <text>...</text><evidence>...</evidence></acceptance-criterion>
-CRITERION_PATTERN = re.compile(
-    r"<acceptance-criterion>\s*"
-    r"<index>(\d+)</index>\s*"
-    r"<status>(verified|failed)</status>\s*"
-    r"<text>(.*?)</text>\s*"
-    r"<evidence>(.*?)</evidence>\s*"
-    r"</acceptance-criterion>",
-    re.DOTALL,
-)
-
-# Pattern to detect validation evidence markers in agent output
-# Model outputs these when running tests, linting, formatting
-VALIDATION_PATTERN = re.compile(
-    r"<validation>\s*"
-    r"<command>(.*?)</command>\s*"
-    r"<exit-code>(\d+)</exit-code>\s*"
-    r"<output>(.*?)</output>\s*"
-    r"</validation>",
-    re.DOTALL,
-)
 
 
 class ExecutionResult(Enum):
@@ -120,15 +105,6 @@ class ExecutionStep:
 
 
 @dataclass
-class FileOperation:
-    """A file operation performed by the agent."""
-
-    tool_name: str  # "Edit", "Write", "Read", "Bash", "Glob", "Grep"
-    file_path: str | None
-    line_number: int | None = None
-
-
-@dataclass
 class ExecutionContext:
     """Context passed to callbacks during execution."""
 
@@ -142,109 +118,6 @@ class ExecutionContext:
 
 
 ProgressCallback = Callable[[ExecutionContext], None]
-
-
-def _extract_file_operation(
-    tool_name: str, tool_input: dict[str, object]
-) -> FileOperation | None:
-    """Extract file operation from tool input.
-
-    Args:
-        tool_name: Name of the tool (Edit, Write, Read, Bash, etc.)
-        tool_input: The tool input dict containing parameters
-
-    Returns:
-        FileOperation if a file path was found, None otherwise
-    """
-    if tool_name in ("Edit", "Write", "Read"):
-        # These tools have file_path parameter
-        path = tool_input.get("file_path")
-        if isinstance(path, str):
-            return FileOperation(tool_name=tool_name, file_path=path)
-    elif tool_name == "Glob":
-        # Glob has pattern, but we might want to show the pattern
-        pattern = tool_input.get("pattern")
-        if isinstance(pattern, str):
-            return FileOperation(tool_name=tool_name, file_path=pattern)
-    elif tool_name == "Grep":
-        # Grep might have a path parameter
-        path = tool_input.get("path")
-        if isinstance(path, str):
-            return FileOperation(tool_name=tool_name, file_path=path)
-    elif tool_name == "Bash":
-        # For bash, we could show the command (truncated)
-        command = tool_input.get("command")
-        if isinstance(command, str):
-            # Truncate long commands
-            display = command[:60] + "..." if len(command) > 60 else command
-            return FileOperation(tool_name=tool_name, file_path=display)
-    return None
-
-
-def _detect_validation_category(command: str) -> str | None:
-    """Detect validation category from command string.
-
-    Args:
-        command: The shell command that was run
-
-    Returns:
-        Category name (tests, linting, formatting) or None if not recognized
-    """
-    cmd_lower = command.lower()
-
-    # Test commands
-    if any(
-        pattern in cmd_lower
-        for pattern in ["test", "pytest", "jest", "mocha", "go test", "cargo test"]
-    ):
-        return "tests"
-
-    if "ruff format" in cmd_lower or "ruff fmt" in cmd_lower:
-        return "formatting"
-
-    # Linting commands
-    if any(
-        pattern in cmd_lower
-        for pattern in ["clippy", "ruff", "eslint", "lint", "pylint", "flake8"]
-    ):
-        return "linting"
-
-    # Formatting commands
-    if any(
-        pattern in cmd_lower
-        for pattern in ["fmt", "format", "prettier", "rustfmt"]
-    ):
-        return "formatting"
-
-    # Type checking commands
-    if any(pattern in cmd_lower for pattern in ["mypy", "tsc", "typecheck", "pyright"]):
-        return "type checking"
-
-    return None
-
-
-def _normalize_command(command: str) -> str:
-    """Normalize a shell command for matching."""
-    return " ".join(command.strip().split())
-
-
-def _parse_tool_output(output: str) -> tuple[str, str, int]:
-    """Parse tool output into stdout, stderr, and exit code."""
-    if not output:
-        return "", "", 0
-
-    exit_code = 0
-    exit_match = re.search(r"\nExit code: (\d+)\s*$", output)
-    if exit_match:
-        exit_code = int(exit_match.group(1))
-        output = output[: exit_match.start()]
-
-    stdout = output
-    stderr = ""
-    if "\nSTDERR:\n" in output:
-        stdout, stderr = output.split("\nSTDERR:\n", 1)
-
-    return stdout.rstrip(), stderr.rstrip(), exit_code
 
 
 class WaypointExecutor:
@@ -565,14 +438,16 @@ class WaypointExecutor:
                     )
                     self._log_writer.log_iteration_end(iteration, iteration_cost)
 
-                    receipt_valid = await self._finalize_and_verify_receipt(
-                        project_path,
-                        captured_criteria,
-                        self._validation_commands,
-                        reported_validation_commands,
+                    finalizer = self._make_finalizer()
+                    receipt_valid = await finalizer.finalize(
+                        project_path=project_path,
+                        captured_criteria=captured_criteria,
+                        validation_commands=self._validation_commands,
+                        reported_validation_commands=reported_validation_commands,
                         tool_validation_evidence=tool_validation_evidence,
                         tool_validation_categories=tool_validation_categories,
                         host_validations_enabled=self.host_validations_enabled,
+                        max_iterations=self.max_iterations,
                     )
 
                     if receipt_valid:
@@ -631,8 +506,7 @@ class WaypointExecutor:
                 # Create user-friendly error summary
                 error_summaries = {
                     APIErrorType.RATE_LIMITED: (
-                        "Claude API rate limit reached. "
-                        "Wait a few minutes and retry."
+                        "Claude API rate limit reached. Wait a few minutes and retry."
                     ),
                     APIErrorType.API_UNAVAILABLE: (
                         "Claude service temporarily unavailable. Try again shortly."
@@ -821,424 +695,25 @@ When complete, output the completion marker specified in the instructions."""
 
         return "Agent requested human intervention"
 
-    def _build_verification_prompt(self, receipt_path: Path) -> str:
-        """Build the LLM verification prompt for a receipt.
-
-        Args:
-            receipt_path: Path to the receipt file
-
-        Returns:
-            Verification prompt string
-        """
-        from waypoints.git.receipt import ChecklistReceipt
-
-        receipt = ChecklistReceipt.load(receipt_path)
-        return build_verification_prompt(receipt)
-
     def _resolve_validation_commands(
         self, project_path: Path, checklist: Checklist
     ) -> list[ValidationCommand]:
         """Resolve validation commands to run for receipt evidence."""
-        stack_configs = detect_stack(project_path)
+        finalizer = self._make_finalizer()
+        return finalizer.resolve_validation_commands(project_path, checklist, self.spec)
 
-        # Fallback to spec hints if no stack files exist yet
-        if not stack_configs:
-            for stack in detect_stack_from_spec(self.spec):
-                commands = STACK_COMMANDS.get(stack, [])
-                stack_configs.append(
-                    StackConfig(stack_type=stack, commands=list(commands))
-                )
+    def _make_finalizer(self) -> "ReceiptFinalizer":
+        """Create a ReceiptFinalizer for this executor."""
+        from waypoints.fly.receipt_finalizer import ReceiptFinalizer
 
-        resolved: list[ValidationCommand] = []
-        overrides = checklist.validation_overrides
-        seen_keys: set[str] = set()
-
-        for config in stack_configs:
-            for cmd in config.commands:
-                actual_command = overrides.get(cmd.category, cmd.command)
-                key = f"{cmd.name}:{actual_command}"
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                resolved.append(
-                    ValidationCommand(
-                        name=cmd.name,
-                        command=actual_command,
-                        category=cmd.category,
-                        optional=cmd.optional,
-                    )
-                )
-
-        return resolved
-
-    def _fallback_validation_commands_from_model(
-        self, reported_commands: list[str]
-    ) -> list[ValidationCommand]:
-        """Build validation commands from model-reported markers."""
-        commands: list[ValidationCommand] = []
-        seen: set[str] = set()
-
-        for command in reported_commands:
-            normalized = command.strip()
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            category = _detect_validation_category(normalized) or "validation"
-            commands.append(
-                ValidationCommand(
-                    name=category,
-                    command=normalized,
-                    category=category,
-                    optional=False,
-                )
-            )
-
-        return commands
-
-    def _run_validation_commands(
-        self, project_path: Path, commands: list[ValidationCommand]
-    ) -> dict[str, CapturedEvidence]:
-        """Execute validation commands on the host and capture evidence."""
-        evidence: dict[str, CapturedEvidence] = {}
-        if not commands:
-            return evidence
-
-        # Build environment honoring user shell PATH (e.g., mise, cargo shims)
-        env = os.environ.copy()
-        path_parts = env.get("PATH", "").split(os.pathsep) if env.get("PATH") else []
-        extra_paths = [
-            Path.home() / ".local" / "share" / "mise" / "shims",
-            Path.home() / ".local" / "bin",
-            Path.home() / ".cargo" / "bin",
-        ]
-        for extra in extra_paths:
-            extra_str = str(extra)
-            if extra.exists() and extra_str not in path_parts:
-                path_parts.append(extra_str)
-        env["PATH"] = os.pathsep.join(path_parts)
-        shell_executable = env.get("SHELL") or "/bin/sh"
-
-        def _decode_output(data: bytes | str | None) -> str:
-            if isinstance(data, bytes):
-                return data.decode(errors="replace")
-            return data or ""
-
-        for cmd in commands:
-            start_time = datetime.now(UTC)
-            try:
-                result = subprocess.run(
-                    cmd.command,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    cwd=project_path,
-                    env=env,
-                    executable=shell_executable,
-                    timeout=300,
-                )
-                stdout = _decode_output(result.stdout)
-                stderr = _decode_output(result.stderr)
-                exit_code = result.returncode
-            except subprocess.TimeoutExpired as e:
-                stdout = _decode_output(e.stdout)
-                stderr = _decode_output(e.stderr) + "\nCommand timed out"
-                exit_code = 124
-            except Exception as e:  # pragma: no cover - safety net
-                stdout = ""
-                stderr = f"Error running validation command: {e}"
-                exit_code = 1
-
-            label = cmd.name or cmd.command
-            evidence[label] = CapturedEvidence(
-                command=cmd.command,
-                exit_code=exit_code,
-                stdout=stdout,
-                stderr=stderr,
-                captured_at=start_time,
-            )
-
-            logger.info(
-                "Ran validation command (%s): %s [exit=%d]",
-                cmd.category,
-                cmd.command,
-                exit_code,
-            )
-
-            if self._log_writer:
-                self._log_writer.log_finalize_tool_call(
-                    "ValidationCommand",
-                    {
-                        "command": cmd.command,
-                        "category": cmd.category,
-                        "name": cmd.name,
-                    },
-                    f"exit_code={exit_code}",
-                )
-
-        return evidence
-
-    async def _finalize_and_verify_receipt(
-        self,
-        project_path: Path,
-        captured_criteria: dict[int, CriterionVerification],
-        validation_commands: list[ValidationCommand],
-        reported_validation_commands: list[str],
-        tool_validation_evidence: dict[str, CapturedEvidence] | None = None,
-        tool_validation_categories: dict[str, CapturedEvidence] | None = None,
-        host_validations_enabled: bool = True,
-    ) -> bool:
-        """Build receipt from host-captured evidence and verify with LLM.
-
-        Args:
-            project_path: Project working directory.
-            captured_criteria: Criterion verification evidence captured from
-                model output, keyed by criterion index.
-            validation_commands: Preferred validation commands derived from
-                stack detection and checklist overrides.
-            reported_validation_commands: Commands reported by the model in
-                <validation> blocks (used as fallback when no stack commands).
-            tool_validation_evidence: Validation outputs captured from tool calls,
-                keyed by normalized command.
-            tool_validation_categories: Validation outputs captured from tool calls,
-                keyed by detected category.
-            host_validations_enabled: Whether to run host validations or skip
-                and rely on model-provided evidence only.
-
-        Returns:
-            True if receipt is valid, False otherwise.
-        """
-        assert self._log_writer is not None  # Guaranteed by _execute_impl
-        self._log_writer.log_finalize_start()
-
-        self._report_progress(
-            self.max_iterations,
-            self.max_iterations,
-            "finalizing",
-            "Running host validations and building receipt...",
+        assert self._log_writer is not None
+        return ReceiptFinalizer(
+            project=self.project,
+            waypoint=self.waypoint,
+            log_writer=self._log_writer,
+            metrics_collector=self.metrics_collector,
+            progress_callback=self._report_progress,
         )
-
-        receipt_builder = ReceiptBuilder(
-            waypoint_id=self.waypoint.id,
-            title=self.waypoint.title,
-            objective=self.waypoint.objective,
-            acceptance_criteria=self.waypoint.acceptance_criteria,
-        )
-
-        commands_to_run = validation_commands or (
-            self._fallback_validation_commands_from_model(reported_validation_commands)
-        )
-        tool_validation_evidence = tool_validation_evidence or {}
-        tool_validation_categories = tool_validation_categories or {}
-        soft_evidence: dict[str, CapturedEvidence] = (
-            tool_validation_categories or tool_validation_evidence
-        )
-        soft_missing = bool(commands_to_run) and not soft_evidence
-
-        # If host validations are disabled, record skips and return early with a
-        # soft receipt.
-        if not host_validations_enabled:
-            self._report_progress(
-                self.max_iterations,
-                self.max_iterations,
-                "finalizing",
-                "Host validations OFF (LLM-as-judge only)...",
-            )
-
-            if commands_to_run:
-                for cmd in commands_to_run:
-                    normalized = _normalize_command(cmd.command)
-                    evidence = tool_validation_evidence.get(normalized)
-                    if evidence is None:
-                        key = cmd.name or cmd.category
-                        evidence = tool_validation_categories.get(key)
-                    if evidence is not None:
-                        receipt_builder.capture(cmd.name or cmd.command, evidence)
-                        continue
-                    reason = "Host validation skipped (LLM-as-judge only)"
-                    receipt_builder.capture_skipped(cmd.name or cmd.command, reason)
-            else:
-                receipt_builder.capture_skipped(
-                    "host_validations",
-                    "Host validation skipped (LLM-as-judge only)",
-                )
-
-            for idx, criterion in captured_criteria.items():
-                logger.info(
-                    "Adding criterion verification: [%d] %s",
-                    idx,
-                    criterion.status,
-                )
-                receipt_builder.capture_criterion(criterion)
-                self._log_writer.log_finalize_tool_call(
-                    "CapturedCriterion",
-                    {"index": idx, "criterion": criterion.criterion},
-                    criterion.status,
-                )
-
-            receipts_dir = self.project.get_path() / "receipts"
-            receipts_dir.mkdir(parents=True, exist_ok=True)
-            safe_wp_id = self.waypoint.id.lower().replace("-", "")
-            timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-            receipt_stem = f"{safe_wp_id}-{timestamp}"
-            receipt_path = receipts_dir / f"{receipt_stem}.json"
-            receipt = receipt_builder.build(
-                output_dir=receipts_dir,
-                output_prefix=receipt_stem,
-            )
-            receipt.save(receipt_path)
-
-            self._log_writer.log_finalize_end()
-            if soft_missing:
-                self._log_writer.log_receipt_validated(
-                    str(receipt_path),
-                    False,
-                    "Soft validation evidence missing",
-                )
-                return False
-            self._log_writer.log_receipt_validated(
-                str(receipt_path),
-                True,
-                "Host validation skipped (LLM-as-judge only)",
-            )
-            return True
-
-        if not commands_to_run:
-            logger.warning("No validation commands available to run for receipt")
-            self._log_writer.log_finalize_end()
-            self._log_writer.log_receipt_validated(
-                "", False, "No validation commands provided"
-            )
-            return False
-
-        host_evidence = self._run_validation_commands(project_path, commands_to_run)
-        for category, evidence in host_evidence.items():
-            receipt_builder.capture(category, evidence)
-
-        # Add captured criteria verification from model output
-        for idx, criterion in captured_criteria.items():
-            logger.info(
-                "Adding criterion verification: [%d] %s",
-                idx,
-                criterion.status,
-            )
-            receipt_builder.capture_criterion(criterion)
-
-            # Log the captured criterion
-            self._log_writer.log_finalize_tool_call(
-                "CapturedCriterion",
-                {"index": idx, "criterion": criterion.criterion},
-                criterion.status,
-            )
-
-        # Build and save receipt
-        if not receipt_builder.has_evidence():
-            logger.warning("No validation evidence captured")
-            self._log_writer.log_finalize_end()
-            self._log_writer.log_receipt_validated("", False, "No evidence captured")
-            return False
-
-        receipts_dir = self.project.get_path() / "receipts"
-        receipts_dir.mkdir(parents=True, exist_ok=True)
-        safe_wp_id = self.waypoint.id.lower().replace("-", "")
-        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        receipt_stem = f"{safe_wp_id}-{timestamp}"
-        receipt_path = receipts_dir / f"{receipt_stem}.json"
-        receipt = receipt_builder.build(
-            output_dir=receipts_dir,
-            output_prefix=receipt_stem,
-            soft_evidence=soft_evidence or None,
-        )
-        receipt.save(receipt_path)
-
-        logger.info("Receipt saved: %s", receipt_path)
-
-        # Quick check: if any commands failed, receipt is invalid
-        if not receipt.is_valid():
-            failed = receipt.failed_items()
-            failed_names = ", ".join(item.item for item in failed)
-            logger.warning("Validation commands failed: %s", failed_names)
-            self._log_writer.log_finalize_end()
-            self._log_writer.log_receipt_validated(
-                str(receipt_path), False, f"Failed: {failed_names}"
-            )
-            return False
-        if soft_missing:
-            self._log_writer.log_finalize_end()
-            self._log_writer.log_receipt_validated(
-                str(receipt_path),
-                False,
-                "Soft validation evidence missing",
-            )
-            return False
-
-        # LLM verification: ask model to review the evidence
-        self._report_progress(
-            self.max_iterations,
-            self.max_iterations,
-            "finalizing",
-            "Verifying receipt with LLM...",
-        )
-
-        verification_prompt = self._build_verification_prompt(receipt_path)
-        verification_output = ""
-
-        try:
-            async for chunk in agent_query(
-                prompt=verification_prompt,
-                system_prompt="Verify the checklist receipt. Output your verdict.",
-                allowed_tools=[],  # No tools needed for verification
-                cwd=str(project_path),
-                metrics_collector=self.metrics_collector,
-                phase="fly",
-                waypoint_id=self.waypoint.id,
-            ):
-                if isinstance(chunk, StreamChunk):
-                    verification_output += chunk.text
-        except Exception as e:
-            logger.error("Error during receipt verification: %s", e)
-            self._log_writer.log_error(0, f"Verification error: {e}")
-            # Fall back to format-only validation
-            self._log_writer.log_finalize_end()
-            self._log_writer.log_receipt_validated(
-                str(receipt_path), True, "LLM verification skipped"
-            )
-            return True  # Trust the evidence if LLM verification fails
-
-        # Log verification output
-        if verification_output:
-            self._log_writer.log_finalize_output(verification_output)
-
-        # Parse verdict
-        verdict_match = re.search(
-            r'<receipt-verdict status="(valid|invalid)">(.*?)</receipt-verdict>',
-            verification_output,
-            re.DOTALL,
-        )
-
-        if verdict_match:
-            status = verdict_match.group(1)
-            reasoning = verdict_match.group(2).strip()
-            is_valid = status == "valid"
-
-            self._log_writer.log_finalize_end()
-            self._log_writer.log_receipt_validated(
-                str(receipt_path), is_valid, reasoning
-            )
-
-            if is_valid:
-                logger.info("Receipt verified: %s", reasoning)
-                return True
-            else:
-                logger.warning("Receipt rejected: %s", reasoning)
-                return False
-        else:
-            # No verdict found, fall back to format validation
-            logger.warning("No verdict marker in LLM response, using format validation")
-            self._log_writer.log_finalize_end()
-            self._log_writer.log_receipt_validated(
-                str(receipt_path), True, "LLM verdict not found, using format check"
-            )
-            return True
 
     def _validate_no_external_changes(self, project_path: Path) -> list[str]:
         """Check if any files were modified outside the project directory.

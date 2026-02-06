@@ -35,7 +35,7 @@ def build_execution_prompt(
     resolution_notes = ""
     if waypoint.resolution_notes:
         notes_list = "\n".join(f"- {note}" for note in waypoint.resolution_notes)
-        resolution_notes = "\n## Resolution Notes (must honor)\n" f"{notes_list}\n"
+        resolution_notes = f"\n## Resolution Notes (must honor)\n{notes_list}\n"
 
     return f"""## Current Waypoint: {waypoint.id}
 {waypoint.title}
