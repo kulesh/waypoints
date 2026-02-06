@@ -13,6 +13,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from waypoints.fly.evidence import (
+    detect_validation_category as _detect_validation_category,
+)
+from waypoints.fly.evidence import (
+    normalize_command as _normalize_command,
+)
 from waypoints.fly.stack import ValidationCommand
 from waypoints.git.receipt import (
     CapturedEvidence,
@@ -30,71 +36,6 @@ if TYPE_CHECKING:
     from waypoints.models.project import Project
 
 logger = logging.getLogger(__name__)
-
-
-def _normalize_command(command: str) -> str:
-    """Normalize a shell command for matching."""
-    return " ".join(command.strip().split())
-
-
-def _parse_tool_output(output: str) -> tuple[str, str, int]:
-    """Parse tool output into stdout, stderr, and exit code."""
-    if not output:
-        return "", "", 0
-
-    exit_code = 0
-    exit_match = re.search(r"\nExit code: (\d+)\s*$", output)
-    if exit_match:
-        exit_code = int(exit_match.group(1))
-        output = output[: exit_match.start()]
-
-    stdout = output
-    stderr = ""
-    if "\nSTDERR:\n" in output:
-        stdout, stderr = output.split("\nSTDERR:\n", 1)
-
-    return stdout.rstrip(), stderr.rstrip(), exit_code
-
-
-def _detect_validation_category(command: str) -> str | None:
-    """Detect validation category from command string.
-
-    Args:
-        command: The shell command that was run
-
-    Returns:
-        Category name (tests, linting, formatting) or None if not recognized
-    """
-    cmd_lower = command.lower()
-
-    # Test commands
-    if any(
-        pattern in cmd_lower
-        for pattern in ["test", "pytest", "jest", "mocha", "go test", "cargo test"]
-    ):
-        return "tests"
-
-    if "ruff format" in cmd_lower or "ruff fmt" in cmd_lower:
-        return "formatting"
-
-    # Linting commands
-    if any(
-        pattern in cmd_lower
-        for pattern in ["clippy", "ruff", "eslint", "lint", "pylint", "flake8"]
-    ):
-        return "linting"
-
-    # Formatting commands
-    if any(
-        pattern in cmd_lower for pattern in ["fmt", "format", "prettier", "rustfmt"]
-    ):
-        return "formatting"
-
-    # Type checking commands
-    if any(pattern in cmd_lower for pattern in ["mypy", "tsc", "typecheck", "pyright"]):
-        return "type checking"
-
-    return None
 
 
 class ReceiptFinalizer:
