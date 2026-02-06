@@ -3,17 +3,25 @@
 from pathlib import Path
 from typing import Any
 
-BLOCKED_TOP_LEVEL_DIRS = {
-    ".git",
-    "sessions",
-    "receipts",
-    "target",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    "node_modules",
-    "dist",
-}
+from waypoints.memory import (
+    IMMUTABLE_BLOCKED_TOP_LEVEL_DIRS,
+    load_or_build_project_memory,
+)
+
+LEGACY_BLOCKED_TOP_LEVEL_DIRS = frozenset(
+    {
+        ".git",
+        ".waypoints",
+        "sessions",
+        "receipts",
+        "target",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "node_modules",
+        "dist",
+    }
+)
 
 
 def _access_denied(message: str) -> str:
@@ -29,12 +37,34 @@ def _resolve_tool_path(raw_path: str | Path, cwd: str | None) -> Path:
     return path.resolve()
 
 
-def _check_path_policy(path: Path, cwd: str | None) -> str | None:
+def _resolve_blocked_top_level_dirs(cwd: str | None) -> frozenset[str]:
+    """Resolve blocked top-level directories from project memory."""
+    if cwd is None:
+        return frozenset(IMMUTABLE_BLOCKED_TOP_LEVEL_DIRS)
+
+    project_root = Path(cwd).resolve()
+    try:
+        memory = load_or_build_project_memory(project_root)
+        return frozenset(memory.index.blocked_top_level_dirs)
+    except OSError:
+        pass
+    except Exception:
+        pass
+
+    return frozenset(IMMUTABLE_BLOCKED_TOP_LEVEL_DIRS | LEGACY_BLOCKED_TOP_LEVEL_DIRS)
+
+
+def _check_path_policy(
+    path: Path,
+    cwd: str | None,
+    blocked_top_level_dirs: frozenset[str] | None = None,
+) -> str | None:
     """Validate tool path policy for project confinement and denylisted dirs."""
     if cwd is None:
         return None
 
     project_root = Path(cwd).resolve()
+    blocked_dirs = blocked_top_level_dirs or _resolve_blocked_top_level_dirs(cwd)
     if not path.is_relative_to(project_root):
         return f"{path} is outside project root {project_root}"
 
@@ -43,7 +73,7 @@ def _check_path_policy(path: Path, cwd: str | None) -> str | None:
     except ValueError:
         return f"{path} is outside project root {project_root}"
 
-    if relative_path.parts and relative_path.parts[0] in BLOCKED_TOP_LEVEL_DIRS:
+    if relative_path.parts and relative_path.parts[0] in blocked_dirs:
         blocked_root = relative_path.parts[0]
         return f"{path} is under blocked directory '{blocked_root}'"
 
@@ -65,9 +95,10 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
     import subprocess
 
     try:
+        blocked_dirs = _resolve_blocked_top_level_dirs(cwd)
         if name == "read_file":
             path = _resolve_tool_path(arguments["file_path"], cwd)
-            if (error := _check_path_policy(path, cwd)) is not None:
+            if (error := _check_path_policy(path, cwd, blocked_dirs)) is not None:
                 return _access_denied(error)
             if not path.exists():
                 return f"Error: File not found: {path}"
@@ -75,7 +106,7 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
 
         if name == "write_file":
             path = _resolve_tool_path(arguments["file_path"], cwd)
-            if (error := _check_path_policy(path, cwd)) is not None:
+            if (error := _check_path_policy(path, cwd, blocked_dirs)) is not None:
                 return _access_denied(error)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(arguments["content"], encoding="utf-8")
@@ -83,7 +114,7 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
 
         if name == "edit_file":
             path = _resolve_tool_path(arguments["file_path"], cwd)
-            if (error := _check_path_policy(path, cwd)) is not None:
+            if (error := _check_path_policy(path, cwd, blocked_dirs)) is not None:
                 return _access_denied(error)
             if not path.exists():
                 return f"Error: File not found: {path}"
@@ -120,13 +151,15 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
         if name == "glob":
             pattern = arguments["pattern"]
             search_path = _resolve_tool_path(arguments.get("path", cwd or "."), cwd)
-            if (error := _check_path_policy(search_path, cwd)) is not None:
+            if (
+                error := _check_path_policy(search_path, cwd, blocked_dirs)
+            ) is not None:
                 return _access_denied(error)
             matches = list(search_path.glob(pattern))
             visible_matches: list[str] = []
             for match in matches:
                 resolved_match = match.resolve()
-                if _check_path_policy(resolved_match, cwd) is not None:
+                if _check_path_policy(resolved_match, cwd, blocked_dirs) is not None:
                     continue
                 visible_matches.append(str(match))
                 if len(visible_matches) >= 100:
@@ -136,7 +169,9 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
         if name == "grep":
             pattern = arguments["pattern"]
             search_path = _resolve_tool_path(arguments.get("path", cwd or "."), cwd)
-            if (error := _check_path_policy(search_path, cwd)) is not None:
+            if (
+                error := _check_path_policy(search_path, cwd, blocked_dirs)
+            ) is not None:
                 return _access_denied(error)
             glob_pattern = arguments.get("glob", "**/*")
 
@@ -150,7 +185,7 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
 
             for f in files[:50]:  # Limit files searched
                 if f.is_file():
-                    if _check_path_policy(f.resolve(), cwd) is not None:
+                    if _check_path_policy(f.resolve(), cwd, blocked_dirs) is not None:
                         continue
                     try:
                         content = f.read_text(encoding="utf-8")

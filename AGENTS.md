@@ -171,6 +171,7 @@ For full workflow details: `bd prime`
 - `docs/product-spec.md` - Product spec and UX
 - `docs/runtime-architecture.md` - Module map and runtime flow
 - `docs/journey-state-machine.md` - States, transitions, recovery
+- `docs/project-memory-index.md` - Project memory layout + directory policy
 - `docs/genspec-format.md` - Export format
 - `docs/protocol-v1.md` - JSON command/event protocol draft
 - `docs/testing-strategy.md` - Flight tests and quality gates

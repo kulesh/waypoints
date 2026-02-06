@@ -57,3 +57,38 @@ def test_read_file_allows_workspace_code(tmp_path: Path) -> None:
     )
 
     assert "print('ok')" in result
+
+
+def test_read_file_denies_memory_path(tmp_path: Path) -> None:
+    """.waypoints/memory should remain blocked from agent tool access."""
+    memory_dir = tmp_path / ".waypoints" / "memory"
+    memory_dir.mkdir(parents=True)
+    memory_file = memory_dir / "project-index.v1.json"
+    memory_file.write_text("{}", encoding="utf-8")
+
+    result = execute_tool(
+        "read_file",
+        {"file_path": str(memory_file)},
+        cwd=str(tmp_path),
+    )
+
+    assert "Error: Access denied:" in result
+    assert ".waypoints" in result
+
+
+def test_read_file_denies_stack_specific_dependency_dir(tmp_path: Path) -> None:
+    """Stack-aware policy should block dependency roots like node_modules."""
+    (tmp_path / "package.json").write_text('{"name":"demo"}\n', encoding="utf-8")
+    dependency_dir = tmp_path / "node_modules"
+    dependency_dir.mkdir()
+    blocked_file = dependency_dir / "left-pad.js"
+    blocked_file.write_text("module.exports={};", encoding="utf-8")
+
+    result = execute_tool(
+        "read_file",
+        {"file_path": str(blocked_file)},
+        cwd=str(tmp_path),
+    )
+
+    assert "Error: Access denied:" in result
+    assert "node_modules" in result
