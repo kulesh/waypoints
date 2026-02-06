@@ -107,6 +107,7 @@ class ReceiptFinalizer:
                         command=actual_command,
                         category=cmd.category,
                         optional=cmd.optional,
+                        cwd=config.root_path,
                     )
                 )
 
@@ -172,7 +173,7 @@ class ReceiptFinalizer:
                     shell=True,
                     capture_output=True,
                     text=True,
-                    cwd=project_path,
+                    cwd=cmd.cwd or project_path,
                     env=env,
                     executable=shell_executable,
                     timeout=300,

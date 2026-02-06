@@ -1,7 +1,10 @@
 """Tests for technology stack detection."""
 
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
+from waypoints.fly.receipt_finalizer import ReceiptFinalizer
 from waypoints.fly.stack import (
     STACK_COMMANDS,
     StackConfig,
@@ -11,6 +14,7 @@ from waypoints.fly.stack import (
     detect_stack,
     detect_stack_from_spec,
 )
+from waypoints.models.waypoint import Waypoint
 
 
 class TestStackType:
@@ -42,6 +46,33 @@ class TestValidationCommand:
             "formatting", "prettier --check .", "format", optional=True
         )
         assert cmd.optional is True
+
+    def test_default_cwd_is_none(self) -> None:
+        """ValidationCommand.cwd defaults to None."""
+        cmd = ValidationCommand("tests", "pytest", "test")
+        assert cmd.cwd is None
+
+    def test_cwd_set_explicitly(self) -> None:
+        """ValidationCommand.cwd can be set to a path."""
+        p = Path("/some/path")
+        cmd = ValidationCommand("tests", "cargo test", "test", cwd=p)
+        assert cmd.cwd == p
+
+
+class TestStackConfig:
+    """Tests for StackConfig dataclass."""
+
+    def test_default_root_path_is_none(self) -> None:
+        """StackConfig.root_path defaults to None."""
+        config = StackConfig(StackType.PYTHON)
+        assert config.root_path is None
+        assert config.commands == []
+
+    def test_root_path_set_explicitly(self) -> None:
+        """StackConfig.root_path can be set to a path."""
+        p = Path("/project/backend")
+        config = StackConfig(StackType.RUST, root_path=p)
+        assert config.root_path == p
 
 
 class TestStackCommands:
@@ -147,6 +178,61 @@ class TestDetectStack:
         configs = detect_stack(tmp_path)
         assert configs == []
 
+    def test_root_path_set_for_root_detection(self, tmp_path: Path) -> None:
+        """Root detection populates root_path with the project path."""
+        (tmp_path / "Cargo.toml").write_text('[package]\nname = "test"')
+        configs = detect_stack(tmp_path)
+        assert len(configs) == 1
+        assert configs[0].root_path == tmp_path
+
+    def test_detect_rust_in_subdirectory(self, tmp_path: Path) -> None:
+        """Cargo.toml in a child directory detected with correct root_path."""
+        subdir = tmp_path / "canopy"
+        subdir.mkdir()
+        (subdir / "Cargo.toml").write_text('[package]\nname = "canopy"')
+        configs = detect_stack(tmp_path)
+        assert len(configs) == 1
+        assert configs[0].stack_type == StackType.RUST
+        assert configs[0].root_path == subdir
+
+    def test_detect_root_takes_precedence(self, tmp_path: Path) -> None:
+        """Root manifest prevents subdirectory scan."""
+        (tmp_path / "pyproject.toml").write_text("[project]")
+        subdir = tmp_path / "backend"
+        subdir.mkdir()
+        (subdir / "Cargo.toml").write_text('[package]\nname = "backend"')
+        configs = detect_stack(tmp_path)
+        assert len(configs) == 1
+        assert configs[0].stack_type == StackType.PYTHON
+        assert configs[0].root_path == tmp_path
+
+    def test_detect_multiple_stacks_in_subdirs(self, tmp_path: Path) -> None:
+        """Monorepo with manifests only in subdirectories."""
+        frontend = tmp_path / "frontend"
+        frontend.mkdir()
+        (frontend / "package.json").write_text('{"name": "frontend"}')
+        (frontend / "tsconfig.json").write_text("{}")
+        backend = tmp_path / "backend"
+        backend.mkdir()
+        (backend / "Cargo.toml").write_text('[package]\nname = "backend"')
+        configs = detect_stack(tmp_path)
+        assert len(configs) == 2
+        types = {c.stack_type for c in configs}
+        assert StackType.TYPESCRIPT in types
+        assert StackType.RUST in types
+        # Verify root_paths point to correct subdirectories
+        by_type = {c.stack_type: c for c in configs}
+        assert by_type[StackType.TYPESCRIPT].root_path == frontend
+        assert by_type[StackType.RUST].root_path == backend
+
+    def test_hidden_dirs_skipped(self, tmp_path: Path) -> None:
+        """Hidden directories are not searched."""
+        hidden = tmp_path / ".hidden"
+        hidden.mkdir()
+        (hidden / "Cargo.toml").write_text('[package]\nname = "hidden"')
+        configs = detect_stack(tmp_path)
+        assert configs == []
+
 
 class TestDetectStackFromSpec:
     """Tests for detect_stack_from_spec function."""
@@ -241,3 +327,57 @@ class TestBuildValidationSection:
         config = StackConfig(StackType.JAVASCRIPT, [cmd])
         result = build_validation_section([config])
         assert "(optional)" in result
+
+
+class TestRunValidationCwd:
+    """Tests for cwd threading in run_validation_commands."""
+
+    def _make_finalizer(self, tmp_path: Path) -> ReceiptFinalizer:
+        project = SimpleNamespace(get_path=lambda: tmp_path)
+        waypoint = Waypoint(
+            id="WP-CWD",
+            title="CWD test",
+            objective="Verify cwd threading",
+            acceptance_criteria=[],
+        )
+        log_writer = MagicMock()
+        return ReceiptFinalizer(
+            project=project,
+            waypoint=waypoint,
+            log_writer=log_writer,
+        )
+
+    def test_run_validation_uses_command_cwd(self, tmp_path: Path) -> None:
+        """Command with cwd set runs subprocess from that directory."""
+        subdir = tmp_path / "subproject"
+        subdir.mkdir()
+
+        cmd = ValidationCommand(
+            name="tests",
+            command="pwd",
+            category="test",
+            cwd=subdir,
+        )
+
+        finalizer = self._make_finalizer(tmp_path)
+        evidence = finalizer.run_validation_commands(tmp_path, [cmd])
+
+        assert "tests" in evidence
+        assert evidence["tests"].exit_code == 0
+        # pwd output should contain the subdir path, not project root
+        assert str(subdir) in evidence["tests"].stdout.strip()
+
+    def test_run_validation_falls_back_to_project_path(self, tmp_path: Path) -> None:
+        """Command without cwd uses project_path as working directory."""
+        cmd = ValidationCommand(
+            name="tests",
+            command="pwd",
+            category="test",
+        )
+
+        finalizer = self._make_finalizer(tmp_path)
+        evidence = finalizer.run_validation_commands(tmp_path, [cmd])
+
+        assert "tests" in evidence
+        assert evidence["tests"].exit_code == 0
+        assert str(tmp_path) in evidence["tests"].stdout.strip()

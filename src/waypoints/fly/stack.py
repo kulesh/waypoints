@@ -27,6 +27,7 @@ class ValidationCommand:
     command: str  # "ruff check .", "pytest", etc.
     category: str  # "lint", "test", "type", "format"
     optional: bool = False
+    cwd: Path | None = None
 
 
 @dataclass
@@ -35,6 +36,7 @@ class StackConfig:
 
     stack_type: StackType
     commands: list[ValidationCommand] = field(default_factory=list)
+    root_path: Path | None = None
 
 
 # Default validation commands for each stack
@@ -66,55 +68,84 @@ STACK_COMMANDS: dict[StackType, list[ValidationCommand]] = {
 }
 
 
-def detect_stack(project_path: Path) -> list[StackConfig]:
-    """Detect technology stack(s) from project files.
-
-    Checks for presence of:
-    - pyproject.toml, setup.py, requirements.txt -> Python
-    - package.json + tsconfig.json -> TypeScript
-    - package.json (no tsconfig) -> JavaScript
-    - go.mod -> Go
-    - Cargo.toml -> Rust
+def _detect_stacks_at(directory: Path) -> list[StackConfig]:
+    """Detect technology stacks in a single directory.
 
     Args:
-        project_path: Path to the project directory.
+        directory: Path to check for manifest files.
 
     Returns:
-        List of detected stacks with their validation commands.
+        List of detected stacks with root_path set to directory.
     """
     configs: list[StackConfig] = []
 
     # Python
     python_markers = ["pyproject.toml", "setup.py", "requirements.txt"]
-    if any((project_path / f).exists() for f in python_markers):
+    if any((directory / f).exists() for f in python_markers):
         configs.append(
-            StackConfig(StackType.PYTHON, list(STACK_COMMANDS[StackType.PYTHON]))
+            StackConfig(
+                StackType.PYTHON, list(STACK_COMMANDS[StackType.PYTHON]), directory
+            )
         )
 
     # TypeScript/JavaScript
-    if (project_path / "package.json").exists():
-        if (project_path / "tsconfig.json").exists():
+    if (directory / "package.json").exists():
+        if (directory / "tsconfig.json").exists():
             configs.append(
                 StackConfig(
-                    StackType.TYPESCRIPT, list(STACK_COMMANDS[StackType.TYPESCRIPT])
+                    StackType.TYPESCRIPT,
+                    list(STACK_COMMANDS[StackType.TYPESCRIPT]),
+                    directory,
                 )
             )
         else:
             configs.append(
                 StackConfig(
-                    StackType.JAVASCRIPT, list(STACK_COMMANDS[StackType.JAVASCRIPT])
+                    StackType.JAVASCRIPT,
+                    list(STACK_COMMANDS[StackType.JAVASCRIPT]),
+                    directory,
                 )
             )
 
     # Go
-    if (project_path / "go.mod").exists():
-        configs.append(StackConfig(StackType.GO, list(STACK_COMMANDS[StackType.GO])))
+    if (directory / "go.mod").exists():
+        configs.append(
+            StackConfig(StackType.GO, list(STACK_COMMANDS[StackType.GO]), directory)
+        )
 
     # Rust
-    if (project_path / "Cargo.toml").exists():
+    if (directory / "Cargo.toml").exists():
         configs.append(
-            StackConfig(StackType.RUST, list(STACK_COMMANDS[StackType.RUST]))
+            StackConfig(StackType.RUST, list(STACK_COMMANDS[StackType.RUST]), directory)
         )
+
+    return configs
+
+
+def detect_stack(project_path: Path) -> list[StackConfig]:
+    """Detect technology stack(s) from project manifest files.
+
+    Checks for manifest files at the project root first. If none are found,
+    searches immediate (depth-1) non-hidden subdirectories. This handles
+    projects where an LLM places source in a nested directory like
+    ``project/subdir/Cargo.toml``.
+
+    Args:
+        project_path: Path to the project directory.
+
+    Returns:
+        List of detected stacks with root_path indicating where each
+        manifest was found.
+    """
+    configs = _detect_stacks_at(project_path)
+    if configs:
+        return configs
+
+    # Search immediate subdirectories (depth=1), skip hidden dirs
+    for child in sorted(project_path.iterdir()):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        configs.extend(_detect_stacks_at(child))
 
     return configs
 
