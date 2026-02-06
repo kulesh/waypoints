@@ -1,0 +1,1 @@
+Build a Python CLI named todo_cli with commands add/list/done and store tasks in a local JSON file.
