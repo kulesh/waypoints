@@ -35,6 +35,34 @@ def _format_token_summary(tokens_in: int, tokens_out: int) -> str | None:
     )
 
 
+@dataclass(frozen=True)
+class WorkspaceDiffStats:
+    """Latest workspace provenance summary for a waypoint run."""
+
+    approx_tokens_changed: int
+    total_files_changed: int
+    files_added: int
+    files_modified: int
+    files_deleted: int
+
+
+def _extract_workspace_diff_stats(log: ExecutionLogData) -> WorkspaceDiffStats | None:
+    """Extract the most recent workspace diff stats from an execution log."""
+    latest: WorkspaceDiffStats | None = None
+    for entry in log.entries:
+        if entry.entry_type != "workspace_diff":
+            continue
+        md = entry.metadata
+        latest = WorkspaceDiffStats(
+            approx_tokens_changed=int(md.get("approx_tokens_changed", 0)),
+            total_files_changed=int(md.get("total_files_changed", 0)),
+            files_added=int(md.get("files_added", 0)),
+            files_modified=int(md.get("files_modified", 0)),
+            files_deleted=int(md.get("files_deleted", 0)),
+        )
+    return latest
+
+
 @dataclass
 class DebriefData:
     """All data needed to render the debrief panel."""
@@ -60,6 +88,21 @@ class DebriefService:
     def __init__(self, project: Project, flight_plan: FlightPlan | None) -> None:
         self._project = project
         self._flight_plan = flight_plan
+
+    def _latest_workspace_diffs_by_waypoint(self) -> dict[str, WorkspaceDiffStats]:
+        """Get latest workspace diff stats for each waypoint, if available."""
+        results: dict[str, WorkspaceDiffStats] = {}
+        try:
+            for log_path in ExecutionLogReader.list_logs(self._project):
+                log = ExecutionLogReader.load(log_path)
+                if log.waypoint_id in results:
+                    continue
+                stats = _extract_workspace_diff_stats(log)
+                if stats is not None:
+                    results[log.waypoint_id] = stats
+        except Exception:
+            logger.exception("Failed to collect workspace diff summaries")
+        return results
 
     @staticmethod
     def _count_contiguous_iterations(log: ExecutionLogData) -> int:
@@ -274,6 +317,19 @@ class DebriefService:
 
         if total_seconds > 0:
             lines.append(f"├─ {format_duration(total_seconds)} total time")
+        workspace_diffs = self._latest_workspace_diffs_by_waypoint()
+        if workspace_diffs:
+            total_proxy_tokens = sum(
+                stats.approx_tokens_changed for stats in workspace_diffs.values()
+            )
+            total_changed_files = sum(
+                stats.total_files_changed for stats in workspace_diffs.values()
+            )
+            lines.append(
+                "├─ Provenance proxy: ~"
+                f"{format_token_count(total_proxy_tokens)} text-delta tokens"
+            )
+            lines.append(f"├─ {total_changed_files} changed files in latest runs")
         if total_iterations > 0:
             lines.append(f"└─ {total_iterations} iterations")
 
@@ -337,6 +393,15 @@ class DebriefService:
             token_summary = _format_token_summary(
                 collector.total_tokens_in, collector.total_tokens_out
             )
+            workspace_diffs = self._latest_workspace_diffs_by_waypoint()
+            if workspace_diffs:
+                total_proxy_tokens = sum(
+                    stats.approx_tokens_changed for stats in workspace_diffs.values()
+                )
+                lines.append(
+                    "├─ Provenance proxy: ~"
+                    f"{format_token_count(total_proxy_tokens)} text-delta tokens"
+                )
             if token_summary:
                 lines.append(f"└─ {token_summary}")
         except Exception:
@@ -416,6 +481,7 @@ class DebriefService:
             if costs:
                 sorted_costs = sorted(costs.items(), key=lambda x: x[1], reverse=True)
                 top5 = sorted_costs[:5]
+                workspace_diffs = self._latest_workspace_diffs_by_waypoint()
 
                 titles: dict[str, str] = {}
                 if self._flight_plan:
@@ -425,7 +491,22 @@ class DebriefService:
                 for i, (wp_id, cost) in enumerate(top5):
                     prefix = "└─" if i == len(top5) - 1 else "├─"
                     title = titles.get(wp_id, wp_id)
-                    lines.append(f"{prefix} ${cost:.2f} - {title}")
+                    stats = workspace_diffs.get(wp_id)
+                    if stats is None:
+                        lines.append(f"{prefix} ${cost:.2f} - {title}")
+                        continue
+                    approx_tokens = format_token_count(stats.approx_tokens_changed)
+                    change_mix = (
+                        f"(+{stats.files_added} "
+                        f"~{stats.files_modified} "
+                        f"-{stats.files_deleted})"
+                    )
+                    lines.append(
+                        f"{prefix} ${cost:.2f} - {title} "
+                        f"· ~{approx_tokens} prov tok "
+                        f"· {stats.total_files_changed} files "
+                        f"{change_mix}"
+                    )
             else:
                 lines.append("└─ No waypoint cost data")
         except Exception:

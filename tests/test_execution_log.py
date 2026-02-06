@@ -548,6 +548,31 @@ class TestExecutionLogWriter:
         assert entries[1]["type"] == "completion_detected"
         assert entries[1]["iteration"] == 10
 
+    def test_log_workspace_diff(
+        self, mock_project: MockProject, mock_waypoint: Waypoint
+    ) -> None:
+        """Log workspace provenance diff summary."""
+        writer = ExecutionLogWriter(mock_project, mock_waypoint)
+        writer.log_workspace_diff(
+            iteration=2,
+            result="success",
+            summary={
+                "total_files_changed": 3,
+                "files_added": 1,
+                "files_modified": 1,
+                "files_deleted": 1,
+                "approx_tokens_changed": 120,
+            },
+        )
+
+        entries = _read_jsonl_entries(writer.file_path)
+
+        assert entries[1]["type"] == "workspace_diff"
+        assert entries[1]["iteration"] == 2
+        assert entries[1]["result"] == "success"
+        assert entries[1]["total_files_changed"] == 3
+        assert entries[1]["approx_tokens_changed"] == 120
+
     def test_log_finalize_phases(
         self, mock_project: MockProject, mock_waypoint: Waypoint
     ) -> None:

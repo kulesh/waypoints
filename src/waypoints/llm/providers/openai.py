@@ -8,6 +8,10 @@ import time
 from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING, Any
 
+from waypoints.llm.prompt_cache import (
+    PROMPT_CACHE_RETENTION,
+    build_prompt_cache_key,
+)
 from waypoints.llm.providers.base import (
     MAX_RETRIES,
     RETRY_DELAYS,
@@ -166,19 +170,32 @@ TOOL_NAME_MAP = {
 }
 
 
-def _extract_usage_tokens(usage: Any) -> tuple[int | None, int | None]:
-    """Extract prompt/completion tokens from OpenAI usage payloads."""
+def _extract_usage_tokens(
+    usage: Any,
+) -> tuple[int | None, int | None, int | None]:
+    """Extract prompt/completion/cached prompt tokens from usage payloads."""
     if usage is None:
-        return None, None
+        return None, None, None
     tokens_in = getattr(usage, "prompt_tokens", None)
     tokens_out = getattr(usage, "completion_tokens", None)
     if tokens_in is None:
         tokens_in = getattr(usage, "input_tokens", None)
     if tokens_out is None:
         tokens_out = getattr(usage, "output_tokens", None)
+    prompt_details = getattr(usage, "prompt_tokens_details", None)
+    if prompt_details is None and isinstance(usage, dict):
+        prompt_details = usage.get("prompt_tokens_details")
+
+    cached_tokens_in = None
+    if prompt_details is not None:
+        cached_tokens_in = getattr(prompt_details, "cached_tokens", None)
+        if cached_tokens_in is None and isinstance(prompt_details, dict):
+            cached_tokens_in = prompt_details.get("cached_tokens")
+
     return (
         int(tokens_in) if tokens_in is not None else None,
         int(tokens_out) if tokens_out is not None else None,
+        int(cached_tokens_in) if cached_tokens_in is not None else None,
     )
 
 
@@ -247,12 +264,20 @@ class OpenAIProvider(LLMProvider):
         cost: float | None = None
         tokens_in: int | None = None
         tokens_out: int | None = None
+        cached_tokens_in: int | None = None
         success = True
         error_msg: str | None = None
 
         from waypoints.llm.metrics import enforce_configured_budget
 
         enforce_configured_budget(metrics_collector)
+        cache_key = build_prompt_cache_key(
+            provider=self.provider_name,
+            model=self.model,
+            phase=phase,
+            cwd=None,
+            mode="chat",
+        )
 
         try:
             client = self._get_client()
@@ -271,6 +296,8 @@ class OpenAIProvider(LLMProvider):
                 max_tokens=max_tokens,
                 stream=True,
                 stream_options={"include_usage": True},
+                prompt_cache_key=cache_key,
+                prompt_cache_retention=PROMPT_CACHE_RETENTION,
             )
 
             for chunk in stream:
@@ -279,13 +306,16 @@ class OpenAIProvider(LLMProvider):
                     full_text += text
                     yield StreamChunk(text=text)
                 if getattr(chunk, "usage", None):
-                    tokens_in, tokens_out = _extract_usage_tokens(chunk.usage)
+                    tokens_in, tokens_out, cached_tokens_in = _extract_usage_tokens(
+                        chunk.usage
+                    )
 
             yield StreamComplete(
                 full_text=full_text,
                 cost_usd=None,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
+                cached_tokens_in=cached_tokens_in,
             )
 
         except Exception as e:
@@ -307,6 +337,7 @@ class OpenAIProvider(LLMProvider):
                     error=error_msg,
                     tokens_in=tokens_in,
                     tokens_out=tokens_out,
+                    cached_tokens_in=cached_tokens_in,
                 )
                 metrics_collector.record(call)
 
@@ -331,6 +362,14 @@ class OpenAIProvider(LLMProvider):
         full_text = ""
         tokens_in_total: int | None = None
         tokens_out_total: int | None = None
+        cached_tokens_in_total: int | None = None
+        cache_key = build_prompt_cache_key(
+            provider=self.provider_name,
+            model=self.model,
+            phase=phase,
+            cwd=cwd,
+            mode="agent",
+        )
 
         # Filter tools based on allowed_tools
         tools: list[dict[str, Any]] = []
@@ -385,11 +424,22 @@ class OpenAIProvider(LLMProvider):
                         messages=messages,
                         tools=tools if tools else None,
                         max_tokens=16000,
+                        prompt_cache_key=cache_key,
+                        prompt_cache_retention=PROMPT_CACHE_RETENTION,
                     )
-                    tokens_in, tokens_out = _extract_usage_tokens(response.usage)
-                    if tokens_in is not None or tokens_out is not None:
+                    tokens_in, tokens_out, cached_tokens_in = _extract_usage_tokens(
+                        response.usage
+                    )
+                    if (
+                        tokens_in is not None
+                        or tokens_out is not None
+                        or cached_tokens_in is not None
+                    ):
                         tokens_in_total = (tokens_in_total or 0) + (tokens_in or 0)
                         tokens_out_total = (tokens_out_total or 0) + (tokens_out or 0)
+                        cached_tokens_in_total = (cached_tokens_in_total or 0) + (
+                            cached_tokens_in or 0
+                        )
 
                     choice = response.choices[0]
                     message = choice.message
@@ -445,6 +495,7 @@ class OpenAIProvider(LLMProvider):
                     cost_usd=None,
                     tokens_in=tokens_in_total,
                     tokens_out=tokens_out_total,
+                    cached_tokens_in=cached_tokens_in_total,
                 )
 
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
@@ -461,6 +512,7 @@ class OpenAIProvider(LLMProvider):
                         error=None,
                         tokens_in=tokens_in_total,
                         tokens_out=tokens_out_total,
+                        cached_tokens_in=cached_tokens_in_total,
                     )
                     metrics_collector.record(call)
                 return
@@ -486,6 +538,7 @@ class OpenAIProvider(LLMProvider):
                             error=error_msg,
                             tokens_in=tokens_in_total,
                             tokens_out=tokens_out_total,
+                            cached_tokens_in=cached_tokens_in_total,
                         )
                         metrics_collector.record(call)
                     raise
@@ -513,6 +566,7 @@ class OpenAIProvider(LLMProvider):
                     error=error_msg,
                     tokens_in=tokens_in_total,
                     tokens_out=tokens_out_total,
+                    cached_tokens_in=cached_tokens_in_total,
                 )
                 metrics_collector.record(call)
             raise last_error

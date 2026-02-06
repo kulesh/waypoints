@@ -352,6 +352,22 @@ class ExecutionLogWriter:
         }
         self._append(entry)
 
+    def log_workspace_diff(
+        self,
+        iteration: int,
+        result: str,
+        summary: dict[str, Any],
+    ) -> None:
+        """Log workspace before/after delta for provenance and token proxy."""
+        entry: dict[str, Any] = {
+            "type": "workspace_diff",
+            "iteration": iteration,
+            "result": result,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        entry.update(summary)
+        self._append(entry)
+
     def log_stage_report(self, iteration: int, report: "StageReport") -> None:
         """Log a structured execution stage report."""
         entry = {

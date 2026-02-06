@@ -73,6 +73,8 @@ def _format_project_metrics(
     tokens_in: int | None,
     tokens_out: int | None,
     tokens_known: bool,
+    cached_tokens_in: int | None,
+    cached_tokens_known: bool,
 ) -> str:
     parts: list[str] = []
     if cost > 0:
@@ -85,6 +87,8 @@ def _format_project_metrics(
         )
     elif cost > 0 or time_seconds > 0:
         parts.append("Tokens: n/a")
+    if cached_tokens_known or cached_tokens_in:
+        parts.append(f"Cached: {format_token_count(cached_tokens_in or 0)} in")
     if time_seconds > 0:
         mins, secs = divmod(time_seconds, 60)
         if mins >= 60:
@@ -438,6 +442,7 @@ class WaypointDetailPanel(Vertical):
         self._waypoint: Waypoint | None = None
         self._waypoint_cost: float | None = None
         self._waypoint_tokens: tuple[int, int] | None = None
+        self._waypoint_cached_tokens_in: int | None = None
         self._showing_output_for: str | None = None  # Track which waypoint's output
         self._is_live_output: bool = False  # True if showing live streaming output
 
@@ -472,6 +477,7 @@ class WaypointDetailPanel(Vertical):
         active_waypoint_id: str | None = None,
         cost: float | None = None,
         tokens: tuple[int, int] | None = None,
+        cached_tokens_in: int | None = None,
     ) -> None:
         """Display waypoint details.
 
@@ -484,6 +490,7 @@ class WaypointDetailPanel(Vertical):
         self._waypoint = waypoint
         self._waypoint_cost = cost
         self._waypoint_tokens = tokens
+        self._waypoint_cached_tokens_in = cached_tokens_in
 
         title = self.query_one("#wp-title", Static)
         objective = self.query_one("#wp-objective", Static)
@@ -515,7 +522,7 @@ class WaypointDetailPanel(Vertical):
             icon = get_status_markup(waypoint.status)
             label = get_status_label(waypoint.status)
             status.update(Text.from_markup(f"{icon} {label}"))
-            metrics.update(self._format_metrics_line(cost, tokens))
+            metrics.update(self._format_metrics_line(cost, tokens, cached_tokens_in))
 
             # Load completed criteria from execution log for completed waypoints
             completed: set[int] | None = None
@@ -546,16 +553,23 @@ class WaypointDetailPanel(Vertical):
             self._is_live_output = False
 
     def update_metrics(
-        self, cost: float | None, tokens: tuple[int, int] | None
+        self,
+        cost: float | None,
+        tokens: tuple[int, int] | None,
+        cached_tokens_in: int | None,
     ) -> None:
         """Update the metrics line without reloading the waypoint."""
         self._waypoint_cost = cost
         self._waypoint_tokens = tokens
+        self._waypoint_cached_tokens_in = cached_tokens_in
         metrics = self.query_one("#wp-metrics", Static)
-        metrics.update(self._format_metrics_line(cost, tokens))
+        metrics.update(self._format_metrics_line(cost, tokens, cached_tokens_in))
 
     def _format_metrics_line(
-        self, cost: float | None, tokens: tuple[int, int] | None
+        self,
+        cost: float | None,
+        tokens: tuple[int, int] | None,
+        cached_tokens_in: int | None,
     ) -> str:
         """Format the metrics line for a waypoint detail panel."""
         metrics_parts: list[str] = []
@@ -566,6 +580,8 @@ class WaypointDetailPanel(Vertical):
                 f"{format_token_count(tokens_in)} in / "
                 f"{format_token_count(tokens_out)} out"
             )
+        if cached_tokens_in is not None:
+            metrics_parts.append(f"Cached: {format_token_count(cached_tokens_in)} in")
         if cost is not None and cost > 0:
             metrics_parts.append(f"Cost: ${cost:.2f}")
         return " · ".join(metrics_parts)
@@ -759,6 +775,9 @@ class WaypointDetailPanel(Vertical):
                 details = entry.metadata.get("details", "")
                 log.write_log(f"[red]⚠ Security violation: {details}[/]")
 
+            elif entry_type == "workspace_diff":
+                self._log_workspace_diff_entry(log, entry)
+
         return max_iteration
 
     def _log_tool_call_entry(self, log: "ExecutionLog", entry: Any) -> None:
@@ -794,6 +813,56 @@ class WaypointDetailPanel(Vertical):
 
         # Fallback for other tools
         log.write_log(f"[dim]→ {tool_name}[/]")
+
+    def _log_workspace_diff_entry(self, log: "ExecutionLog", entry: Any) -> None:
+        """Log workspace provenance summary from before/after snapshots."""
+        total = int(entry.metadata.get("total_files_changed", 0))
+        if total == 0:
+            log.write_log("[dim]Δ Workspace: no file changes detected[/]")
+            return
+
+        files_added = int(entry.metadata.get("files_added", 0))
+        files_modified = int(entry.metadata.get("files_modified", 0))
+        files_deleted = int(entry.metadata.get("files_deleted", 0))
+        approx_tokens = int(entry.metadata.get("approx_tokens_changed", 0))
+        indeterminate = int(entry.metadata.get("indeterminate_text_files", 0))
+
+        summary = (
+            f"[dim]Δ Workspace: {total} files "
+            f"(+{files_added} ~{files_modified} -{files_deleted}) · "
+            f"~{format_token_count(approx_tokens)} tokens from text deltas[/]"
+        )
+        log.write_log(summary)
+        if indeterminate > 0:
+            log.write_log(
+                "[dim]  "
+                f"{indeterminate} changed text file(s) had size-only estimates"
+                "[/]"
+            )
+
+        top = entry.metadata.get("top_changed_files", [])
+        if isinstance(top, list):
+            for item in top[:5]:
+                if not isinstance(item, dict):
+                    continue
+                path = item.get("path")
+                if not isinstance(path, str) or not path:
+                    continue
+                change_type = item.get("change_type", "modified")
+                added_chars = int(item.get("text_chars_added", 0) or 0)
+                removed_chars = int(item.get("text_chars_removed", 0) or 0)
+                if change_type == "added":
+                    icon = "+"
+                elif change_type == "deleted":
+                    icon = "-"
+                else:
+                    icon = "~"
+                log.write_log(
+                    "  [dim]"
+                    f"{icon} {path} "
+                    f"(+{added_chars} chars, -{removed_chars} chars)"
+                    "[/]"
+                )
 
     def _log_soft_validation_evidence(
         self,
@@ -1092,6 +1161,8 @@ class WaypointListPanel(Vertical):
         tokens_in: int | None = None,
         tokens_out: int | None = None,
         tokens_known: bool = False,
+        cached_tokens_in: int | None = None,
+        cached_tokens_known: bool = False,
     ) -> None:
         """Update the project metrics display (cost and time).
 
@@ -1100,6 +1171,7 @@ class WaypointListPanel(Vertical):
             time_seconds: Total execution time in seconds.
             tokens_in: Total input tokens for the project.
             tokens_out: Total output tokens for the project.
+            cached_tokens_in: Total cached input tokens for the project.
         """
         display = _format_project_metrics(
             cost,
@@ -1107,6 +1179,8 @@ class WaypointListPanel(Vertical):
             tokens_in,
             tokens_out,
             tokens_known,
+            cached_tokens_in,
+            cached_tokens_known,
         )
         self.query_one("#project-metrics", Static).update(display)
 
@@ -1380,12 +1454,21 @@ class FlyScreen(Screen[None]):
         tokens_in: int | None = None
         tokens_out: int | None = None
         tokens_known = False
+        cached_tokens_in: int | None = None
+        cached_tokens_known = False
         if self.waypoints_app.metrics_collector:
             cost = self.waypoints_app.metrics_collector.total_cost
             tokens_in = self.waypoints_app.metrics_collector.total_tokens_in
             tokens_out = self.waypoints_app.metrics_collector.total_tokens_out
+            cached_tokens_in = (
+                self.waypoints_app.metrics_collector.total_cached_tokens_in
+            )
             tokens_known = any(
                 call.tokens_in is not None or call.tokens_out is not None
+                for call in self.waypoints_app.metrics_collector._calls
+            )
+            cached_tokens_known = any(
+                call.cached_tokens_in is not None
                 for call in self.waypoints_app.metrics_collector._calls
             )
         time_seconds = self._calculate_total_execution_time()
@@ -1396,6 +1479,8 @@ class FlyScreen(Screen[None]):
             tokens_in,
             tokens_out,
             tokens_known,
+            cached_tokens_in,
+            cached_tokens_known,
         )
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted[Waypoint]) -> None:
@@ -1411,12 +1496,14 @@ class FlyScreen(Screen[None]):
             )
             cost = self._get_waypoint_cost(waypoint.id)
             tokens = self._get_waypoint_tokens(waypoint.id)
+            cached_tokens_in = self._get_waypoint_cached_tokens_in(waypoint.id)
             detail_panel.show_waypoint(
                 waypoint,
                 project=self.project,
                 active_waypoint_id=active_id,
                 cost=cost,
                 tokens=tokens,
+                cached_tokens_in=cached_tokens_in,
             )
 
     def _get_waypoint_cost(self, waypoint_id: str) -> float | None:
@@ -1440,6 +1527,15 @@ class FlyScreen(Screen[None]):
                 self.waypoints_app.metrics_collector.tokens_by_waypoint()
             )
             return tokens_by_waypoint.get(waypoint_id)
+        return None
+
+    def _get_waypoint_cached_tokens_in(self, waypoint_id: str) -> int | None:
+        """Get cached input tokens for a waypoint from the metrics collector."""
+        if self.waypoints_app.metrics_collector:
+            cached_by_waypoint = (
+                self.waypoints_app.metrics_collector.cached_tokens_by_waypoint()
+            )
+            return cached_by_waypoint.get(waypoint_id)
         return None
 
     def _get_completion_status(self) -> tuple[bool, int, int, int]:
@@ -1476,12 +1572,14 @@ class FlyScreen(Screen[None]):
             detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
             cost = self._get_waypoint_cost(wp.id)
             tokens = self._get_waypoint_tokens(wp.id)
+            cached_tokens_in = self._get_waypoint_cached_tokens_in(wp.id)
             detail_panel.show_waypoint(
                 wp,
                 project=self.project,
                 active_waypoint_id=None,
                 cost=cost,
                 tokens=tokens,
+                cached_tokens_in=cached_tokens_in,
             )
             return
 
@@ -1524,9 +1622,7 @@ class FlyScreen(Screen[None]):
                 if budget_resume_at:
                     remaining_secs = max(
                         0,
-                        int(
-                            (budget_resume_at - datetime.now(UTC)).total_seconds()
-                        ),
+                        int((budget_resume_at - datetime.now(UTC)).total_seconds()),
                     )
                     return (
                         f"Budget pause on {budget_resume_waypoint_id}. "
@@ -1801,12 +1897,14 @@ class FlyScreen(Screen[None]):
             detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
             cost = self._get_waypoint_cost(selected.id)
             tokens = self._get_waypoint_tokens(selected.id)
+            cached_tokens_in = self._get_waypoint_cached_tokens_in(selected.id)
             detail_panel.show_waypoint(
                 selected,
                 project=self.project,
                 active_waypoint_id=None,
                 cost=cost,
                 tokens=tokens,
+                cached_tokens_in=cached_tokens_in,
             )
 
             # Transition journey state and execute
@@ -1923,12 +2021,14 @@ class FlyScreen(Screen[None]):
             detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
             cost = self._get_waypoint_cost(debug_wp.id)
             tokens = self._get_waypoint_tokens(debug_wp.id)
+            cached_tokens_in = self._get_waypoint_cached_tokens_in(debug_wp.id)
             detail_panel.show_waypoint(
                 debug_wp,
                 project=self.project,
                 active_waypoint_id=None,
                 cost=cost,
                 tokens=tokens,
+                cached_tokens_in=cached_tokens_in,
             )
             self.notify(f"Debug waypoint created: {debug_wp.id}")
 
@@ -2178,7 +2278,10 @@ class FlyScreen(Screen[None]):
         if self.current_waypoint:
             cost = self._get_waypoint_cost(self.current_waypoint.id)
             tokens = self._get_waypoint_tokens(self.current_waypoint.id)
-            detail_panel.update_metrics(cost, tokens)
+            cached_tokens_in = self._get_waypoint_cached_tokens_in(
+                self.current_waypoint.id
+            )
+            detail_panel.update_metrics(cost, tokens, cached_tokens_in)
 
         # Delegate status mutation, commit, and next-waypoint selection
         # to the coordinator for ALL result types

@@ -27,3 +27,4 @@ This folder contains the product, architecture, and testing references for Waypo
 
 - [claude-review.md](./claude-review.md) - Claude review notes
 - [codex-review-01082026.md](./codex-review-01082026.md) - Codex review notes
+- [fly-token-usage-analysis-2026-02-06.md](./fly-token-usage-analysis-2026-02-06.md) - Fly phase token usage and cost analysis

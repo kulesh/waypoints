@@ -38,6 +38,7 @@ class LLMCall:
     error: str | None = None
     tokens_in: int | None = None
     tokens_out: int | None = None
+    cached_tokens_in: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -56,6 +57,8 @@ class LLMCall:
             data["tokens_in"] = self.tokens_in
         if self.tokens_out is not None:
             data["tokens_out"] = self.tokens_out
+        if self.cached_tokens_in is not None:
+            data["cached_tokens_in"] = self.cached_tokens_in
         return data
 
     @classmethod
@@ -68,6 +71,7 @@ class LLMCall:
             cost_usd=data.get("cost_usd"),
             tokens_in=data.get("tokens_in"),
             tokens_out=data.get("tokens_out"),
+            cached_tokens_in=data.get("cached_tokens_in"),
             latency_ms=data["latency_ms"],
             model=data["model"],
             timestamp=datetime.fromisoformat(data["timestamp"]),
@@ -87,6 +91,7 @@ class LLMCall:
         error: str | None = None,
         tokens_in: int | None = None,
         tokens_out: int | None = None,
+        cached_tokens_in: int | None = None,
     ) -> "LLMCall":
         """Create a new LLMCall with auto-generated ID and timestamp."""
         return cls(
@@ -96,6 +101,7 @@ class LLMCall:
             cost_usd=cost_usd,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
+            cached_tokens_in=cached_tokens_in,
             latency_ms=latency_ms,
             model=model,
             timestamp=datetime.now(UTC),
@@ -198,6 +204,11 @@ class MetricsCollector:
         return sum(c.tokens_out or 0 for c in self._calls)
 
     @property
+    def total_cached_tokens_in(self) -> int:
+        """Get total cached input tokens across all calls."""
+        return sum(c.cached_tokens_in or 0 for c in self._calls)
+
+    @property
     def total_calls(self) -> int:
         """Get total number of calls."""
         return len(self._calls)
@@ -263,6 +274,28 @@ class MetricsCollector:
             current[1] += tokens_out
         return {wp_id: (vals[0], vals[1]) for wp_id, vals in result.items()}
 
+    def cached_tokens_by_phase(self) -> dict[str, int]:
+        """Get cached input token breakdown by phase."""
+        result: dict[str, int] = {}
+        for call in self._calls:
+            cached_tokens = call.cached_tokens_in or 0
+            if cached_tokens == 0:
+                continue
+            result[call.phase] = result.get(call.phase, 0) + cached_tokens
+        return result
+
+    def cached_tokens_by_waypoint(self) -> dict[str, int]:
+        """Get cached input token breakdown by waypoint."""
+        result: dict[str, int] = {}
+        for call in self._calls:
+            if not call.waypoint_id:
+                continue
+            cached_tokens = call.cached_tokens_in or 0
+            if cached_tokens == 0:
+                continue
+            result[call.waypoint_id] = result.get(call.waypoint_id, 0) + cached_tokens
+        return result
+
     def summary(self) -> dict[str, Any]:
         """Get aggregated metrics summary.
 
@@ -277,8 +310,11 @@ class MetricsCollector:
             "cost_by_waypoint": self.cost_by_waypoint(),
             "total_tokens_in": self.total_tokens_in,
             "total_tokens_out": self.total_tokens_out,
+            "total_cached_tokens_in": self.total_cached_tokens_in,
             "tokens_by_phase": self.tokens_by_phase(),
             "tokens_by_waypoint": self.tokens_by_waypoint(),
+            "cached_tokens_by_phase": self.cached_tokens_by_phase(),
+            "cached_tokens_by_waypoint": self.cached_tokens_by_waypoint(),
             "avg_latency_ms": (
                 mean(c.latency_ms for c in self._calls) if self._calls else 0
             ),

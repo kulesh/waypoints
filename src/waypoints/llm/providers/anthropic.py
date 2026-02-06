@@ -98,6 +98,29 @@ def _extract_usage_from_message(message: object) -> tuple[int | None, int | None
     )
 
 
+def _extract_cached_input_tokens(usage: object | None) -> int | None:
+    """Extract cached input tokens from Claude SDK usage payloads."""
+    if usage is None:
+        return None
+
+    cached_tokens_in = None
+
+    if isinstance(usage, dict):
+        cached_tokens_in = usage.get("cache_read_input_tokens")
+        if cached_tokens_in is None:
+            cache_read = usage.get("cache_read")
+            if isinstance(cache_read, dict):
+                cached_tokens_in = cache_read.get("input_tokens")
+    else:
+        cached_tokens_in = getattr(usage, "cache_read_input_tokens", None)
+        if cached_tokens_in is None:
+            cache_read = getattr(usage, "cache_read", None)
+            if cache_read is not None:
+                cached_tokens_in = getattr(cache_read, "input_tokens", None)
+
+    return int(cached_tokens_in) if cached_tokens_in is not None else None
+
+
 class AnthropicProvider(LLMProvider):
     """Anthropic provider using Claude Agent SDK.
 
@@ -147,6 +170,7 @@ class AnthropicProvider(LLMProvider):
         cost: float | None = None
         tokens_in: int | None = None
         tokens_out: int | None = None
+        cached_tokens_in: int | None = None
         success = True
         error_msg: str | None = None
 
@@ -160,6 +184,7 @@ class AnthropicProvider(LLMProvider):
                     cost = result.cost_usd
                     tokens_in = result.tokens_in
                     tokens_out = result.tokens_out
+                    cached_tokens_in = getattr(result, "cached_tokens_in", None)
                     yield result
                 else:
                     yield result
@@ -182,6 +207,7 @@ class AnthropicProvider(LLMProvider):
                     error=error_msg,
                     tokens_in=tokens_in,
                     tokens_out=tokens_out,
+                    cached_tokens_in=cached_tokens_in,
                 )
                 metrics_collector.record(call)
 
@@ -219,12 +245,13 @@ class AnthropicProvider(LLMProvider):
         try:
 
             async def collect_results() -> tuple[
-                list[str], float | None, int | None, int | None
+                list[str], float | None, int | None, int | None, int | None
             ]:
                 chunks: list[str] = []
                 cost: float | None = None
                 tokens_in: int | None = None
                 tokens_out: int | None = None
+                cached_tokens_in: int | None = None
                 options = ClaudeAgentOptions(
                     allowed_tools=[],
                     system_prompt=system if system else None,
@@ -243,6 +270,9 @@ class AnthropicProvider(LLMProvider):
                                 logger.debug("Got chunk: %d chars", len(block.text))
                     elif isinstance(message, ResultMessage):
                         cost = message.total_cost_usd
+                        cached_tokens_in = _extract_cached_input_tokens(
+                            getattr(message, "usage", None)
+                        )
                         logger.debug(
                             (
                                 "ResultMessage usage=%r input=%r output=%r "
@@ -260,10 +290,10 @@ class AnthropicProvider(LLMProvider):
                         if total_out is not None:
                             tokens_out = total_out
                         logger.info("Query complete, cost: $%.4f", cost or 0)
-                return chunks, cost, tokens_in, tokens_out
+                return chunks, cost, tokens_in, tokens_out, cached_tokens_in
 
-            chunks, cost, tokens_in, tokens_out = loop.run_until_complete(
-                collect_results()
+            chunks, cost, tokens_in, tokens_out, cached_tokens_in = (
+                loop.run_until_complete(collect_results())
             )
             logger.info("Got %d chunks total", len(chunks))
 
@@ -277,6 +307,7 @@ class AnthropicProvider(LLMProvider):
                 cost_usd=cost,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
+                cached_tokens_in=cached_tokens_in,
             )
         finally:
             loop.close()
@@ -313,6 +344,7 @@ class AnthropicProvider(LLMProvider):
         final_cost: float | None = None
         final_tokens_in: int | None = None
         final_tokens_out: int | None = None
+        final_cached_tokens_in: int | None = None
         last_error: Exception | None = None
 
         for attempt in range(MAX_RETRIES + 1):
@@ -335,6 +367,7 @@ class AnthropicProvider(LLMProvider):
             cost: float | None = None
             tokens_in: int | None = None
             tokens_out: int | None = None
+            cached_tokens_in: int | None = None
             has_yielded = False
 
             try:
@@ -363,6 +396,9 @@ class AnthropicProvider(LLMProvider):
                                 )
                     elif isinstance(message, ResultMessage):
                         cost = message.total_cost_usd
+                        cached_tokens_in = _extract_cached_input_tokens(
+                            getattr(message, "usage", None)
+                        )
                         logger.debug(
                             (
                                 "ResultMessage usage=%r input=%r output=%r "
@@ -383,11 +419,13 @@ class AnthropicProvider(LLMProvider):
                 final_cost = cost
                 final_tokens_in = tokens_in
                 final_tokens_out = tokens_out
+                final_cached_tokens_in = cached_tokens_in
                 yield StreamComplete(
                     full_text=full_text,
                     cost_usd=cost,
                     tokens_in=tokens_in,
                     tokens_out=tokens_out,
+                    cached_tokens_in=cached_tokens_in,
                 )
 
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
@@ -404,6 +442,7 @@ class AnthropicProvider(LLMProvider):
                         error=None,
                         tokens_in=tokens_in,
                         tokens_out=tokens_out,
+                        cached_tokens_in=cached_tokens_in,
                     )
                     metrics_collector.record(call)
                 return
@@ -442,6 +481,7 @@ class AnthropicProvider(LLMProvider):
                             error=error_msg,
                             tokens_in=tokens_in,
                             tokens_out=tokens_out,
+                            cached_tokens_in=cached_tokens_in,
                         )
                         metrics_collector.record(call)
                     raise
@@ -468,6 +508,7 @@ class AnthropicProvider(LLMProvider):
                     error=error_msg,
                     tokens_in=final_tokens_in,
                     tokens_out=final_tokens_out,
+                    cached_tokens_in=final_cached_tokens_in,
                 )
                 metrics_collector.record(call)
             raise last_error

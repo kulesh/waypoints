@@ -26,6 +26,23 @@ from typing import TYPE_CHECKING
 
 from waypoints.config.app_root import dangerous_app_root
 from waypoints.config.settings import settings
+from waypoints.fly.evidence import (
+    CRITERION_PATTERN,
+    VALIDATION_PATTERN,
+    FileOperation,
+)
+from waypoints.fly.evidence import (
+    detect_validation_category as _detect_validation_category,
+)
+from waypoints.fly.evidence import (
+    extract_file_operation as _extract_file_operation,
+)
+from waypoints.fly.evidence import (
+    normalize_command as _normalize_command,
+)
+from waypoints.fly.evidence import (
+    parse_tool_output as _parse_tool_output,
+)
 from waypoints.fly.execution_log import ExecutionLogWriter
 from waypoints.fly.intervention import (
     Intervention,
@@ -33,6 +50,11 @@ from waypoints.fly.intervention import (
     InterventionType,
 )
 from waypoints.fly.protocol import parse_stage_reports
+from waypoints.fly.provenance import (
+    WorkspaceSnapshot,
+    capture_workspace_snapshot,
+    summarize_workspace_diff,
+)
 from waypoints.fly.stack import ValidationCommand
 from waypoints.git.config import Checklist
 from waypoints.git.receipt import (
@@ -62,24 +84,6 @@ from waypoints.models.waypoint import Waypoint
 if TYPE_CHECKING:
     from waypoints.fly.receipt_finalizer import ReceiptFinalizer
     from waypoints.llm.metrics import MetricsCollector
-
-from waypoints.fly.evidence import (
-    CRITERION_PATTERN,
-    VALIDATION_PATTERN,
-    FileOperation,
-)
-from waypoints.fly.evidence import (
-    detect_validation_category as _detect_validation_category,
-)
-from waypoints.fly.evidence import (
-    extract_file_operation as _extract_file_operation,
-)
-from waypoints.fly.evidence import (
-    normalize_command as _normalize_command,
-)
-from waypoints.fly.evidence import (
-    parse_tool_output as _parse_tool_output,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +226,7 @@ class WaypointExecutor:
             "Starting execution of %s: %s", self.waypoint.id, self.waypoint.title
         )
         logger.info("Execution log: %s", self._log_writer.file_path)
+        workspace_before = self._capture_workspace_snapshot(project_path)
 
         iteration = 0
         full_output = ""
@@ -241,6 +246,12 @@ class WaypointExecutor:
             if self._cancelled:
                 logger.info("Execution cancelled")
                 self._log_writer.log_completion(ExecutionResult.CANCELLED.value)
+                self._log_workspace_provenance(
+                    project_path,
+                    workspace_before,
+                    iteration,
+                    ExecutionResult.CANCELLED.value,
+                )
                 return ExecutionResult.CANCELLED
 
             iteration += 1
@@ -461,6 +472,12 @@ class WaypointExecutor:
                             "Waypoint complete with valid receipt!",
                         )
                         self._log_writer.log_completion(ExecutionResult.SUCCESS.value)
+                        self._log_workspace_provenance(
+                            project_path,
+                            workspace_before,
+                            iteration,
+                            ExecutionResult.SUCCESS.value,
+                        )
                         return ExecutionResult.SUCCESS
 
                     logger.warning(
@@ -474,6 +491,12 @@ class WaypointExecutor:
                         "Complete (receipt missing/invalid)",
                     )
                     self._log_writer.log_completion(ExecutionResult.SUCCESS.value)
+                    self._log_workspace_provenance(
+                        project_path,
+                        workspace_before,
+                        iteration,
+                        ExecutionResult.SUCCESS.value,
+                    )
                     return ExecutionResult.SUCCESS
 
             except Exception as e:
@@ -583,6 +606,12 @@ class WaypointExecutor:
                 self._log_writer.log_intervention_needed(
                     iteration, intervention.type.value, error_summary
                 )
+                self._log_workspace_provenance(
+                    project_path,
+                    workspace_before,
+                    iteration,
+                    ExecutionResult.INTERVENTION_NEEDED.value,
+                )
                 raise InterventionNeededError(intervention) from e
 
             # Parse final criteria state and log iteration output
@@ -619,6 +648,12 @@ class WaypointExecutor:
                 self._log_writer.log_intervention_needed(
                     iteration, intervention.type.value, reason
                 )
+                self._log_workspace_provenance(
+                    project_path,
+                    workspace_before,
+                    iteration,
+                    ExecutionResult.INTERVENTION_NEEDED.value,
+                )
                 raise InterventionNeededError(intervention)
 
         # Max iterations reached
@@ -642,6 +677,12 @@ class WaypointExecutor:
         )
         self._log_writer.log_intervention_needed(
             iteration, intervention.type.value, error_msg
+        )
+        self._log_workspace_provenance(
+            project_path,
+            workspace_before,
+            iteration,
+            ExecutionResult.INTERVENTION_NEEDED.value,
         )
         raise InterventionNeededError(intervention)
 
@@ -741,6 +782,43 @@ When complete, output the completion marker specified in the instructions."""
             metrics_collector=self.metrics_collector,
             progress_callback=self._report_progress,
         )
+
+    def _capture_workspace_snapshot(
+        self, project_path: Path
+    ) -> WorkspaceSnapshot | None:
+        """Capture the workspace state before execution for provenance."""
+        try:
+            return capture_workspace_snapshot(project_path)
+        except Exception:
+            logger.exception(
+                "Failed to capture workspace snapshot before executing %s",
+                self.waypoint.id,
+            )
+            return None
+
+    def _log_workspace_provenance(
+        self,
+        project_path: Path,
+        before_snapshot: WorkspaceSnapshot | None,
+        iteration: int,
+        result: str,
+    ) -> None:
+        """Write a workspace diff summary into the execution log."""
+        if before_snapshot is None or self._log_writer is None:
+            return
+        try:
+            after_snapshot = capture_workspace_snapshot(project_path)
+            summary = summarize_workspace_diff(before_snapshot, after_snapshot)
+            self._log_writer.log_workspace_diff(
+                iteration=iteration,
+                result=result,
+                summary=summary.to_dict(),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to log workspace provenance for %s",
+                self.waypoint.id,
+            )
 
     def _validate_no_external_changes(self, project_path: Path) -> list[str]:
         """Check if any files were modified outside the project directory.

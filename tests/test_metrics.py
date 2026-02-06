@@ -78,6 +78,7 @@ class TestLLMCall:
             timestamp=timestamp,
             success=True,
             error=None,
+            cached_tokens_in=321,
         )
 
         data = call.to_dict()
@@ -91,6 +92,7 @@ class TestLLMCall:
         assert data["timestamp"] == timestamp.isoformat()
         assert data["success"] is True
         assert data["error"] is None
+        assert data["cached_tokens_in"] == 321
 
     def test_llmcall_from_dict(self) -> None:
         """Test deserializing LLMCall from dict."""
@@ -105,6 +107,7 @@ class TestLLMCall:
             "timestamp": timestamp.isoformat(),
             "success": True,
             "error": None,
+            "cached_tokens_in": 99,
         }
 
         call = LLMCall.from_dict(data)
@@ -115,6 +118,7 @@ class TestLLMCall:
         assert call.cost_usd == 0.25
         assert call.latency_ms == 3000
         assert call.timestamp.isoformat() == timestamp.isoformat()
+        assert call.cached_tokens_in == 99
 
 
 class TestMetricsCollector:
@@ -253,6 +257,7 @@ class TestMetricsCollector:
                 waypoint_id="WP-1",
                 success=False,
                 error="Test error",
+                cached_tokens_in=500,
             )
         )
         collector.record(
@@ -265,6 +270,9 @@ class TestMetricsCollector:
         assert summary["total_cost_usd"] == pytest.approx(0.35)
         assert summary["avg_latency_ms"] == pytest.approx(2500)
         assert summary["success_rate"] == pytest.approx(2 / 3)
+        assert summary["total_cached_tokens_in"] == 500
+        assert summary["cached_tokens_by_phase"]["fly"] == 500
+        assert summary["cached_tokens_by_waypoint"]["WP-1"] == 500
         assert "ideation-qa" in summary["cost_by_phase"]
         assert "WP-1" in summary["cost_by_waypoint"]
 
