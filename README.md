@@ -167,6 +167,7 @@ docs/
 - [docs/journey-state-machine.md](./docs/journey-state-machine.md) - Journey states and transitions
 - [docs/genspec-format.md](./docs/genspec-format.md) - Genspec format reference
 - [docs/testing-strategy.md](./docs/testing-strategy.md) - Testing approach
+- [docs/adr/README.md](./docs/adr/README.md) - Architecture decision records
 - [docs/architecture-roadmap.md](./docs/architecture-roadmap.md) - Architecture roadmap
 
 ## How It Works
