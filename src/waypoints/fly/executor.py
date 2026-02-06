@@ -57,6 +57,7 @@ from waypoints.models.project import Project
 from waypoints.models.waypoint import Waypoint
 
 if TYPE_CHECKING:
+    from waypoints.fly.receipt_finalizer import ReceiptFinalizer
     from waypoints.llm.metrics import MetricsCollector
 
 from waypoints.fly.evidence import (
@@ -699,7 +700,7 @@ When complete, output the completion marker specified in the instructions."""
         finalizer = self._make_finalizer()
         return finalizer.resolve_validation_commands(project_path, checklist, self.spec)
 
-    def _make_finalizer(self):  # noqa: ANN202
+    def _make_finalizer(self) -> "ReceiptFinalizer":
         """Create a ReceiptFinalizer for this executor."""
         from waypoints.fly.receipt_finalizer import ReceiptFinalizer
 

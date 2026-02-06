@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from waypoints.git.receipt import ChecklistReceipt
     from waypoints.tui.app import WaypointsApp
 
+from waypoints.fly.evidence import FileOperation
 from waypoints.fly.execution_log import (
     ExecutionLog as ExecLogType,
 )
@@ -32,7 +33,6 @@ from waypoints.fly.execution_log import (
 from waypoints.fly.executor import (
     ExecutionContext,
     ExecutionResult,
-    FileOperation,
     WaypointExecutor,
 )
 from waypoints.fly.intervention import (

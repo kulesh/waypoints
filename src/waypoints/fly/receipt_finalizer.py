@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import subprocess
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -53,7 +54,7 @@ class ReceiptFinalizer:
         waypoint: Waypoint,
         log_writer: "ExecutionLogWriter",
         metrics_collector: "MetricsCollector | None" = None,
-        progress_callback: "callable | None" = None,  # type: ignore[type-arg]
+        progress_callback: Callable[..., object] | None = None,
     ) -> None:
         self._project = project
         self._waypoint = waypoint
