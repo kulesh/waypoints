@@ -19,6 +19,14 @@ MAX_CONTEXT_RECORDS = 4
 
 
 @dataclass(slots=True, frozen=True)
+class WaypointMemoryContext:
+    """Selected waypoint memory payload for prompt injection."""
+
+    text: str
+    waypoint_ids: tuple[str, ...]
+
+
+@dataclass(slots=True, frozen=True)
 class WaypointMemoryRecord:
     """Durable summary from executing one waypoint."""
 
@@ -148,13 +156,29 @@ def build_waypoint_memory_context(
     max_records: int = MAX_CONTEXT_RECORDS,
 ) -> str:
     """Build token-bounded memory context for a new waypoint."""
+    return build_waypoint_memory_context_details(
+        project_root=project_root,
+        waypoint=waypoint,
+        max_chars=max_chars,
+        max_records=max_records,
+    ).text
+
+
+def build_waypoint_memory_context_details(
+    *,
+    project_root: Path,
+    waypoint: "Waypoint",
+    max_chars: int = DEFAULT_MEMORY_CONTEXT_CHARS,
+    max_records: int = MAX_CONTEXT_RECORDS,
+) -> WaypointMemoryContext:
+    """Build token-bounded memory context and return selected waypoint IDs."""
     records = _select_relevant_records(
         project_root=project_root,
         waypoint=waypoint,
         max_records=max_records,
     )
     if not records:
-        return ""
+        return WaypointMemoryContext(text="", waypoint_ids=())
 
     lines = [
         (
@@ -184,9 +208,12 @@ def build_waypoint_memory_context(
             lines.append(f"  caution: {record.error_summary}")
 
     content = "\n".join(lines)
-    if len(content) <= max_chars:
-        return content
-    return content[: max_chars - 3].rstrip() + "..."
+    if len(content) > max_chars:
+        content = content[: max_chars - 3].rstrip() + "..."
+    return WaypointMemoryContext(
+        text=content,
+        waypoint_ids=tuple(record.waypoint_id for record in records),
+    )
 
 
 def _select_relevant_records(

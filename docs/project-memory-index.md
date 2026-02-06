@@ -29,6 +29,9 @@ This memory is generated from filesystem and manifest signals, then reused by bo
   - one file per waypoint execution outcome
   - includes result, iterations used, key changed files, validation commands,
     protocol derailments, and verified criteria
+- `policy-overrides.v1.json`
+  - optional project-authored top-level policy adjustments
+  - keys: `block_dirs`, `unblock_dirs`, `ignore_dirs`, `unignore_dirs`, `focus_dirs`
 
 ## Generation and Refresh
 
@@ -41,6 +44,14 @@ When fly execution starts (and when tools need policy), Waypoints:
 
 This keeps policy adaptive as the project evolves.
 
+Manual refresh:
+
+```bash
+waypoints memory refresh <project-slug>
+waypoints memory refresh --all
+waypoints memory refresh <project-slug> --init-overrides
+```
+
 ## Safety Model
 
 There are immutable safety boundaries that are always blocked:
@@ -51,6 +62,7 @@ There are immutable safety boundaries that are always blocked:
 - `receipts`
 
 Stack/generation-specific directories are added dynamically based on detected signals and directory classification.
+Policy overrides cannot remove immutable safety boundaries.
 
 ## Prompt + Tool Alignment
 

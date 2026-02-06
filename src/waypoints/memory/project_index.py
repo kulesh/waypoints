@@ -13,6 +13,7 @@ MEMORY_SCHEMA_VERSION = "v1"
 STACK_PROFILE_FILENAME = "stack-profile.v1.json"
 DIRECTORY_MAP_FILENAME = "directory-map.v1.json"
 PROJECT_INDEX_FILENAME = "project-index.v1.json"
+POLICY_OVERRIDES_FILENAME = "policy-overrides.v1.json"
 
 DirectoryRole = Literal[
     "source",
@@ -171,6 +172,8 @@ class ProjectMemoryIndex:
     blocked_top_level_dirs: tuple[str, ...]
     ignored_top_level_dirs: tuple[str, ...]
     focus_top_level_dirs: tuple[str, ...]
+    source_branch: str | None = None
+    policy_overrides_digest: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize project index."""
@@ -182,6 +185,8 @@ class ProjectMemoryIndex:
             "blocked_top_level_dirs": list(self.blocked_top_level_dirs),
             "ignored_top_level_dirs": list(self.ignored_top_level_dirs),
             "focus_top_level_dirs": list(self.focus_top_level_dirs),
+            "source_branch": self.source_branch,
+            "policy_overrides_digest": self.policy_overrides_digest,
         }
 
     @classmethod
@@ -201,6 +206,16 @@ class ProjectMemoryIndex:
             focus_top_level_dirs=tuple(
                 str(item) for item in data.get("focus_top_level_dirs", [])
             ),
+            source_branch=(
+                str(data.get("source_branch"))
+                if data.get("source_branch") is not None
+                else None
+            ),
+            policy_overrides_digest=(
+                str(data.get("policy_overrides_digest"))
+                if data.get("policy_overrides_digest") is not None
+                else None
+            ),
         )
 
 
@@ -213,9 +228,36 @@ class ProjectMemory:
     directory_map: DirectoryMap
 
 
+@dataclass(slots=True, frozen=True)
+class PolicyOverrides:
+    """Project-authored top-level directory policy overrides."""
+
+    block_dirs: tuple[str, ...] = ()
+    unblock_dirs: tuple[str, ...] = ()
+    ignore_dirs: tuple[str, ...] = ()
+    unignore_dirs: tuple[str, ...] = ()
+    focus_dirs: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize overrides to JSON payload."""
+        return {
+            "schema_version": MEMORY_SCHEMA_VERSION,
+            "block_dirs": list(self.block_dirs),
+            "unblock_dirs": list(self.unblock_dirs),
+            "ignore_dirs": list(self.ignore_dirs),
+            "unignore_dirs": list(self.unignore_dirs),
+            "focus_dirs": list(self.focus_dirs),
+        }
+
+
 def memory_dir(project_root: Path) -> Path:
     """Return the memory root path for a project."""
     return project_root / ".waypoints" / "memory"
+
+
+def policy_overrides_path(project_root: Path) -> Path:
+    """Return path to project-authored policy override file."""
+    return memory_dir(project_root) / POLICY_OVERRIDES_FILENAME
 
 
 def load_or_build_project_memory(
@@ -223,14 +265,27 @@ def load_or_build_project_memory(
 ) -> ProjectMemory:
     """Load memory files or rebuild if missing/stale."""
     root = project_root.resolve()
+    current_branch = _detect_current_branch(root)
+    current_overrides = load_policy_overrides(root)
+    current_overrides_digest = _policy_overrides_digest(current_overrides)
+
     if not force_refresh:
         loaded = _try_load_memory(root)
         if loaded is not None:
             current_fingerprint = _compute_top_level_fingerprint(root)
-            if loaded.index.top_level_fingerprint == current_fingerprint:
+            if (
+                loaded.index.top_level_fingerprint == current_fingerprint
+                and loaded.index.source_branch == current_branch
+                and loaded.index.policy_overrides_digest == current_overrides_digest
+            ):
                 return loaded
 
-    built = _build_memory(root)
+    built = _build_memory(
+        root,
+        current_branch=current_branch,
+        overrides=current_overrides,
+        overrides_digest=current_overrides_digest,
+    )
     _persist_memory(root, built)
     return built
 
@@ -247,7 +302,13 @@ def format_directory_policy_for_prompt(index: ProjectMemoryIndex) -> str:
     )
 
 
-def _build_memory(project_root: Path) -> ProjectMemory:
+def _build_memory(
+    project_root: Path,
+    *,
+    current_branch: str | None,
+    overrides: PolicyOverrides,
+    overrides_digest: str,
+) -> ProjectMemory:
     """Build memory data from the current project filesystem."""
     now = datetime.now(UTC).isoformat()
     stack_profile = _build_stack_profile(project_root, now)
@@ -272,6 +333,13 @@ def _build_memory(project_root: Path) -> ProjectMemory:
         if record.kind == "dir" and not record.ignore_for_search:
             focus_roots.add(record.name)
 
+    _apply_policy_overrides(
+        overrides=overrides,
+        blocked_roots=blocked_roots,
+        ignored_roots=ignored_roots,
+        focus_roots=focus_roots,
+    )
+
     directory_map = DirectoryMap(
         schema_version=MEMORY_SCHEMA_VERSION,
         generated_at_utc=now,
@@ -285,6 +353,8 @@ def _build_memory(project_root: Path) -> ProjectMemory:
         blocked_top_level_dirs=tuple(sorted(blocked_roots)),
         ignored_top_level_dirs=tuple(sorted(ignored_roots)),
         focus_top_level_dirs=tuple(sorted(focus_roots)),
+        source_branch=current_branch,
+        policy_overrides_digest=overrides_digest,
     )
     return ProjectMemory(
         index=index,
@@ -358,6 +428,137 @@ def _scan_stack_at_directory(
         add_manifest("Cargo.toml")
 
     return discovered, manifests
+
+
+def load_policy_overrides(project_root: Path) -> PolicyOverrides:
+    """Load project-authored policy override file, if present."""
+    path = policy_overrides_path(project_root)
+    if not path.exists():
+        return PolicyOverrides()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return PolicyOverrides()
+    if not isinstance(data, dict):
+        return PolicyOverrides()
+    return PolicyOverrides(
+        block_dirs=_normalize_override_entries(data.get("block_dirs", [])),
+        unblock_dirs=_normalize_override_entries(data.get("unblock_dirs", [])),
+        ignore_dirs=_normalize_override_entries(data.get("ignore_dirs", [])),
+        unignore_dirs=_normalize_override_entries(data.get("unignore_dirs", [])),
+        focus_dirs=_normalize_override_entries(data.get("focus_dirs", [])),
+    )
+
+
+def write_default_policy_overrides(project_root: Path) -> Path:
+    """Write default policy override template if missing."""
+    path = policy_overrides_path(project_root)
+    if path.exists():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(PolicyOverrides().to_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _normalize_override_entries(value: Any) -> tuple[str, ...]:
+    """Normalize top-level override entries from dynamic JSON payloads."""
+    if not isinstance(value, list):
+        return ()
+    normalized: list[str] = []
+    for item in value:
+        item_text = str(item).strip()
+        if not item_text:
+            continue
+        candidate = Path(item_text)
+        if len(candidate.parts) != 1:
+            continue
+        normalized.append(candidate.parts[0])
+    return tuple(sorted(set(normalized)))
+
+
+def _apply_policy_overrides(
+    *,
+    overrides: PolicyOverrides,
+    blocked_roots: set[str],
+    ignored_roots: set[str],
+    focus_roots: set[str],
+) -> None:
+    """Apply project-authored policy overrides to computed sets."""
+    for name in overrides.block_dirs:
+        blocked_roots.add(name)
+        ignored_roots.add(name)
+        focus_roots.discard(name)
+
+    for name in overrides.ignore_dirs:
+        ignored_roots.add(name)
+        focus_roots.discard(name)
+
+    for name in overrides.unblock_dirs:
+        if name in IMMUTABLE_BLOCKED_TOP_LEVEL_DIRS:
+            continue
+        blocked_roots.discard(name)
+
+    for name in overrides.unignore_dirs:
+        ignored_roots.discard(name)
+
+    for name in overrides.focus_dirs:
+        if name in blocked_roots:
+            continue
+        focus_roots.add(name)
+
+    # Maintain invariant: blocked roots are always ignored and never focused.
+    for blocked in blocked_roots:
+        ignored_roots.add(blocked)
+        focus_roots.discard(blocked)
+
+
+def _policy_overrides_digest(overrides: PolicyOverrides) -> str:
+    """Hash override content for stale-memory detection."""
+    raw = json.dumps(overrides.to_dict(), sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def _detect_current_branch(project_root: Path) -> str | None:
+    """Detect current git branch without invoking subprocesses."""
+    git_dir = _resolve_git_dir(project_root)
+    if git_dir is None:
+        return None
+    head_path = git_dir / "HEAD"
+    try:
+        head = head_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if head.startswith("ref: "):
+        ref = head.removeprefix("ref: ").strip()
+        if ref.startswith("refs/heads/"):
+            return ref.removeprefix("refs/heads/")
+        return ref
+    if head:
+        return f"detached:{head[:12]}"
+    return None
+
+
+def _resolve_git_dir(project_root: Path) -> Path | None:
+    """Resolve .git directory for normal repos and worktrees."""
+    dot_git = project_root / ".git"
+    if dot_git.is_dir():
+        return dot_git
+    if not dot_git.exists() or not dot_git.is_file():
+        return None
+    try:
+        content = dot_git.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not content.startswith("gitdir:"):
+        return None
+    raw_path = content.split(":", 1)[1].strip()
+    candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        candidate = (project_root / candidate).resolve()
+    return candidate if candidate.exists() else None
 
 
 def _classify_top_level_entry(

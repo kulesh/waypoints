@@ -174,6 +174,8 @@ class ExecutionLogWriter:
         reason_code: str | None = None,
         reason_detail: str | None = None,
         resume_session_id: str | None = None,
+        memory_waypoint_ids: list[str] | None = None,
+        memory_context_chars: int | None = None,
     ) -> None:
         """Log the start of an iteration with the prompt and kickoff context."""
         entry: dict[str, Any] = {
@@ -188,6 +190,10 @@ class ExecutionLogWriter:
             entry["reason_detail"] = reason_detail
         if resume_session_id is not None:
             entry["resume_session_id"] = resume_session_id
+        if memory_waypoint_ids is not None:
+            entry["memory_waypoint_ids"] = memory_waypoint_ids
+        if memory_context_chars is not None:
+            entry["memory_context_chars"] = memory_context_chars
         self._append(entry)
 
     def log_output(

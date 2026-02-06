@@ -528,6 +528,7 @@ class TestWaypointExecutor:
 
         assert executor._waypoint_memory_context is not None
         assert "WP-000 (dependency" in executor._waypoint_memory_context
+        assert executor._waypoint_memory_ids == ("WP-000",)
 
     def test_detect_protocol_issues_claimed_complete_without_marker(
         self, mock_project: MagicMock, waypoint: Waypoint
@@ -764,7 +765,7 @@ async def test_finalize_runs_host_validation_commands(
             text='<receipt-verdict status="valid">looks good</receipt-verdict>'
         )
 
-    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr("waypoints.fly.receipt_finalizer.agent_query", fake_agent_query)
 
     project = SimpleNamespace(get_path=lambda: tmp_path)
     waypoint = Waypoint(
@@ -818,7 +819,7 @@ async def test_finalize_host_validation_records_soft_evidence(
             text='<receipt-verdict status="valid">looks good</receipt-verdict>'
         )
 
-    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr("waypoints.fly.receipt_finalizer.agent_query", fake_agent_query)
 
     project = SimpleNamespace(get_path=lambda: tmp_path)
     waypoint = Waypoint(
@@ -873,7 +874,7 @@ async def test_finalize_falls_back_to_model_commands(
             text='<receipt-verdict status="valid">looks good</receipt-verdict>'
         )
 
-    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr("waypoints.fly.receipt_finalizer.agent_query", fake_agent_query)
 
     project = SimpleNamespace(get_path=lambda: tmp_path)
     waypoint = Waypoint(
@@ -974,7 +975,7 @@ async def test_finalize_requires_soft_evidence(
             text='<receipt-verdict status="valid">looks good</receipt-verdict>'
         )
 
-    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr("waypoints.fly.receipt_finalizer.agent_query", fake_agent_query)
 
     project = SimpleNamespace(get_path=lambda: tmp_path)
     waypoint = Waypoint(

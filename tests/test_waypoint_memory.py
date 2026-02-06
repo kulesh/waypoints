@@ -5,6 +5,7 @@ from pathlib import Path
 from waypoints.memory.waypoint_memory import (
     WaypointMemoryRecord,
     build_waypoint_memory_context,
+    build_waypoint_memory_context_details,
     save_waypoint_memory,
 )
 from waypoints.models.waypoint import Waypoint
@@ -80,3 +81,38 @@ def test_memory_context_is_char_bounded(tmp_path: Path) -> None:
     )
 
     assert len(context) <= 120
+
+
+def test_memory_context_details_return_selected_ids(tmp_path: Path) -> None:
+    """Detailed context should expose selected waypoint IDs for observability."""
+    record = WaypointMemoryRecord(
+        schema_version="v1",
+        saved_at_utc="2026-02-07T01:00:00+00:00",
+        waypoint_id="WP-201",
+        title="Data model",
+        objective="Implement domain models",
+        dependencies=(),
+        result="success",
+        iterations_used=1,
+        max_iterations=10,
+        protocol_derailments=(),
+        error_summary=None,
+        changed_files=("src/models.py",),
+        approx_tokens_changed=80,
+        validation_commands=("pytest -v",),
+        useful_commands=("pytest -v",),
+        verified_criteria=(0,),
+    )
+    save_waypoint_memory(tmp_path, record)
+
+    details = build_waypoint_memory_context_details(
+        project_root=tmp_path,
+        waypoint=Waypoint(
+            id="WP-202",
+            title="Model tests",
+            objective="add tests for data model",
+        ),
+    )
+
+    assert details.waypoint_ids == ("WP-201",)
+    assert "WP-201" in details.text

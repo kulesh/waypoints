@@ -82,7 +82,7 @@ from waypoints.llm.providers.base import (
 from waypoints.memory import (
     ProjectMemoryIndex,
     WaypointMemoryRecord,
-    build_waypoint_memory_context,
+    build_waypoint_memory_context_details,
     format_directory_policy_for_prompt,
     load_or_build_project_memory,
     save_waypoint_memory,
@@ -176,6 +176,7 @@ class WaypointExecutor:
         self._project_memory_index: ProjectMemoryIndex | None = None
         self._directory_policy_context: str | None = None
         self._waypoint_memory_context: str | None = None
+        self._waypoint_memory_ids: tuple[str, ...] = ()
 
     def cancel(self) -> None:
         """Cancel the execution."""
@@ -321,6 +322,12 @@ class WaypointExecutor:
                 reason_code=reason_code,
                 reason_detail=reason_detail,
                 resume_session_id=resume_session_id,
+                memory_waypoint_ids=(
+                    list(self._waypoint_memory_ids) if iteration == 1 else None
+                ),
+                memory_context_chars=(
+                    len(self._waypoint_memory_context or "") if iteration == 1 else None
+                ),
             )
 
             # Run agent query with file and bash tools
@@ -1011,17 +1018,19 @@ When complete, output the completion marker specified in the instructions."""
             self._project_memory_index = None
             self._directory_policy_context = None
         try:
-            context = build_waypoint_memory_context(
+            memory_context = build_waypoint_memory_context_details(
                 project_root=project_path,
                 waypoint=self.waypoint,
             )
-            self._waypoint_memory_context = context or None
+            self._waypoint_memory_context = memory_context.text or None
+            self._waypoint_memory_ids = memory_context.waypoint_ids
         except Exception:
             logger.exception(
                 "Failed to build waypoint memory context for %s",
                 self.waypoint.id,
             )
             self._waypoint_memory_context = None
+            self._waypoint_memory_ids = ()
 
     def _report_progress(
         self,
