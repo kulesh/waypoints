@@ -7,12 +7,14 @@ completion, managing interventions, and committing to git.
 
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from waypoints.fly.executor import ExecutionContext, ExecutionResult, WaypointExecutor
 from waypoints.fly.intervention import Intervention, InterventionAction
 from waypoints.models import Waypoint, WaypointStatus
 from waypoints.orchestration.types import (
+    CommitResult,
     CompletionStatus,
     NextAction,
     ProgressCallback,
@@ -20,6 +22,7 @@ from waypoints.orchestration.types import (
 )
 
 if TYPE_CHECKING:
+    from waypoints.git.config import GitConfig
     from waypoints.orchestration.coordinator import JourneyCoordinator
 
 logger = logging.getLogger(__name__)
@@ -175,36 +178,47 @@ class FlyPhase:
         self,
         waypoint: Waypoint,
         result: ExecutionResult,
+        git_config: "GitConfig | None" = None,
     ) -> NextAction:
         """Handle the result of waypoint execution.
 
-        Updates waypoint status, checks parent completion,
-        and determines next action.
+        Updates waypoint status, checks parent completion, commits if
+        configured, and determines next action.
 
         Args:
             waypoint: The waypoint that was executed
             result: The execution result
+            git_config: Optional git config for commit behavior.
+                If None, commit uses the coordinator's git service with defaults.
 
         Returns:
             NextAction indicating what UI should do next
         """
         if result == ExecutionResult.SUCCESS:
             waypoint.status = WaypointStatus.COMPLETE
+            waypoint.completed_at = datetime.now(UTC)
             self._coord.save_flight_plan()
 
             # Check if parent epic should auto-complete
             self.check_parent_completion(waypoint)
 
-            # Commit if git is available
-            if self._coord.git:
-                self._commit_waypoint(waypoint)
+            # Commit waypoint changes
+            commit_result = self.commit_waypoint(waypoint, git_config)
 
             # Find next waypoint
             next_wp = self.select_next_waypoint()
             if next_wp:
-                return NextAction(action="continue", waypoint=next_wp)
+                return NextAction(
+                    action="continue",
+                    waypoint=next_wp,
+                    commit_result=commit_result,
+                )
             else:
-                return NextAction(action="complete", message="All waypoints complete!")
+                return NextAction(
+                    action="complete",
+                    message="All waypoints complete!",
+                    commit_result=commit_result,
+                )
 
         elif result == ExecutionResult.FAILED:
             waypoint.status = WaypointStatus.FAILED
@@ -365,48 +379,110 @@ class FlyPhase:
 
     # ─── Git Integration ──────────────────────────────────────────────
 
-    def _commit_waypoint(self, waypoint: Waypoint) -> bool:
+    def commit_waypoint(
+        self,
+        waypoint: Waypoint,
+        git_config: "GitConfig | None" = None,
+    ) -> CommitResult:
         """Commit waypoint changes to git.
 
-        Validates receipt exists before committing.
+        Uses GitConfig to determine auto-commit, auto-init, receipt
+        validation, staging method, and tag creation. This is the single
+        source of truth for waypoint commits — both TUI and headless
+        callers use this method.
+
+        Args:
+            waypoint: The completed waypoint to commit
+            git_config: Git configuration. If None, loads from project.
 
         Returns:
-            True if commit successful, False otherwise
+            CommitResult describing what happened
         """
-        if self._coord.git is None:
-            return False
+        from waypoints.git.config import GitConfig as GitConfigClass
+        from waypoints.git.service import GitService
 
-        from waypoints.git.receipt import ReceiptValidator
+        config = git_config or GitConfigClass.load(self._coord.project.slug)
+        project_path = self._coord.project.get_path()
 
-        validator = ReceiptValidator()
-        receipt_path = validator.find_latest_receipt(self._coord.project, waypoint.id)
+        if not config.auto_commit:
+            return CommitResult(committed=False, message="Auto-commit disabled")
 
-        if receipt_path is None:
-            logger.warning("No receipt found for %s, skipping commit", waypoint.id)
-            return False
+        # Get or create git service
+        git = self._coord.git or GitService(project_path)
 
-        result = validator.validate(receipt_path)
-        if not result.valid:
-            logger.warning("Receipt invalid for %s: %s", waypoint.id, result.message)
-            return False
-
-        # Create commit
-        try:
-            # Stage all changed files
-            self._coord.git.stage_files(".")
-            commit_result = self._coord.git.commit(
-                f"feat({waypoint.id}): {waypoint.title}"
-            )
-            if not commit_result.success:
-                logger.warning(
-                    "Commit failed for %s: %s",
-                    waypoint.id,
-                    commit_result.message,
+        # Auto-init if needed
+        initialized = False
+        if not git.is_git_repo():
+            if config.auto_init:
+                init_result = git.init_repo()
+                if not init_result.success:
+                    return CommitResult(
+                        committed=False,
+                        message=f"Failed to init git repo: {init_result.message}",
+                    )
+                initialized = True
+            else:
+                return CommitResult(
+                    committed=False,
+                    message="Not a git repo and auto-init disabled",
                 )
-                return False
-            self._coord.git.tag(f"waypoint/{waypoint.id}")
-            logger.info("Committed waypoint: %s", waypoint.id)
-            return True
-        except Exception as e:
-            logger.error("Failed to commit waypoint %s: %s", waypoint.id, e)
-            return False
+
+        # Validate receipt if configured
+        if config.run_checklist:
+            from waypoints.git.receipt import ReceiptValidator
+
+            validator = ReceiptValidator()
+            receipt_path = validator.find_latest_receipt(
+                self._coord.project, waypoint.id
+            )
+
+            if receipt_path is None:
+                return CommitResult(
+                    committed=False,
+                    message=f"No receipt found for {waypoint.id}",
+                )
+
+            validation = validator.validate(receipt_path)
+            if not validation.valid:
+                return CommitResult(
+                    committed=False,
+                    message=f"Receipt invalid: {validation.message}",
+                )
+
+        # Stage project files (config-aware staging)
+        slug = self._coord.project.slug
+        git.stage_project_files(slug)
+
+        # Commit
+        commit_msg = f"feat({slug}): Complete {waypoint.title}"
+        result = git.commit(commit_msg)
+
+        if not result.success:
+            if "Nothing to commit" in result.message:
+                return CommitResult(
+                    committed=False,
+                    message="Nothing to commit",
+                    initialized_repo=initialized,
+                )
+            return CommitResult(
+                committed=False,
+                message=f"Commit failed: {result.message}",
+                initialized_repo=initialized,
+            )
+
+        commit_hash = git.get_head_commit()
+
+        # Create tag if configured
+        tag_name = None
+        if config.create_waypoint_tags:
+            tag_name = f"{slug}/{waypoint.id}"
+            git.tag(tag_name, f"Completed waypoint: {waypoint.title}")
+
+        logger.info("Committed waypoint %s: %s", waypoint.id, commit_msg)
+        return CommitResult(
+            committed=True,
+            message=commit_msg,
+            commit_hash=commit_hash,
+            tag_name=tag_name,
+            initialized_repo=initialized,
+        )

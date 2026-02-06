@@ -38,9 +38,12 @@ from waypoints.orchestration.types import (
 )
 
 if TYPE_CHECKING:
+    from waypoints.git.config import GitConfig
     from waypoints.git.service import GitService
     from waypoints.llm.client import ChatClient
     from waypoints.llm.metrics import MetricsCollector
+
+    from .types import CommitResult
 
 logger = logging.getLogger(__name__)
 
@@ -154,9 +157,19 @@ class JourneyCoordinator:
         )
 
     def handle_execution_result(
-        self, waypoint: Waypoint, result: ExecutionResult
+        self,
+        waypoint: Waypoint,
+        result: ExecutionResult,
+        git_config: "GitConfig | None" = None,
     ) -> NextAction:
-        return self._fly.handle_execution_result(waypoint, result)
+        return self._fly.handle_execution_result(waypoint, result, git_config)
+
+    def commit_waypoint(
+        self,
+        waypoint: Waypoint,
+        git_config: "GitConfig | None" = None,
+    ) -> "CommitResult":
+        return self._fly.commit_waypoint(waypoint, git_config)
 
     def check_parent_completion(self, waypoint: Waypoint) -> None:
         self._fly.check_parent_completion(waypoint)

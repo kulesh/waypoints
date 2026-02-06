@@ -39,6 +39,17 @@ ChunkCallback = Callable[[str], None]
 
 
 @dataclass
+class CommitResult:
+    """Result of committing a waypoint to git."""
+
+    committed: bool
+    message: str
+    commit_hash: str | None = None
+    tag_name: str | None = None
+    initialized_repo: bool = False
+
+
+@dataclass
 class NextAction:
     """What should happen next after an operation.
 
@@ -55,6 +66,7 @@ class NextAction:
     waypoint: "Waypoint | None" = None
     intervention: "Intervention | None" = None
     message: str | None = None
+    commit_result: CommitResult | None = None
 
 
 @dataclass
