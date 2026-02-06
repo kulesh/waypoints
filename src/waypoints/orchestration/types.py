@@ -38,6 +38,26 @@ ChunkCallback = Callable[[str], None]
 # --- Result Types ---
 
 
+@dataclass(frozen=True, slots=True)
+class CommitNotice:
+    """User-facing notice from git commit handling."""
+
+    message: str
+    severity: Literal["info", "warning", "error"] = "info"
+
+
+@dataclass(frozen=True, slots=True)
+class CommitOutcome:
+    """Outcome of a git commit attempt for a waypoint."""
+
+    status: Literal["skipped", "success", "failure"]
+    commit_hash: str | None = None
+    commit_msg: str | None = None
+    message: str | None = None
+    reason: str | None = None
+    notices: tuple[CommitNotice, ...] = ()
+
+
 @dataclass
 class NextAction:
     """What should happen next after an operation.

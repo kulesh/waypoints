@@ -58,6 +58,8 @@ from waypoints.models import (
 )
 from waypoints.orchestration.types import (
     ChunkCallback,
+    CommitNotice,
+    CommitOutcome,
     CompletionStatus,
     NextAction,
     ProgressCallback,
@@ -360,7 +362,7 @@ class JourneyCoordinator:
 
             # Commit if git is available
             if self.git:
-                self._commit_waypoint(waypoint)
+                self.commit_waypoint(waypoint)
 
             # Find next waypoint
             next_wp = self.select_next_waypoint()
@@ -542,47 +544,116 @@ class JourneyCoordinator:
 
     # ─── FLY Phase: Git Integration ──────────────────────────────────────
 
-    def _commit_waypoint(self, waypoint: Waypoint) -> bool:
-        """Commit waypoint changes to git.
-
-        Validates receipt exists before committing.
+    def commit_waypoint(self, waypoint: Waypoint) -> CommitOutcome:
+        """Commit waypoint completion if receipt is valid.
 
         Returns:
-            True if commit successful, False otherwise
+            CommitOutcome describing the commit result.
         """
-        if self.git is None:
-            return False
+        from waypoints.git import GitConfig, GitService, ReceiptValidator
 
-        from waypoints.git.receipt import ReceiptValidator
+        config = GitConfig.load(self.project.slug)
+        if not config.auto_commit:
+            logger.debug("Auto-commit disabled, skipping")
+            return CommitOutcome(status="skipped", reason="auto_commit_disabled")
 
-        validator = ReceiptValidator()
-        receipt_path = validator.find_latest_receipt(self.project, waypoint.id)
+        git = self.git or GitService(self.project.get_path())
+        notices: list[CommitNotice] = []
 
-        if receipt_path is None:
-            logger.warning("No receipt found for %s, skipping commit", waypoint.id)
-            return False
+        if not git.is_git_repo():
+            if config.auto_init:
+                init_result = git.init_repo()
+                if init_result.success:
+                    notices.append(
+                        CommitNotice(
+                            message="Initialized git repository",
+                            severity="info",
+                        )
+                    )
+                else:
+                    logger.warning("Failed to init git repo: %s", init_result.message)
+                    return CommitOutcome(
+                        status="skipped",
+                        reason="auto_init_failed",
+                        notices=tuple(notices),
+                    )
+            else:
+                logger.debug("Not a git repo and auto-init disabled")
+                return CommitOutcome(status="skipped", reason="auto_init_disabled")
 
-        result = validator.validate(receipt_path)
-        if not result.valid:
-            logger.warning("Receipt invalid for %s: %s", waypoint.id, result.message)
-            return False
+        if config.run_checklist:
+            validator = ReceiptValidator()
+            receipt_path = validator.find_latest_receipt(self.project, waypoint.id)
 
-        # Create commit
-        try:
-            # Stage all changed files
-            self.git.stage_files(".")
-            commit_result = self.git.commit(f"feat({waypoint.id}): {waypoint.title}")
-            if not commit_result.success:
-                logger.warning(
-                    "Commit failed for %s: %s", waypoint.id, commit_result.message
+            if receipt_path:
+                validation_result = validator.validate(receipt_path)
+                if not validation_result.valid:
+                    logger.warning(
+                        "Skipping commit - receipt invalid: %s",
+                        validation_result.message,
+                    )
+                    notices.append(
+                        CommitNotice(
+                            message=f"Skipping commit: {validation_result.message}",
+                            severity="warning",
+                        )
+                    )
+                    return CommitOutcome(
+                        status="skipped",
+                        reason="receipt_invalid",
+                        notices=tuple(notices),
+                    )
+                logger.info("Receipt validated: %s", receipt_path)
+            else:
+                logger.warning("Skipping commit - no receipt found for %s", waypoint.id)
+                notices.append(
+                    CommitNotice(
+                        message=f"Skipping commit: no receipt for {waypoint.id}",
+                        severity="warning",
+                    )
                 )
-                return False
-            self.git.tag(f"waypoint/{waypoint.id}")
-            logger.info("Committed waypoint: %s", waypoint.id)
-            return True
-        except Exception as e:
-            logger.error("Failed to commit waypoint %s: %s", waypoint.id, e)
-            return False
+                return CommitOutcome(
+                    status="skipped",
+                    reason="receipt_missing",
+                    notices=tuple(notices),
+                )
+
+        git.stage_project_files(self.project.slug)
+
+        commit_msg = f"feat({self.project.slug}): Complete {waypoint.title}"
+        result = git.commit(commit_msg)
+
+        if result.success:
+            if "Nothing to commit" in result.message:
+                logger.info("Nothing to commit for %s", waypoint.id)
+                return CommitOutcome(status="skipped", reason="nothing_to_commit")
+
+            notices.append(
+                CommitNotice(message=f"Committed: {waypoint.id}", severity="info")
+            )
+            commit_hash = git.get_head_commit() or ""
+
+            if config.create_waypoint_tags:
+                tag_name = f"{self.project.slug}/{waypoint.id}"
+                git.tag(tag_name, f"Completed waypoint: {waypoint.title}")
+
+            return CommitOutcome(
+                status="success",
+                commit_hash=commit_hash,
+                commit_msg=commit_msg,
+                notices=tuple(notices),
+            )
+
+        logger.error("Commit failed: %s", result.message)
+        notices.append(
+            CommitNotice(message=f"Commit failed: {result.message}", severity="error")
+        )
+        return CommitOutcome(
+            status="failure",
+            commit_msg=commit_msg,
+            message=result.message,
+            notices=tuple(notices),
+        )
 
     # ─── CHART Phase: Flight Plan Generation ─────────────────────────────
 

@@ -19,6 +19,8 @@ from waypoints.orchestration.execution_controller import (
 )
 from waypoints.orchestration.types import (
     ChunkCallback,
+    CommitNotice,
+    CommitOutcome,
     CompletionStatus,
     NextAction,
     ProgressCallback,
@@ -28,6 +30,8 @@ from waypoints.orchestration.types import (
 
 __all__ = [
     "JourneyCoordinator",
+    "CommitNotice",
+    "CommitOutcome",
     "ExecutionController",
     "ExecutionDirective",
     "NextAction",

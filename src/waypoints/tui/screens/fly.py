@@ -39,7 +39,7 @@ from waypoints.fly.intervention import (
     InterventionResult,
 )
 from waypoints.fly.state import ExecutionState
-from waypoints.git import GitConfig, GitService, ReceiptValidator
+from waypoints.git import GitService, ReceiptValidator
 from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
@@ -1910,7 +1910,25 @@ class FlyScreen(Screen[None]):
             self._log_verification_summary(directive.completed, log)
 
             # Commit waypoint completion (validates receipt first)
-            self._commit_waypoint(directive.completed)
+            commit_outcome = self.coordinator.commit_waypoint(directive.completed)
+            for notice in commit_outcome.notices:
+                if notice.severity == "info":
+                    self.notify(notice.message)
+                else:
+                    self.notify(notice.message, severity=notice.severity)
+            if self._executor and self._executor._log_writer:
+                if commit_outcome.status == "success":
+                    self._executor._log_writer.log_git_commit(
+                        True,
+                        commit_outcome.commit_hash or "",
+                        commit_outcome.commit_msg or "",
+                    )
+                elif commit_outcome.status == "failure":
+                    self._executor._log_writer.log_git_commit(
+                        False,
+                        "",
+                        commit_outcome.message or "Commit failed",
+                    )
 
             # Reset live criteria tracking for next waypoint
             self._live_criteria_completed = set()
@@ -2118,91 +2136,6 @@ class FlyScreen(Screen[None]):
                 )
         else:
             log.write_log("[yellow]⚠ No receipt found[/]")
-
-    def _commit_waypoint(self, waypoint: Waypoint) -> None:
-        """Commit waypoint completion if receipt is valid.
-
-        Implements the "trust but verify" pattern:
-        - Model already produced receipt during execution
-        - We validate receipt exists and is well-formed
-        - If valid, commit the changes
-        - If invalid, skip commit but don't block
-        """
-        project_path = self.project.get_path()
-        config = GitConfig.load(self.project.slug)
-
-        if not config.auto_commit:
-            logger.debug("Auto-commit disabled, skipping")
-            return
-
-        git = GitService(project_path)
-
-        # Auto-init if needed
-        if not git.is_git_repo():
-            if config.auto_init:
-                init_result = git.init_repo()
-                if init_result.success:
-                    self.notify("Initialized git repository")
-                else:
-                    logger.warning("Failed to init git repo: %s", init_result.message)
-                    return
-            else:
-                logger.debug("Not a git repo and auto-init disabled")
-                return
-
-        # Validate receipt (the "dog" checking the "pilot's" work)
-        if config.run_checklist:
-            validator = ReceiptValidator()
-            receipt_path = validator.find_latest_receipt(self.project, waypoint.id)
-
-            if receipt_path:
-                validation_result = validator.validate(receipt_path)
-                if not validation_result.valid:
-                    logger.warning(
-                        "Skipping commit - receipt invalid: %s",
-                        validation_result.message,
-                    )
-                    self.notify(
-                        f"Skipping commit: {validation_result.message}",
-                        severity="warning",
-                    )
-                    return
-                logger.info("Receipt validated: %s", receipt_path)
-            else:
-                logger.warning("Skipping commit - no receipt found for %s", waypoint.id)
-                self.notify(
-                    f"Skipping commit: no receipt for {waypoint.id}", severity="warning"
-                )
-                return
-
-        # Stage project files and commit
-        git.stage_project_files(self.project.slug)
-
-        # Build commit message
-        commit_msg = f"feat({self.project.slug}): Complete {waypoint.title}"
-        result = git.commit(commit_msg)
-
-        if result.success:
-            if "Nothing to commit" not in result.message:
-                logger.info("Committed: %s", commit_msg)
-                self.notify(f"Committed: {waypoint.id}")
-                # Log successful git commit
-                if self._executor and self._executor._log_writer:
-                    commit_hash = git.get_head_commit() or ""
-                    self._executor._log_writer.log_git_commit(
-                        True, commit_hash, commit_msg
-                    )
-
-                # Create tag for waypoint if configured
-                if config.create_waypoint_tags:
-                    tag_name = f"{self.project.slug}/{waypoint.id}"
-                    git.tag(tag_name, f"Completed waypoint: {waypoint.title}")
-        else:
-            logger.error("Commit failed: %s", result.message)
-            self.notify(f"Commit failed: {result.message}", severity="error")
-            # Log failed git commit
-            if self._executor and self._executor._log_writer:
-                self._executor._log_writer.log_git_commit(False, "", result.message)
 
     def _check_parent_completion(self, completed_waypoint: Waypoint) -> None:
         """Check if parent epic is ready for execution.
