@@ -11,11 +11,14 @@ import logging
 from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
 
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import Key
+from textual.message import Message
 from textual.screen import Screen
-from textual.widgets import Footer, Markdown, OptionList, Static
+from textual.widgets import Footer, Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
 if TYPE_CHECKING:
@@ -23,8 +26,14 @@ if TYPE_CHECKING:
 
 from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan, FlightPlanReader
-from waypoints.models.waypoint import WaypointStatus
+from waypoints.models.iteration_request import IterationRequestWriter
+from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
+from waypoints.orchestration.iteration_service import (
+    IterationAttachment,
+    IterationRequestService,
+)
+from waypoints.tui.widgets.flight_plan import AddWaypointPreviewModal
 from waypoints.tui.widgets.genspec_browser import GenSpecBrowser
 from waypoints.tui.widgets.header import StatusHeader
 
@@ -38,6 +47,35 @@ class LandActivity(Enum):
     SHIP = "ship"
     ITERATE = "iterate"
     GENSPEC = "genspec"
+
+
+class IterationSubmitRequested(Message):
+    """Request to submit an iteration prompt."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        super().__init__()
+
+
+class IterationComposerInput(TextArea):
+    """Multiline composer with Enter-submit and Shift+Enter newline."""
+
+    async def _on_key(self, event: Key) -> None:
+        """Handle submit/newline behavior before TextArea processing."""
+        if event.key == "enter":
+            event.prevent_default()
+            event.stop()
+            if text := self.text.strip():
+                self.post_message(IterationSubmitRequested(text))
+            return
+
+        if event.key == "shift+enter":
+            event.prevent_default()
+            event.stop()
+            self.insert("\n")
+            return
+
+        await super()._on_key(event)
 
 
 class ActivityListPanel(Vertical):
@@ -253,7 +291,7 @@ class ShipPanel(VerticalScroll):
 
 
 class IteratePanel(VerticalScroll):
-    """Iterate content panel - next steps and project closure."""
+    """Codex-style composer for bug reports, feature requests, and refinements."""
 
     DEFAULT_CSS = """
     IteratePanel {
@@ -274,10 +312,33 @@ class IteratePanel(VerticalScroll):
         padding-left: 2;
     }
 
+    IteratePanel IterationComposerInput {
+        width: 100%;
+        height: 12;
+        border: none;
+        background: transparent;
+        padding: 0;
+        margin-top: 1;
+    }
+
+    IteratePanel IterationComposerInput:focus {
+        border: none;
+    }
+
+    IteratePanel .attachments {
+        margin-top: 1;
+        color: $text-muted;
+    }
+
+    IteratePanel .status {
+        margin-top: 1;
+        color: $text;
+    }
+
     IteratePanel .hint {
         color: $text-disabled;
         text-style: italic;
-        margin-top: 2;
+        margin-top: 1;
     }
     """
 
@@ -287,18 +348,50 @@ class IteratePanel(VerticalScroll):
 
     def compose(self) -> ComposeResult:
         yield Static("ITERATE", classes="section-title")
-        yield Static("", id="iterate-content", classes="content")
+        yield IterationComposerInput(id="iterate-input")
+        yield Static(
+            "Attachments: none",
+            id="iterate-attachments",
+            classes="attachments",
+        )
+        yield Static("", id="iterate-status", classes="status")
         yield Static("", classes="hint", id="iterate-hint")
 
     def on_mount(self) -> None:
-        """Show iteration options."""
-        content = self.query_one("#iterate-content", Static)
-        content.update(
-            "What's next?\n\n"
-            "├─ Start V2 iteration (new features)\n"
-            "├─ Mark project as closed\n"
-            "└─ Return to project list"
+        """Initialize composer copy."""
+        hint = self.query_one("#iterate-hint", Static)
+        hint.update(
+            "Describe what is broken or what to improve. Drop/paste file paths in the "
+            "composer. Enter submits; Shift+Enter inserts newline."
         )
+
+    def request_text(self) -> str:
+        """Return current composer text."""
+        return self.query_one("#iterate-input", IterationComposerInput).text.strip()
+
+    def clear_request(self) -> None:
+        """Clear composer text."""
+        self.query_one("#iterate-input", IterationComposerInput).clear()
+
+    def focus_input(self) -> None:
+        """Focus the composer input."""
+        self.query_one("#iterate-input", IterationComposerInput).focus()
+
+    def set_status(self, message: str) -> None:
+        """Update the status line."""
+        self.query_one("#iterate-status", Static).update(message)
+
+    def set_attachments(self, attachments: list[IterationAttachment]) -> None:
+        """Render detected/ingested attachments."""
+        label = self.query_one("#iterate-attachments", Static)
+        if not attachments:
+            label.update("Attachments: none")
+            return
+
+        lines = ["Attachments:"]
+        for item in attachments:
+            lines.append(f"- {item.relative_path} ({item.size_bytes} bytes)")
+        label.update("\n".join(lines))
 
 
 class GenSpecPanel(Vertical):
@@ -370,6 +463,7 @@ class LandScreen(Screen[None]):
 
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", show=True),
+        Binding("ctrl+enter", "submit_iteration", "Submit", show=True),
         Binding("escape", "back", "Back", show=True),
         Binding("d", "show_debrief", "Debrief", show=True),
         Binding("s", "show_ship", "Ship", show=True),
@@ -415,6 +509,7 @@ class LandScreen(Screen[None]):
         self.spec = spec
         self._coordinator: JourneyCoordinator | None = None
         self.current_activity: LandActivity = LandActivity.DEBRIEF
+        self._iteration_submit_in_progress = False
 
     @property
     def coordinator(self) -> JourneyCoordinator:
@@ -502,6 +597,190 @@ class LandScreen(Screen[None]):
         """Show the Iterate panel."""
         self._show_activity(LandActivity.ITERATE)
         self._select_activity_option("iterate")
+        self.query_one("#iterate-panel", IteratePanel).focus_input()
+
+    def _set_thinking(self, thinking: bool) -> None:
+        """Set header thinking indicator."""
+        if thinking:
+            self.query_one(StatusHeader).set_thinking(True)
+        else:
+            self.query_one(StatusHeader).set_normal()
+
+    def _set_iteration_busy(self, busy: bool) -> None:
+        """Update local in-flight submission state."""
+        self._iteration_submit_in_progress = busy
+
+    def _set_iterate_status(self, message: str) -> None:
+        """Update iterate panel status text."""
+        self.query_one("#iterate-panel", IteratePanel).set_status(message)
+
+    def _set_iterate_attachments(self, attachments: list[IterationAttachment]) -> None:
+        """Update iterate panel attachments section."""
+        self.query_one("#iterate-panel", IteratePanel).set_attachments(attachments)
+
+    def _switch_to_fly_ready(self) -> None:
+        """Transition back to FLY with updated plan."""
+        self.coordinator.transition(
+            JourneyState.FLY_READY,
+            reason="land.iteration_submit",
+        )
+        self.flight_plan = self.coordinator.flight_plan
+        self.waypoints_app.switch_phase(
+            "fly",
+            {
+                "project": self.project,
+                "flight_plan": self.flight_plan,
+                "spec": self.spec,
+            },
+        )
+
+    def action_submit_iteration(self) -> None:
+        """Submit current iterate composer request."""
+        if self.current_activity != LandActivity.ITERATE:
+            return
+        if self._iteration_submit_in_progress:
+            self.notify("Iteration request already in progress", severity="warning")
+            return
+
+        panel = self.query_one("#iterate-panel", IteratePanel)
+        request_text = panel.request_text()
+        if not request_text:
+            self.notify("Enter a request before submitting", severity="warning")
+            panel.focus_input()
+            return
+
+        panel.set_status("Analyzing request and preparing waypoint...")
+        self._set_iteration_busy(True)
+        self._generate_iteration_waypoint(request_text)
+
+    def on_iteration_submit_requested(self, event: IterationSubmitRequested) -> None:
+        """Handle Enter submit from iterate composer input."""
+        if self.current_activity != LandActivity.ITERATE:
+            return
+        if not event.text.strip():
+            return
+        self.action_submit_iteration()
+
+    @work(thread=True)
+    def _generate_iteration_waypoint(self, request_text: str) -> None:
+        """Generate a patch waypoint from iterate composer input."""
+        self.app.call_from_thread(self._set_thinking, True)
+        service = IterationRequestService(self.project.get_path())
+        request_writer = IterationRequestWriter(self.project)
+        request_id: str | None = None
+
+        try:
+            attachments = service.ingest_attachments(request_text)
+            triage = service.classify_request(request_text, attachments)
+            request_record = request_writer.log_submitted(
+                prompt=request_text.strip(),
+                triage=triage,
+                attachments=[item.to_record() for item in attachments],
+            )
+            request_id = request_record.request_id
+            description = service.build_waypoint_description(
+                request_text,
+                attachments,
+                triage=triage,
+            )
+            spec_summary = self.spec or None
+            waypoint, insert_after = self.coordinator.generate_waypoint(
+                description=description,
+                spec_summary=spec_summary,
+            )
+            request_writer.log_waypoint_drafted(
+                request_id=request_id,
+                draft_waypoint_id=waypoint.id,
+                insert_after=insert_after,
+            )
+
+            self.app.call_from_thread(self._set_iterate_attachments, attachments)
+            triage_intent = triage.intent.value.replace("_", " ")
+            self.app.call_from_thread(
+                self._set_iterate_status,
+                "Triage: "
+                f"{triage_intent} ({triage.confidence:.2f}) · "
+                "Waypoint draft generated. Review and confirm.",
+            )
+            self.app.call_from_thread(self.waypoints_app.update_header_cost)
+            self.app.call_from_thread(
+                self._show_iteration_preview,
+                waypoint,
+                insert_after,
+                request_id,
+            )
+        except Exception as e:
+            logger.exception("Failed to submit iteration request: %s", e)
+            if request_id is not None:
+                try:
+                    request_writer.log_generation_failed(request_id, str(e))
+                except Exception:
+                    logger.exception(
+                        "Failed to persist iteration generation failure for %s",
+                        request_id,
+                    )
+            self.app.call_from_thread(
+                self._set_iterate_status,
+                f"Failed: {e}",
+            )
+            self.app.call_from_thread(
+                self.notify, f"Could not generate waypoint: {e}", severity="error"
+            )
+            self.app.call_from_thread(self._set_iteration_busy, False)
+            self.app.call_from_thread(self._set_thinking, False)
+
+    def _show_iteration_preview(
+        self,
+        waypoint: Waypoint,
+        insert_after: str | None,
+        request_id: str | None,
+    ) -> None:
+        """Show review modal for generated iteration waypoint."""
+        request_writer = IterationRequestWriter(self.project)
+
+        def handle_confirm(confirmed: bool | None) -> None:
+            self._set_iteration_busy(False)
+            self._set_thinking(False)
+            if not confirmed:
+                if request_id is not None:
+                    try:
+                        request_writer.log_cancelled(request_id)
+                    except Exception:
+                        logger.exception(
+                            "Failed to persist cancellation for iteration request %s",
+                            request_id,
+                        )
+                self.query_one("#iterate-panel", IteratePanel).set_status(
+                    "Cancelled. Update prompt and submit again."
+                )
+                return
+
+            self.coordinator.add_waypoint(waypoint, insert_after)
+            if request_id is not None:
+                try:
+                    request_writer.log_waypoint_added(
+                        request_id=request_id,
+                        waypoint_id=waypoint.id,
+                        insert_after=insert_after,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to persist waypoint linkage for iteration request %s",
+                        request_id,
+                    )
+            self.flight_plan = self.coordinator.flight_plan
+            panel = self.query_one("#iterate-panel", IteratePanel)
+            panel.set_status(
+                f"Added {waypoint.id}. Returning to Fly to run this iteration."
+            )
+            panel.clear_request()
+            self.notify(f"Added iteration waypoint: {waypoint.id}")
+            self._switch_to_fly_ready()
+
+        self.app.push_screen(
+            AddWaypointPreviewModal(waypoint, insert_after),
+            handle_confirm,
+        )
 
     def action_show_genspec(self) -> None:
         """Show the Gen Spec panel."""

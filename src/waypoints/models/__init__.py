@@ -2,6 +2,15 @@
 
 from .dialogue import DialogueHistory, Message, MessageRole
 from .flight_plan import FlightPlan, FlightPlanReader, FlightPlanWriter
+from .iteration_request import (
+    IterationAttachmentRecord,
+    IterationIntent,
+    IterationRequestReader,
+    IterationRequestRecord,
+    IterationRequestStatus,
+    IterationRequestWriter,
+    IterationTriage,
+)
 from .journey import (
     PHASE_TO_STATE,
     RECOVERABLE_STATES,
@@ -23,6 +32,13 @@ __all__ = [
     "FlightPlanReader",
     "FlightPlanWriter",
     "InvalidTransitionError",
+    "IterationAttachmentRecord",
+    "IterationIntent",
+    "IterationRequestReader",
+    "IterationRequestRecord",
+    "IterationRequestStatus",
+    "IterationRequestWriter",
+    "IterationTriage",
     "Journey",
     "JourneyState",
     "Message",

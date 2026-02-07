@@ -531,6 +531,32 @@ def _restore_artifacts(project: Project, spec: GenerativeSpec) -> None:
             logger.error("Failed to restore flight plan: %s", e)
             raise ValueError(f"Invalid flight plan format: {e}") from e
 
+    iteration_requests = spec.get_artifact(ArtifactType.ITERATION_REQUESTS)
+    if iteration_requests:
+        try:
+            records = json.loads(iteration_requests.content)
+        except json.JSONDecodeError as e:
+            logger.error("Failed to restore iteration requests: %s", e)
+            raise ValueError(f"Invalid iteration request artifact: {e}") from e
+
+        if not isinstance(records, list):
+            raise ValueError("Invalid iteration request artifact: expected JSON array")
+
+        request_log_path = (
+            project.get_sessions_path() / "chart" / "iteration_requests.jsonl"
+        )
+        request_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(request_log_path, "w", encoding="utf-8") as handle:
+            for item in records:
+                if not isinstance(item, dict):
+                    raise ValueError(
+                        "Invalid iteration request artifact: entries must be objects"
+                    )
+                handle.write(json.dumps(item) + "\n")
+
+        logger.info("Restored %d iteration request records", len(records))
+
 
 def _slugify(name: str) -> str:
     """Convert a name to a URL-safe slug."""

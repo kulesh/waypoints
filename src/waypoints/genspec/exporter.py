@@ -30,6 +30,7 @@ from waypoints.genspec.spec import (
 )
 from waypoints.models.dialogue import DialogueHistory, MessageRole
 from waypoints.models.flight_plan import FlightPlanReader
+from waypoints.models.iteration_request import IterationRequestReader
 from waypoints.models.session import SessionReader
 
 if TYPE_CHECKING:
@@ -44,6 +45,7 @@ BUNDLE_ARTIFACT_PATHS = {
     ArtifactType.IDEA_BRIEF: "artifacts/idea-brief.md",
     ArtifactType.PRODUCT_SPEC: "artifacts/product-spec.md",
     ArtifactType.FLIGHT_PLAN: "artifacts/flight-plan.json",
+    ArtifactType.ITERATION_REQUESTS: "artifacts/iteration-requests.json",
 }
 _ZIP_EPOCH = (2020, 1, 1, 0, 0, 0)
 
@@ -600,7 +602,7 @@ def _infer_phase_from_filename(filename: str) -> str:
 
 
 def _collect_artifacts(project: "Project", spec: GenerativeSpec) -> None:
-    """Collect generated artifacts (brief, spec, flight plan)."""
+    """Collect generated artifacts (brief, spec, plan, iteration requests)."""
     docs_path = project.get_docs_path()
 
     # Collect idea brief
@@ -656,6 +658,20 @@ def _collect_artifacts(project: "Project", spec: GenerativeSpec) -> None:
                 artifact_type=ArtifactType.FLIGHT_PLAN,
                 content=waypoints_json,
                 file_path="flight-plan.jsonl",
+            )
+        )
+
+    iteration_requests = IterationRequestReader.load(project)
+    if iteration_requests:
+        requests_json = json.dumps(
+            [record.to_dict() for record in iteration_requests],
+            indent=2,
+        )
+        spec.artifacts.append(
+            Artifact(
+                artifact_type=ArtifactType.ITERATION_REQUESTS,
+                content=requests_json,
+                file_path="sessions/chart/iteration_requests.jsonl",
             )
         )
 
