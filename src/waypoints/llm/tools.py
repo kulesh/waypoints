@@ -91,8 +91,17 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
     Returns:
         Result string to send back to the model and/or log.
     """
+    import os
     import re
+    import signal
     import subprocess
+
+    def _decode_stream(data: str | bytes | None) -> str:
+        if data is None:
+            return ""
+        if isinstance(data, bytes):
+            return data.decode(errors="replace")
+        return data
 
     try:
         blocked_dirs = _resolve_blocked_top_level_dirs(cwd)
@@ -133,19 +142,52 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
             timeout: float = 120.0
             if isinstance(raw_timeout, (int, float)):
                 timeout = raw_timeout / 1000 if raw_timeout > 1000 else raw_timeout
-            result = subprocess.run(
+
+            process = subprocess.Popen(
                 command,
                 shell=True,
-                capture_output=True,
-                text=True,
                 cwd=cwd,
-                timeout=timeout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
             )
-            output = result.stdout
-            if result.stderr:
-                output += f"\nSTDERR:\n{result.stderr}"
-            if result.returncode != 0:
-                output += f"\nExit code: {result.returncode}"
+
+            timed_out = False
+            stdout = ""
+            stderr = ""
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
+                timed_out = True
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                except Exception:
+                    process.terminate()
+
+                try:
+                    extra_stdout, extra_stderr = process.communicate(timeout=2)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    except Exception:
+                        process.kill()
+                    extra_stdout, extra_stderr = process.communicate()
+
+                stdout = _decode_stream(exc.stdout) + _decode_stream(extra_stdout)
+                stderr = _decode_stream(exc.stderr) + _decode_stream(extra_stderr)
+
+            output = stdout
+            if stderr:
+                output += f"\nSTDERR:\n{stderr}"
+            if timed_out:
+                output += f"\nError: Command timed out after {timeout:g}s"
+            if process.returncode != 0:
+                output += f"\nExit code: {process.returncode}"
             return output or "(no output)"
 
         if name == "glob":
