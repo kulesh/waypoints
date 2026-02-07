@@ -1,6 +1,7 @@
 """Tests for shared LLM tool execution helpers."""
 
 from pathlib import Path
+from sys import executable
 
 from waypoints.llm.tools import execute_tool
 
@@ -9,6 +10,14 @@ def test_execute_tool_bash_echo() -> None:
     """Bash tool execution returns command output."""
     result = execute_tool("bash", {"command": "echo hello"}, cwd=None)
     assert "hello" in result
+
+
+def test_execute_tool_bash_timeout_reports_timeout_and_exit_code() -> None:
+    """Timed-out bash command should report timeout and exit code."""
+    command = f'"{executable}" -c "import time; time.sleep(2)"'
+    result = execute_tool("bash", {"command": command, "timeout": 0.1}, cwd=None)
+    assert "Command timed out after" in result
+    assert "Exit code:" in result
 
 
 def test_read_file_denies_sessions_path(tmp_path: Path) -> None:
