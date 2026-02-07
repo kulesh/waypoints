@@ -498,6 +498,16 @@ class WaypointExecutor:
                         f"{file_op.tool_name}: {file_op.file_path}",
                         file_operations=iteration_file_ops,
                     )
+                else:
+                    summary = f"{chunk.tool_name}: {chunk.tool_input}"
+                    if len(summary) > 300:
+                        summary = summary[:300] + "..."
+                    self._report_progress(
+                        s.iteration,
+                        self.max_iterations,
+                        "tool_use",
+                        summary,
+                    )
 
             elif isinstance(chunk, StreamComplete):
                 iteration_cost = chunk.cost_usd

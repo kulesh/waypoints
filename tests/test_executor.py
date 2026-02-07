@@ -22,7 +22,7 @@ from waypoints.fly.stack import ValidationCommand
 from waypoints.git.config import Checklist
 from waypoints.git.receipt import CapturedEvidence, ChecklistReceipt
 from waypoints.llm.prompts import build_execution_prompt
-from waypoints.llm.providers.base import StreamChunk, StreamComplete
+from waypoints.llm.providers.base import StreamChunk, StreamComplete, StreamToolUse
 from waypoints.memory import WaypointMemoryRecord, save_waypoint_memory
 from waypoints.models.waypoint import Waypoint
 from waypoints.spec import compute_spec_hash
@@ -696,6 +696,61 @@ async def test_execute_resumes_session_and_uses_protocol_nudge(
     assert isinstance(calls[1]["prompt"], str)
     assert "Reason: protocol_violation" in calls[1]["prompt"]
     assert "<waypoint-complete>WP-1</waypoint-complete>" in calls[1]["prompt"]
+
+
+@pytest.mark.anyio
+async def test_execute_reports_non_file_tool_use_progress(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Unknown tool-use events should still surface in progress updates."""
+    progress_updates: list[ExecutionContext] = []
+
+    async def fake_agent_query(**kwargs: object):
+        del kwargs
+        yield StreamToolUse(
+            tool_name="TodoWrite",
+            tool_input={"todos": [{"content": "Check logs", "status": "in_progress"}]},
+        )
+        yield StreamChunk(text="<waypoint-complete>WP-1</waypoint-complete>")
+        yield StreamComplete(
+            full_text="<waypoint-complete>WP-1</waypoint-complete>",
+            session_id="session-1",
+        )
+
+    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_make_finalizer",
+        lambda self: _StubFinalizer(),
+    )
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_resolve_validation_commands",
+        lambda self, project_path, checklist: [],
+    )
+
+    project = _TestProject(tmp_path)
+    waypoint = Waypoint(
+        id="WP-1",
+        title="Progress visibility",
+        objective="Surface non-file tool use in live logs",
+        acceptance_criteria=["Criterion 1"],
+    )
+    executor = WaypointExecutor(
+        project=project,
+        waypoint=waypoint,
+        spec="spec",
+        on_progress=progress_updates.append,
+    )
+
+    result = await executor.execute()
+
+    assert result == ExecutionResult.SUCCESS
+    tool_updates = [ctx for ctx in progress_updates if ctx.step == "tool_use"]
+    assert len(tool_updates) == 1
+    assert "TodoWrite" in tool_updates[0].output
+    assert "todos" in tool_updates[0].output
+    assert tool_updates[0].file_operations == []
 
 
 @pytest.mark.anyio

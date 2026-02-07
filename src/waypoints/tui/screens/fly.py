@@ -1,5 +1,6 @@
 """FLY screen for waypoint implementation."""
 
+import json
 import logging
 import re
 import subprocess
@@ -111,6 +112,13 @@ class ExecutionState(Enum):
     PAUSED = "paused"
     DONE = "done"
     INTERVENTION = "intervention"
+
+
+class ExecutionLogViewMode(Enum):
+    """Rendering mode for execution history."""
+
+    RAW = "raw"
+    SUMMARY = "summary"
 
 
 # Regex patterns for markdown
@@ -416,6 +424,10 @@ class WaypointDetailPanel(Vertical):
         color: $text-muted;
     }
 
+    WaypointDetailPanel .wp-log-view {
+        color: $text-muted;
+    }
+
     WaypointDetailPanel .criteria-section {
         padding: 1 1 1 0;
         border-bottom: none;
@@ -446,6 +458,7 @@ class WaypointDetailPanel(Vertical):
         self._waypoint_cached_tokens_in: int | None = None
         self._showing_output_for: str | None = None  # Track which waypoint's output
         self._is_live_output: bool = False  # True if showing live streaming output
+        self._log_view_mode: ExecutionLogViewMode = ExecutionLogViewMode.RAW
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="panel-header"):
@@ -454,6 +467,7 @@ class WaypointDetailPanel(Vertical):
             yield Static("", classes="wp-notes", id="wp-notes")
             yield Static("Status: Pending", classes="wp-status", id="wp-status")
             yield Static("", classes="wp-metrics", id="wp-metrics")
+            yield Static("", classes="wp-log-view", id="wp-log-view")
             yield Static("", classes="wp-status", id="iteration-label")
             yield ResizableSplitVertical(
                 top=Vertical(
@@ -479,6 +493,7 @@ class WaypointDetailPanel(Vertical):
         cost: float | None = None,
         tokens: tuple[int, int] | None = None,
         cached_tokens_in: int | None = None,
+        force_reload: bool = False,
     ) -> None:
         """Display waypoint details.
 
@@ -504,6 +519,8 @@ class WaypointDetailPanel(Vertical):
             criteria_list = self.query_one("#criteria-list", AcceptanceCriteriaList)
         except Exception:
             criteria_list = None
+
+        self._update_log_view_label()
 
         if waypoint:
             title.update(f"{waypoint.id}: {waypoint.title}")
@@ -539,7 +556,11 @@ class WaypointDetailPanel(Vertical):
                 criteria_list.set_criteria(waypoint.acceptance_criteria, completed)
 
             # Update output based on whether this is the active waypoint
-            self._update_output_for_waypoint(waypoint, active_waypoint_id)
+            self._update_output_for_waypoint(
+                waypoint,
+                active_waypoint_id,
+                force_reload=force_reload,
+            )
         else:
             title.update("Select a waypoint")
             objective.update("")
@@ -552,6 +573,39 @@ class WaypointDetailPanel(Vertical):
             self.execution_log.clear_log()
             self._showing_output_for = None
             self._is_live_output = False
+
+    def _update_log_view_label(self) -> None:
+        """Render the current execution log view mode."""
+        label = self.query_one("#wp-log-view", Static)
+        mode = "Raw" if self._log_view_mode == ExecutionLogViewMode.RAW else "Summary"
+        label.update(f"Log View: {mode} (x to toggle)")
+
+    @property
+    def log_view_mode(self) -> ExecutionLogViewMode:
+        """Current log rendering mode."""
+        return self._log_view_mode
+
+    def toggle_log_view_mode(self) -> ExecutionLogViewMode:
+        """Toggle between raw and summary log rendering modes."""
+        self._log_view_mode = (
+            ExecutionLogViewMode.SUMMARY
+            if self._log_view_mode == ExecutionLogViewMode.RAW
+            else ExecutionLogViewMode.RAW
+        )
+        self._update_log_view_label()
+        return self._log_view_mode
+
+    def refresh_current_waypoint(self, active_waypoint_id: str | None = None) -> None:
+        """Force-refresh currently displayed waypoint details."""
+        self.show_waypoint(
+            self._waypoint,
+            project=self._project,
+            active_waypoint_id=active_waypoint_id,
+            cost=self._waypoint_cost,
+            tokens=self._waypoint_tokens,
+            cached_tokens_in=self._waypoint_cached_tokens_in,
+            force_reload=True,
+        )
 
     def update_metrics(
         self,
@@ -588,7 +642,11 @@ class WaypointDetailPanel(Vertical):
         return " · ".join(metrics_parts)
 
     def _update_output_for_waypoint(
-        self, waypoint: Waypoint, active_waypoint_id: str | None
+        self,
+        waypoint: Waypoint,
+        active_waypoint_id: str | None,
+        *,
+        force_reload: bool = False,
     ) -> None:
         """Update the output panel based on waypoint status."""
         log = self.execution_log
@@ -611,7 +669,11 @@ class WaypointDetailPanel(Vertical):
             pass  # Fall through to show the selected waypoint
 
         # If we're already showing historical output for this waypoint, don't reload
-        if self._showing_output_for == waypoint.id and not self._is_live_output:
+        if (
+            not force_reload
+            and self._showing_output_for == waypoint.id
+            and not self._is_live_output
+        ):
             return
 
         # Clear and show appropriate content based on status
@@ -710,7 +772,15 @@ class WaypointDetailPanel(Vertical):
     def _log_execution_entries(
         self, log: "ExecutionLog", exec_log: "ExecLogType"
     ) -> int:
-        """Log all execution entries and return max iteration count."""
+        """Log execution entries and return max iteration count."""
+        if self._log_view_mode == ExecutionLogViewMode.RAW:
+            return self._log_execution_entries_raw(log, exec_log)
+        return self._log_execution_entries_summary(log, exec_log)
+
+    def _log_execution_entries_summary(
+        self, log: "ExecutionLog", exec_log: "ExecLogType"
+    ) -> int:
+        """Log summarized execution entries and return max iteration count."""
         max_iteration = 0
 
         for entry in exec_log.entries:
@@ -781,6 +851,60 @@ class WaypointDetailPanel(Vertical):
 
         return max_iteration
 
+    def _log_execution_entries_raw(
+        self, log: "ExecutionLog", exec_log: "ExecLogType"
+    ) -> int:
+        """Log raw JSON payloads for every execution entry."""
+        max_iteration = 0
+
+        for entry in exec_log.entries:
+            max_iteration = max(max_iteration, entry.iteration)
+            timestamp = entry.timestamp.strftime("%H:%M:%S")
+            iteration = f"iter {entry.iteration}" if entry.iteration > 0 else "iter -"
+            log.write_log(
+                f"[cyan]{timestamp}[/] [dim]{iteration}[/] [bold]{entry.entry_type}[/]"
+            )
+            payload = self._build_raw_entry_payload(entry)
+            rendered = json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False)
+            log.write(
+                Syntax(
+                    rendered,
+                    "json",
+                    theme="monokai",
+                    line_numbers=False,
+                    word_wrap=True,
+                )
+            )
+            log.write_log("")
+
+        return max_iteration
+
+    def _build_raw_entry_payload(self, entry: Any) -> dict[str, Any]:
+        """Build stable JSON payload for raw log rendering."""
+        payload: dict[str, Any] = {}
+        metadata = entry.metadata if isinstance(entry.metadata, dict) else {}
+        payload.update(metadata)
+
+        payload.setdefault("type", entry.entry_type)
+        payload.setdefault("timestamp", entry.timestamp.isoformat())
+        if entry.iteration > 0:
+            payload.setdefault("iteration", entry.iteration)
+
+        if entry.entry_type == "error":
+            if entry.content and "error" not in payload:
+                payload["error"] = entry.content
+            return payload
+
+        if (
+            entry.content
+            and "content" not in payload
+            and "prompt" not in payload
+            and "reason" not in payload
+        ):
+            payload["content"] = entry.content
+
+        return payload
+
     def _log_tool_call_entry(self, log: "ExecutionLog", entry: Any) -> None:
         """Log a tool call entry with clickable file paths for file operations."""
         tool_name = entry.metadata.get("tool_name", "unknown")
@@ -814,6 +938,16 @@ class WaypointDetailPanel(Vertical):
 
         # Fallback for other tools
         log.write_log(f"[dim]→ {tool_name}[/]")
+        if tool_input:
+            tool_input_text = json.dumps(tool_input, ensure_ascii=False, sort_keys=True)
+            if len(tool_input_text) > 400:
+                tool_input_text = tool_input_text[:400] + "..."
+            log.write_log(f"[dim]  input: {tool_input_text}[/]")
+        if isinstance(tool_output, str) and tool_output.strip():
+            output = tool_output.strip()
+            if len(output) > 400:
+                output = output[:400] + "..."
+            log.write_log(f"[dim]  output: {output}[/]")
 
     def _log_workspace_diff_entry(self, log: "ExecutionLog", entry: Any) -> None:
         """Log workspace provenance summary from before/after snapshots."""
@@ -1286,6 +1420,7 @@ class FlyScreen(Screen[None]):
         Binding("p", "pause", "Pause", show=True),
         Binding("s", "skip", "Skip", show=True),
         Binding("d", "debug_waypoint", "Debug", show=True),
+        Binding("x", "toggle_log_view", "Raw/Sum", show=True),
         Binding("h", "toggle_host_validations", "HostVal", show=True),
         Binding("escape", "back", "Back", show=True),
         Binding("ctrl+f", "forward", "Forward", show=False),
@@ -1991,6 +2126,19 @@ class FlyScreen(Screen[None]):
 
         self.app.push_screen(DebugWaypointModal(), handle_result)
 
+    def action_toggle_log_view(self) -> None:
+        """Toggle waypoint history log between raw and summary views."""
+        detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
+        mode = detail_panel.toggle_log_view_mode()
+        active_waypoint_id = (
+            self.current_waypoint.id
+            if self.current_waypoint and self.execution_state == ExecutionState.RUNNING
+            else None
+        )
+        detail_panel.refresh_current_waypoint(active_waypoint_id=active_waypoint_id)
+        mode_label = "Raw" if mode == ExecutionLogViewMode.RAW else "Summary"
+        self.notify(f"Log view: {mode_label}")
+
     def action_preview_file(self, path: str) -> None:
         """Show file preview modal for a file path.
 
@@ -2162,6 +2310,8 @@ class FlyScreen(Screen[None]):
                         # Bash/Glob/Grep just show the command/pattern
                         text = f"  [{style}]{icon}[/] {op.file_path}"
                         log.write(Text.from_markup(text))
+            elif ctx.output.strip():
+                log.write_log(f"[dim]→ {ctx.output.strip()}[/]")
         elif ctx.step == "streaming":
             # Show streaming output (code blocks will be syntax-highlighted)
             output = ctx.output.strip()

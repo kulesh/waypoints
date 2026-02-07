@@ -1,6 +1,8 @@
 """Tests for FlyScreen status bar behavior."""
 
 import asyncio
+from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,7 +15,12 @@ from waypoints.fly.intervention import (
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
-from waypoints.tui.screens.fly import ExecutionState, FlyScreen
+from waypoints.tui.screens.fly import (
+    ExecutionLogViewMode,
+    ExecutionState,
+    FlyScreen,
+    WaypointDetailPanel,
+)
 
 
 def make_test_screen(flight_plan: FlightPlan) -> FlyScreen:
@@ -37,6 +44,41 @@ def make_test_screen(flight_plan: FlightPlan) -> FlyScreen:
         flight_plan=flight_plan,
     )
     return screen
+
+
+class TestExecutionLogViewMode:
+    """Tests for WaypointDetailPanel execution log mode behavior."""
+
+    def test_default_log_view_mode_is_raw(self) -> None:
+        panel = WaypointDetailPanel(project=SimpleNamespace(), flight_plan=FlightPlan())
+        assert panel.log_view_mode == ExecutionLogViewMode.RAW
+
+    def test_toggle_log_view_mode_switches_between_raw_and_summary(self) -> None:
+        panel = WaypointDetailPanel(project=SimpleNamespace(), flight_plan=FlightPlan())
+        panel._update_log_view_label = lambda: None  # type: ignore[method-assign]
+
+        assert panel.toggle_log_view_mode() == ExecutionLogViewMode.SUMMARY
+        assert panel.log_view_mode == ExecutionLogViewMode.SUMMARY
+
+        assert panel.toggle_log_view_mode() == ExecutionLogViewMode.RAW
+        assert panel.log_view_mode == ExecutionLogViewMode.RAW
+
+    def test_build_raw_entry_payload_preserves_metadata_and_defaults(self) -> None:
+        panel = WaypointDetailPanel(project=SimpleNamespace(), flight_plan=FlightPlan())
+        entry = SimpleNamespace(
+            entry_type="error",
+            content="boom",
+            iteration=3,
+            timestamp=datetime(2026, 2, 7, 1, 2, 3, tzinfo=UTC),
+            metadata={"foo": "bar"},
+        )
+
+        payload = panel._build_raw_entry_payload(entry)
+
+        assert payload["type"] == "error"
+        assert payload["iteration"] == 3
+        assert payload["error"] == "boom"
+        assert payload["foo"] == "bar"
 
 
 class TestStatusBarMessage:
