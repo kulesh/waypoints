@@ -378,29 +378,46 @@ class ChartScreen(Screen[None]):
                 self.notify("Empty file, no changes applied", severity="warning")
                 return
 
-            # Update waypoint fields (but not id)
-            waypoint.title = data.get("title", waypoint.title)
-            waypoint.objective = data.get("objective", waypoint.objective)
-            waypoint.acceptance_criteria = data.get("acceptance_criteria", [])
+            # Build an updated waypoint instance instead of mutating the in-memory
+            # flight-plan object. This preserves a clean before/after diff for
+            # orchestration rules (e.g., resetting COMPLETE->PENDING on AC changes).
+            updated_waypoint = Waypoint(
+                id=waypoint.id,
+                title=data.get("title", waypoint.title),
+                objective=data.get("objective", waypoint.objective),
+                acceptance_criteria=data.get("acceptance_criteria", []),
+                parent_id=waypoint.parent_id,
+                debug_of=waypoint.debug_of,
+                resolution_notes=list(waypoint.resolution_notes),
+                dependencies=list(waypoint.dependencies),
+                spec_context_summary=waypoint.spec_context_summary,
+                spec_section_refs=list(waypoint.spec_section_refs),
+                spec_context_hash=waypoint.spec_context_hash,
+                status=waypoint.status,
+                created_at=waypoint.created_at,
+                completed_at=waypoint.completed_at,
+            )
 
             # Save via coordinator
-            self.coordinator.update_waypoint(waypoint)
+            self.coordinator.update_waypoint(updated_waypoint)
 
             # Refresh display
             self._update_panels()
 
             # Also refresh the preview panel with updated waypoint
             is_epic = (
-                self.flight_plan.is_epic(waypoint.id) if self.flight_plan else False
+                self.flight_plan.is_epic(updated_waypoint.id)
+                if self.flight_plan
+                else False
             )
             preview_panel = self.query_one("#preview-panel", WaypointPreviewPanel)
-            preview_panel.show_waypoint(waypoint, is_epic)
+            preview_panel.show_waypoint(updated_waypoint, is_epic)
 
-            self.notify(f"Updated {waypoint.id}")
+            self.notify(f"Updated {updated_waypoint.id}")
 
             # Reopen modal if requested (when editing from modal)
             if reopen_modal:
-                self._reopen_waypoint_modal(waypoint)
+                self._reopen_waypoint_modal(updated_waypoint)
         except yaml.YAMLError as e:
             self.notify(f"Invalid YAML: {e}", severity="error")
         except Exception as e:

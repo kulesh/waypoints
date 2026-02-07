@@ -466,6 +466,15 @@ class ChartPhase:
 
     # ─── Waypoint CRUD ────────────────────────────────────────────────
 
+    @staticmethod
+    def _execution_definition_changed(before: Waypoint, after: Waypoint) -> bool:
+        """Return True when edits should trigger re-execution."""
+        return (
+            before.objective != after.objective
+            or before.acceptance_criteria != after.acceptance_criteria
+            or before.dependencies != after.dependencies
+        )
+
     def update_waypoint(self, waypoint: Waypoint) -> None:
         """Update a waypoint and persist changes."""
         if self._coord.flight_plan is None:
@@ -474,6 +483,17 @@ class ChartPhase:
         # Capture before state for audit log
         existing = self._coord.flight_plan.get_waypoint(waypoint.id)
         before_data = existing.to_dict() if existing else {}
+
+        # If execution-defining fields changed, force waypoint back to pending so
+        # it can be rerun in FLY.
+        if existing and self._execution_definition_changed(existing, waypoint):
+            if waypoint.status != WaypointStatus.PENDING:
+                waypoint.status = WaypointStatus.PENDING
+                waypoint.completed_at = None
+                logger.info(
+                    "Reset waypoint %s to PENDING after execution-definition edit",
+                    waypoint.id,
+                )
 
         self._coord.flight_plan.update_waypoint(waypoint)
         self._coord.save_flight_plan()

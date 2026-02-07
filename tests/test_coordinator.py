@@ -1,5 +1,6 @@
 """Tests for JourneyCoordinator business logic."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -391,6 +392,92 @@ class TestWaypointCRUD:
         updated = fp.get_waypoint("WP-001")
         assert updated is not None
         assert updated.title == "Updated"
+
+    def test_update_completed_waypoint_with_new_objective_resets_to_pending(
+        self,
+    ) -> None:
+        """Execution-definition edits should make a completed waypoint rerunnable."""
+        fp = FlightPlan()
+        completed_at = datetime.now(UTC)
+        wp = Waypoint(
+            id="WP-001",
+            title="Original",
+            objective="Original objective",
+            acceptance_criteria=["Criterion A"],
+            status=WaypointStatus.COMPLETE,
+            completed_at=completed_at,
+        )
+        fp.add_waypoint(wp)
+        coordinator = JourneyCoordinator(
+            project=MockProject(),  # type: ignore
+            flight_plan=fp,
+        )
+
+        updated_wp = Waypoint(
+            id=wp.id,
+            title=wp.title,
+            objective="Updated objective",
+            acceptance_criteria=list(wp.acceptance_criteria),
+            parent_id=wp.parent_id,
+            debug_of=wp.debug_of,
+            resolution_notes=list(wp.resolution_notes),
+            dependencies=list(wp.dependencies),
+            spec_context_summary=wp.spec_context_summary,
+            spec_section_refs=list(wp.spec_section_refs),
+            spec_context_hash=wp.spec_context_hash,
+            status=wp.status,
+            created_at=wp.created_at,
+            completed_at=wp.completed_at,
+        )
+
+        coordinator.update_waypoint(updated_wp)
+
+        saved = fp.get_waypoint("WP-001")
+        assert saved is not None
+        assert saved.status == WaypointStatus.PENDING
+        assert saved.completed_at is None
+
+    def test_update_completed_waypoint_title_only_keeps_complete_status(self) -> None:
+        """Pure metadata edits should not force rerun."""
+        fp = FlightPlan()
+        completed_at = datetime.now(UTC)
+        wp = Waypoint(
+            id="WP-001",
+            title="Original",
+            objective="Original objective",
+            acceptance_criteria=["Criterion A"],
+            status=WaypointStatus.COMPLETE,
+            completed_at=completed_at,
+        )
+        fp.add_waypoint(wp)
+        coordinator = JourneyCoordinator(
+            project=MockProject(),  # type: ignore
+            flight_plan=fp,
+        )
+
+        updated_wp = Waypoint(
+            id=wp.id,
+            title="Renamed only",
+            objective=wp.objective,
+            acceptance_criteria=list(wp.acceptance_criteria),
+            parent_id=wp.parent_id,
+            debug_of=wp.debug_of,
+            resolution_notes=list(wp.resolution_notes),
+            dependencies=list(wp.dependencies),
+            spec_context_summary=wp.spec_context_summary,
+            spec_section_refs=list(wp.spec_section_refs),
+            spec_context_hash=wp.spec_context_hash,
+            status=wp.status,
+            created_at=wp.created_at,
+            completed_at=wp.completed_at,
+        )
+
+        coordinator.update_waypoint(updated_wp)
+
+        saved = fp.get_waypoint("WP-001")
+        assert saved is not None
+        assert saved.status == WaypointStatus.COMPLETE
+        assert saved.completed_at == completed_at
 
     def test_delete_waypoint(self) -> None:
         """Test deleting a waypoint."""
