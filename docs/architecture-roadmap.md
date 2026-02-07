@@ -55,7 +55,7 @@ class JourneyState(Enum):
     FLY_INTERVENTION = "fly:intervention"
 
     # LAND
-    LANDED = "landed"
+    LAND_REVIEW = "land:review"
 
 VALID_TRANSITIONS: dict[JourneyState, set[JourneyState]] = {
     JourneyState.SPARK_IDLE: {JourneyState.SPARK_ENTERING},
@@ -80,7 +80,7 @@ VALID_TRANSITIONS: dict[JourneyState, set[JourneyState]] = {
     JourneyState.FLY_EXECUTING: {
         JourneyState.FLY_PAUSED,
         JourneyState.FLY_INTERVENTION,
-        JourneyState.LANDED,
+        JourneyState.LAND_REVIEW,
     },
     JourneyState.FLY_PAUSED: {JourneyState.FLY_EXECUTING, JourneyState.FLY_READY},
     JourneyState.FLY_INTERVENTION: {
@@ -88,7 +88,7 @@ VALID_TRANSITIONS: dict[JourneyState, set[JourneyState]] = {
         JourneyState.FLY_PAUSED,     # Skip waypoint
         JourneyState.CHART_REVIEW,   # Edit plan
     },
-    JourneyState.LANDED: set(),  # Terminal state
+    JourneyState.LAND_REVIEW: set(),  # Terminal state
 }
 
 @dataclass

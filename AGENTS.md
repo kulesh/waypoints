@@ -119,7 +119,7 @@ uv run pytest
 uv run pytest tests/test_waypoints.py
 
 # Run a specific test
-uv run pytest tests/test_waypoints.py::test_hello_default
+uv run pytest tests/test_waypoints.py::TestDialogueHistory::test_to_api_format
 
 # Linting and formatting
 uv run ruff check .          # Lint

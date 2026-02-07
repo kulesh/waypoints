@@ -39,12 +39,15 @@ from waypoints.fly.intervention import (
     InterventionAction,
     InterventionNeededError,
     InterventionResult,
+    InterventionType,
 )
 from waypoints.git import GitConfig, ReceiptValidator
 from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
+from waypoints.orchestration.fly_presenter import build_state_message, build_status_line
+from waypoints.orchestration.fly_service import FlyService
 from waypoints.orchestration.types import NextAction
 from waypoints.tui.screens.intervention import InterventionModal
 from waypoints.tui.utils import (
@@ -1330,6 +1333,7 @@ class FlyScreen(Screen[None]):
             project=project,
             flight_plan=flight_plan,
         )
+        self._fly_service = FlyService(self.coordinator)
 
         self._additional_iterations: int = 0
 
@@ -1548,7 +1552,7 @@ class FlyScreen(Screen[None]):
     def _select_next_waypoint(self, include_in_progress: bool = False) -> None:
         """Find and select the next waypoint to execute.
 
-        Delegates selection logic to the coordinator, then updates UI.
+        Delegates selection/completion classification to FlyService, then updates UI.
 
         Args:
             include_in_progress: If True, also consider IN_PROGRESS and FAILED
@@ -1558,8 +1562,10 @@ class FlyScreen(Screen[None]):
             "=== Selection round (include_in_progress=%s) ===", include_in_progress
         )
 
-        # Delegate selection to coordinator
-        wp = self.coordinator.select_next_waypoint(include_failed=include_in_progress)
+        next_action = self._fly_service.select_next_waypoint_action(
+            include_failed=include_in_progress
+        )
+        wp = next_action.waypoint
 
         if wp:
             # Waypoint selected - update UI
@@ -1578,37 +1584,17 @@ class FlyScreen(Screen[None]):
             )
             return
 
-        # No eligible waypoints found - check why
-        all_complete, pending, failed, blocked = self._get_completion_status()
-
-        if all_complete:
+        # No eligible waypoint selected; follow service action.
+        if next_action.action == "complete":
             logger.info("All waypoints complete - DONE")
             self.execution_state = ExecutionState.DONE
-        elif blocked > 0:
-            logger.info("Waypoints blocked by %d failed waypoint(s)", failed)
-            self.execution_state = ExecutionState.PAUSED
-        elif pending > 0:
-            logger.info("%d waypoints pending with unmet dependencies", pending)
-            self.execution_state = ExecutionState.PAUSED
         else:
-            # Only failed waypoints remain
-            logger.info("Only failed waypoints remain (%d)", failed)
+            logger.info(next_action.message or "No executable waypoint available")
             self.execution_state = ExecutionState.PAUSED
 
     def _get_state_message(self, state: ExecutionState) -> str:
         """Get the status bar message for a given execution state."""
-        if state == ExecutionState.IDLE:
-            if self.current_waypoint:
-                wp = self.current_waypoint
-                # Truncate title if too long
-                title = wp.title[:40] + "..." if len(wp.title) > 40 else wp.title
-                return f"Press 'r' to run {wp.id}: {title}"
-            return "No waypoints ready to run"
-        elif state == ExecutionState.RUNNING:
-            return "Executing waypoint..."
-        elif state == ExecutionState.PAUSE_PENDING:
-            return "Pausing after current waypoint..."
-        elif state == ExecutionState.PAUSED:
+        if state == ExecutionState.PAUSED:
             budget_resume_waypoint_id = getattr(
                 self, "_budget_resume_waypoint_id", None
             )
@@ -1627,33 +1613,12 @@ class FlyScreen(Screen[None]):
                     f"Budget pause on {budget_resume_waypoint_id}. "
                     "Press 'r' after budget resets."
                 )
-            if self.current_waypoint:
-                # If current waypoint failed, 'r' will skip to next
-                if self.current_waypoint.status == WaypointStatus.FAILED:
-                    return f"{self.current_waypoint.id} failed. Press 'r' to continue"
-                return f"Paused. Press 'r' to run {self.current_waypoint.id}"
-            # No current waypoint - show why we're paused
-            all_complete, pending, failed, blocked = self._get_completion_status()
-            if blocked > 0:
-                return f"Blocked · {blocked} waypoint(s) need failed deps fixed"
-            elif pending > 0:
-                return f"Paused · {pending} waypoint(s) waiting"
-            return "Paused. Press 'r' to continue"
-        elif state == ExecutionState.DONE:
-            # Verify all waypoints are truly complete
-            all_complete, pending, failed, blocked = self._get_completion_status()
-            if all_complete:
-                return "All waypoints complete!"
-            elif blocked > 0:
-                return f"{blocked} waypoint(s) blocked by failures"
-            elif failed > 0:
-                return f"{failed} waypoint(s) failed"
-            return f"{pending} waypoint(s) waiting"
-        elif state == ExecutionState.INTERVENTION:
-            if self.current_waypoint:
-                return f"Intervention needed for {self.current_waypoint.id}"
-            return "Intervention needed"
-        return ""
+
+        return build_state_message(
+            state=state.value,
+            current_waypoint=self.current_waypoint,
+            get_completion_status=self._get_completion_status,
+        )
 
     def _format_countdown(self, total_seconds: int) -> str:
         """Format a countdown for status-bar display."""
@@ -1800,7 +1765,12 @@ class FlyScreen(Screen[None]):
         message = self._get_state_message(self.execution_state)
         host_label = self._host_validation_label()
         status_bar.update(
-            f"{host_label}    ⏱ {minutes}:{seconds:02d} | ${cost:.2f}    {message}"
+            build_status_line(
+                host_label=host_label,
+                message=message,
+                cost=cost,
+                elapsed_seconds=(minutes * 60) + seconds,
+            )
         )
 
     def _update_status_bar(self, state: ExecutionState) -> None:
@@ -1823,10 +1793,13 @@ class FlyScreen(Screen[None]):
             if self.waypoints_app.metrics_collector
             else 0.0
         )
-        if cost > 0:
-            status_bar.update(f"{host_label}    ${cost:.2f}    {message}")
-        else:
-            status_bar.update(f"{host_label}    {message}")
+        status_bar.update(
+            build_status_line(
+                host_label=host_label,
+                message=message,
+                cost=cost,
+            )
+        )
 
     def _host_validation_label(self) -> str:
         """Return a short label for host validation mode."""
@@ -2407,96 +2380,77 @@ class FlyScreen(Screen[None]):
         elif result.action == InterventionAction.ROLLBACK:
             params["rollback_tag"] = result.rollback_tag
         self.coordinator.log_intervention_resolved(result.action.value, **params)
-
-        if result.action == InterventionAction.RETRY:
-            # Retry with additional iterations
-            log.write_log(
-                f"Retrying with {result.additional_iterations} additional iterations"
-            )
-            self._additional_iterations = result.additional_iterations
-
-            # Reset waypoint status for retry
-            if self.current_waypoint:
-                self.coordinator.mark_waypoint_status(
-                    self.current_waypoint, WaypointStatus.IN_PROGRESS
-                )
-                self._refresh_waypoint_list()
-
-            # Transition: FLY_INTERVENTION -> FLY_EXECUTING
-            self.coordinator.transition(JourneyState.FLY_EXECUTING)
-            self.execution_state = ExecutionState.RUNNING
-            self.query_one(StatusHeader).set_normal()
-            self._execute_current_waypoint()
-
-        elif result.action == InterventionAction.SKIP:
-            # Skip this waypoint and move to next
-            log.write_log("Skipping waypoint")
-            if self.current_waypoint:
-                self.coordinator.mark_waypoint_status(
-                    self.current_waypoint, WaypointStatus.SKIPPED
-                )
-                self._refresh_waypoint_list()
-
-            # Transition: FLY_INTERVENTION -> FLY_PAUSED -> FLY_EXECUTING
-            self.coordinator.transition(JourneyState.FLY_PAUSED)
-            self.coordinator.transition(JourneyState.FLY_EXECUTING)
-            self.execution_state = ExecutionState.RUNNING
-            self.query_one(StatusHeader).set_normal()
-            self._select_next_waypoint()
-            if self.current_waypoint:
-                self._execute_current_waypoint()
-            else:
-                # _select_next_waypoint sets execution_state appropriately
-                # Only transition to LAND_REVIEW and notify if truly all complete
-                if self.execution_state == ExecutionState.DONE:
-                    self.coordinator.transition(JourneyState.LAND_REVIEW)
-                    self.notify("All waypoints complete!")
-                    self._switch_to_land_screen()
-
-        elif result.action == InterventionAction.EDIT:
-            # Open waypoint editor - for now, just notify
-            log.write_log("Edit waypoint requested")
-            self.notify(
-                "Edit waypoint in flight plan, then press 'r' to retry",
-                severity="information",
-            )
-            # Stay in intervention state until user edits and retries
-            # Transition: FLY_INTERVENTION -> FLY_PAUSED
+        current = self.coordinator.current_intervention
+        if current is None:
+            log.log_error("Missing intervention context; pausing execution")
             self.coordinator.transition(JourneyState.FLY_PAUSED)
             self.execution_state = ExecutionState.PAUSED
             self.query_one(StatusHeader).set_normal()
+            self.coordinator.clear_intervention()
+            return
 
-        elif result.action == InterventionAction.ROLLBACK:
-            # Rollback to last safe tag
+        # Keep UI-level rollback side effect (git reset + plan reload) while
+        # delegating status mutation and next-action selection to coordinator.
+        if result.action == InterventionAction.ROLLBACK:
             log.write_log("Rolling back to last safe tag")
             self._rollback_to_safe_tag(result.rollback_tag)
-            # Transition: FLY_INTERVENTION -> FLY_READY
-            self.coordinator.transition(JourneyState.FLY_PAUSED)
-            self.coordinator.transition(JourneyState.FLY_READY)
-            self.execution_state = ExecutionState.IDLE
+
+        next_action = self.coordinator.handle_intervention(
+            current,
+            result.action,
+            additional_iterations=result.additional_iterations,
+            rollback_tag=result.rollback_tag,
+        )
+        self._refresh_waypoint_list()
+
+        if result.action == InterventionAction.WAIT and (
+            current.type == InterventionType.BUDGET_EXCEEDED
+        ):
+            self._activate_budget_wait(current, log)
+            self.coordinator.clear_intervention()
+            return
+
+        if next_action.action == "continue":
+            if result.action == InterventionAction.RETRY:
+                self._additional_iterations = result.additional_iterations
+            self.current_waypoint = next_action.waypoint
+            log.write_log(next_action.message or "Continuing execution")
+            self.coordinator.transition(JourneyState.FLY_EXECUTING)
+            self.execution_state = ExecutionState.RUNNING
             self.query_one(StatusHeader).set_normal()
-
-        elif result.action == InterventionAction.WAIT:
-            current = self.coordinator.current_intervention
-            if current is not None:
-                self._activate_budget_wait(current, log)
+            if self.current_waypoint is not None:
+                self._execute_current_waypoint()
             else:
-                log.write_log("Execution paused waiting for budget reset")
-                self.coordinator.transition(JourneyState.FLY_PAUSED)
                 self.execution_state = ExecutionState.PAUSED
-                self.query_one(StatusHeader).set_normal()
-                self.notify("Execution paused")
+                self.notify("No waypoint available to continue", severity="warning")
 
-        elif result.action == InterventionAction.ABORT:
-            # Abort execution
-            log.write_log("Execution aborted")
-            # Transition: FLY_INTERVENTION -> FLY_PAUSED
+        elif next_action.action == "complete":
+            log.write_log(next_action.message or "All waypoints complete")
+            self.execution_state = ExecutionState.DONE
+            self.coordinator.transition(JourneyState.LAND_REVIEW)
+            self.notify("All waypoints complete!")
+            self._switch_to_land_screen()
+
+        elif next_action.action == "abort":
+            log.write_log(next_action.message or "Execution aborted")
             self.coordinator.transition(JourneyState.FLY_PAUSED)
             self.execution_state = ExecutionState.PAUSED
             self.query_one(StatusHeader).set_normal()
             self.notify("Execution aborted")
 
-        # Clear the current intervention
+        else:
+            log.write_log(next_action.message or "Execution paused")
+            self.coordinator.transition(JourneyState.FLY_PAUSED)
+            self.execution_state = ExecutionState.PAUSED
+            self.query_one(StatusHeader).set_normal()
+            if result.action == InterventionAction.EDIT:
+                self.notify(
+                    "Edit waypoint in flight plan, then press 'r' to retry",
+                    severity="information",
+                )
+            elif result.action == InterventionAction.WAIT:
+                self.notify("Execution paused")
+
         self.coordinator.clear_intervention()
 
     def _rollback_to_safe_tag(self, tag: str | None) -> None:

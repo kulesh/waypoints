@@ -17,6 +17,12 @@ from waypoints.fly.intervention import (
     InterventionType,
 )
 from waypoints.models import Waypoint, WaypointStatus
+from waypoints.orchestration.coordinator_fly import (
+    build_completion_status,
+    build_intervention_resolution,
+    build_next_action_after_success,
+    select_next_waypoint_candidate,
+)
 from waypoints.orchestration.types import (
     BudgetWaitDetails,
     CommitResult,
@@ -63,59 +69,28 @@ class FlyPhase:
         Returns:
             Next waypoint to execute, or None if all complete/blocked
         """
-        if self._coord.flight_plan is None:
-            return None
+        waypoint = select_next_waypoint_candidate(
+            self._coord.flight_plan,
+            include_failed=include_failed,
+        )
+        self._coord.current_waypoint = waypoint
 
-        # Phase 1: Check for resumable waypoints (failed/in-progress)
-        if include_failed:
-            for wp in self._coord.flight_plan.waypoints:
-                if wp.status in (WaypointStatus.IN_PROGRESS, WaypointStatus.FAILED):
-                    logger.info("Resuming %s waypoint: %s", wp.status.value, wp.id)
-                    self._coord.current_waypoint = wp
-                    return wp
-
-        # Phase 2: Find next pending waypoint with met dependencies
-        for wp in self._coord.flight_plan.waypoints:
-            if wp.status != WaypointStatus.PENDING:
-                continue
-
-            # Epics can only run after all children complete
-            if self._coord.flight_plan.is_epic(wp.id):
-                children = self._coord.flight_plan.get_children(wp.id)
-                all_children_done = all(
-                    c.status in (WaypointStatus.COMPLETE, WaypointStatus.SKIPPED)
-                    for c in children
+        if waypoint is not None:
+            if include_failed and waypoint.status in (
+                WaypointStatus.IN_PROGRESS,
+                WaypointStatus.FAILED,
+            ):
+                logger.info(
+                    "Resuming %s waypoint: %s",
+                    waypoint.status.value,
+                    waypoint.id,
                 )
-                if not all_children_done:
-                    continue  # Skip until children are done
-                # Fall through - parent is ready for execution
+            else:
+                logger.info("Selected next waypoint: %s", waypoint.id)
+        else:
+            logger.info("No waypoints available to execute")
 
-            # Check dependencies
-            if not self._dependencies_met(wp):
-                continue
-
-            logger.info("Selected next waypoint: %s", wp.id)
-            self._coord.current_waypoint = wp
-            return wp
-
-        logger.info("No waypoints available to execute")
-        self._coord.current_waypoint = None
-        return None
-
-    def _dependencies_met(self, waypoint: Waypoint) -> bool:
-        """Check if all dependencies are satisfied (COMPLETE or SKIPPED)."""
-        if self._coord.flight_plan is None:
-            return False
-
-        for dep_id in waypoint.dependencies:
-            dep = self._coord.flight_plan.get_waypoint(dep_id)
-            if dep is None:
-                logger.warning("Dependency %s not found for %s", dep_id, waypoint.id)
-                return False
-            if dep.status not in (WaypointStatus.COMPLETE, WaypointStatus.SKIPPED):
-                return False
-
-        return True
+        return waypoint
 
     # ─── Execution ────────────────────────────────────────────────────
 
@@ -358,20 +333,12 @@ class FlyPhase:
             # Commit waypoint changes
             commit_result = self.commit_waypoint(waypoint, git_config)
 
-            # Find next waypoint
-            next_wp = self.select_next_waypoint()
-            if next_wp:
-                return NextAction(
-                    action="continue",
-                    waypoint=next_wp,
-                    commit_result=commit_result,
-                )
-            else:
-                return NextAction(
-                    action="complete",
-                    message="All waypoints complete!",
-                    commit_result=commit_result,
-                )
+            next_action = build_next_action_after_success(self._coord.flight_plan)
+            next_action.commit_result = commit_result
+            self._coord.current_waypoint = (
+                next_action.waypoint if next_action.action == "continue" else None
+            )
+            return next_action
 
         elif result == ExecutionResult.CANCELLED:
             waypoint.status = WaypointStatus.PENDING
@@ -457,99 +424,28 @@ class FlyPhase:
         Returns:
             NextAction indicating what UI should do next
         """
-        waypoint = intervention.waypoint
+        new_status, next_action = build_intervention_resolution(
+            flight_plan=self._coord.flight_plan,
+            intervention=intervention,
+            action=action,
+            additional_iterations=additional_iterations,
+            rollback_tag=rollback_tag,
+        )
 
-        if action == InterventionAction.RETRY:
-            # Reset to in-progress and retry
-            waypoint.status = WaypointStatus.IN_PROGRESS
+        if new_status is not None:
+            intervention.waypoint.status = new_status
             self._coord.save_flight_plan()
-            return NextAction(
-                action="continue",
-                waypoint=waypoint,
-                message=f"Retrying with {additional_iterations} more iterations",
-            )
 
-        elif action == InterventionAction.SKIP:
-            # Mark as skipped and continue
-            waypoint.status = WaypointStatus.SKIPPED
-            self._coord.save_flight_plan()
-            next_wp = self.select_next_waypoint()
-            if next_wp:
-                return NextAction(action="continue", waypoint=next_wp)
-            else:
-                return NextAction(action="complete")
-
-        elif action == InterventionAction.ROLLBACK:
-            # Rollback to tag and pause
-            # TODO: Implement rollback when GitService supports it
-            waypoint.status = WaypointStatus.PENDING
-            self._coord.save_flight_plan()
-            return NextAction(action="pause", message=f"Rolled back to {rollback_tag}")
-
-        elif action == InterventionAction.ABORT:
-            # Mark failed and stop
-            waypoint.status = WaypointStatus.FAILED
-            self._coord.save_flight_plan()
-            return NextAction(action="abort", message="Execution aborted")
-
-        elif action == InterventionAction.WAIT:
-            # Keep waypoint resumable and pause until external budget reset
-            waypoint.status = WaypointStatus.PENDING
-            self._coord.save_flight_plan()
-            return NextAction(action="pause", message="Paused waiting for budget reset")
-
-        elif action == InterventionAction.EDIT:
-            # Return to CHART for editing
-            return NextAction(action="pause", message="Edit waypoint and retry")
-
-        return NextAction(action="pause")
+        self._coord.current_waypoint = (
+            next_action.waypoint if next_action.action == "continue" else None
+        )
+        return next_action
 
     # ─── Completion Status ────────────────────────────────────────────
 
     def get_completion_status(self) -> CompletionStatus:
         """Get summary of waypoint completion state."""
-        if self._coord.flight_plan is None:
-            return CompletionStatus(total=0, complete=0, pending=0, failed=0, blocked=0)
-
-        total = 0
-        complete = 0
-        pending = 0
-        failed = 0
-        blocked = 0
-        in_progress = 0
-
-        for wp in self._coord.flight_plan.waypoints:
-            total += 1
-
-            if wp.status == WaypointStatus.COMPLETE:
-                complete += 1
-            elif wp.status == WaypointStatus.SKIPPED:
-                complete += 1  # Count skipped as "done"
-            elif wp.status == WaypointStatus.FAILED:
-                failed += 1
-            elif wp.status == WaypointStatus.IN_PROGRESS:
-                in_progress += 1
-            elif wp.status == WaypointStatus.PENDING:
-                # Check if blocked by failed dependency
-                is_blocked = False
-                for dep_id in wp.dependencies:
-                    dep = self._coord.flight_plan.get_waypoint(dep_id)
-                    if dep is not None and dep.status == WaypointStatus.FAILED:
-                        is_blocked = True
-                        break
-                if is_blocked:
-                    blocked += 1
-                else:
-                    pending += 1
-
-        return CompletionStatus(
-            total=total,
-            complete=complete,
-            pending=pending,
-            failed=failed,
-            blocked=blocked,
-            in_progress=in_progress,
-        )
+        return build_completion_status(self._coord.flight_plan)
 
     # ─── Git Integration ──────────────────────────────────────────────
 

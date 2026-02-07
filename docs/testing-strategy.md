@@ -236,6 +236,12 @@ uv run pytest --timeout=120
 
 # Flight test runs (scheduled/manual)
 python scripts/run_flight_tests.py --level L0-L4
+
+# Execute smoke tests against generated projects
+python scripts/run_flight_tests.py \
+  --level L0-L1 \
+  --execute \
+  --projects-root ~/flight-tests/generated
 ```
 
 ---
@@ -312,6 +318,12 @@ def verify_artifacts(project: Project) -> ArtifactReport:
 10. Add flight test runs to CI (scheduled, not every PR)
 11. Set up quality score dashboards
 12. Create regression alerts
+
+Current implementation status:
+- Phase 1 implemented (`flight-tests/L0-hello-world`, `flight-tests/L1-todo-cli`,
+  `scripts/run_flight_tests.py`)
+- Phase 3 scaffolding present (`flight-tests/self-host/run.sh`,
+  `flight-tests/self-host/report.py`)
 
 ---
 
