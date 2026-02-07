@@ -10,6 +10,7 @@ This folder contains the product, architecture, and testing references for Waypo
 ## Architecture
 
 - [runtime-architecture.md](./runtime-architecture.md) - Runtime flow and module map
+- [timeout-policy.md](./timeout-policy.md) - Central timeout domains, backoff, and signal lifecycle
 - [journey-state-machine.md](./journey-state-machine.md) - Journey states and transitions
 - [project-memory-index.md](./project-memory-index.md) - Persistent project memory and directory policy
 - [waypoint-spec-context-lifecycle.md](./waypoint-spec-context-lifecycle.md) - Waypoint spec context generation, fly usage, and backfill ops
