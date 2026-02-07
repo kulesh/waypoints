@@ -8,7 +8,6 @@ and verifying receipts with an LLM judge.
 import logging
 import os
 import re
-import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -30,6 +29,7 @@ from waypoints.git.receipt import (
 from waypoints.llm.client import StreamChunk, agent_query
 from waypoints.llm.prompts import build_verification_prompt
 from waypoints.models.waypoint import Waypoint
+from waypoints.runtime import TimeoutDomain, get_command_runner
 
 if TYPE_CHECKING:
     from waypoints.fly.execution_log import ExecutionLogWriter
@@ -192,36 +192,44 @@ class ReceiptFinalizer:
                 path_parts.append(extra_str)
         env["PATH"] = os.pathsep.join(path_parts)
         shell_executable = env.get("SHELL") or "/bin/sh"
-
-        def _decode_output(data: bytes | str | None) -> str:
-            if isinstance(data, bytes):
-                return data.decode(errors="replace")
-            return data or ""
+        command_runner = get_command_runner()
 
         for cmd in commands:
             start_time = datetime.now(UTC)
             try:
-                result = subprocess.run(
-                    cmd.command,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
+                runner_result = command_runner.run(
+                    command=cmd.command,
+                    domain=TimeoutDomain.HOST_VALIDATION,
                     cwd=cmd.cwd or project_path,
                     env=env,
+                    shell=True,
                     executable=shell_executable,
-                    timeout=300,
+                    category=cmd.category,
                 )
-                stdout = _decode_output(result.stdout)
-                stderr = _decode_output(result.stderr)
-                exit_code = result.returncode
-            except subprocess.TimeoutExpired as e:
-                stdout = _decode_output(e.stdout)
-                stderr = _decode_output(e.stderr) + "\nCommand timed out"
-                exit_code = 124
-            except Exception as e:  # pragma: no cover - safety net
+                stdout = runner_result.stdout
+                stderr = runner_result.stderr
+                exit_code = runner_result.effective_exit_code
+
+                if runner_result.timed_out:
+                    timeout_msg = (
+                        "Command timed out after "
+                        f"{runner_result.final_attempt.timeout_seconds:g}s "
+                        f"(attempt {runner_result.final_attempt.attempt}/"
+                        f"{len(runner_result.attempts)})"
+                    )
+                    if stderr:
+                        stderr = f"{stderr}\n{timeout_msg}"
+                    else:
+                        stderr = timeout_msg
+                    if runner_result.signal_sequence:
+                        stderr += "\nSignals: " + " -> ".join(
+                            runner_result.signal_sequence
+                        )
+            except Exception as exc:  # pragma: no cover - safety net
                 stdout = ""
-                stderr = f"Error running validation command: {e}"
+                stderr = f"Error running validation command: {exc}"
                 exit_code = 1
+                runner_result = None
 
             label = cmd.name or cmd.command
             evidence[label] = CapturedEvidence(
@@ -245,8 +253,23 @@ class ReceiptFinalizer:
                     "command": cmd.command,
                     "category": cmd.category,
                     "name": cmd.name,
+                    "attempts": len(runner_result.attempts) if runner_result else 1,
+                    "timed_out": runner_result.timed_out if runner_result else False,
+                    "timeout_seconds": (
+                        runner_result.final_attempt.timeout_seconds
+                        if runner_result
+                        else None
+                    ),
+                    "signals": list(runner_result.signal_sequence)
+                    if runner_result
+                    else [],
                 },
-                f"exit_code={exit_code}",
+                (
+                    f"exit_code={exit_code}; duration="
+                    f"{runner_result.total_duration_seconds:.2f}s"
+                    if runner_result
+                    else f"exit_code={exit_code}"
+                ),
             )
 
         return evidence

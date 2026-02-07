@@ -8,7 +8,6 @@ and populates widgets with the returned data.
 
 import json
 import logging
-import subprocess
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -19,6 +18,7 @@ from waypoints.llm.metrics import MetricsCollector
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.project import Project
 from waypoints.models.waypoint import WaypointStatus
+from waypoints.runtime import TimeoutDomain, get_command_runner
 from waypoints.tui.utils import format_duration, format_token_count
 
 logger = logging.getLogger(__name__)
@@ -421,12 +421,10 @@ class DebriefService:
                 branch = git.get_current_branch() or "HEAD"
                 head = git.get_head_commit()
 
-                status_result = subprocess.run(
-                    ["git", "status", "--porcelain"],
+                status_result = get_command_runner().run(
+                    command=["git", "status", "--porcelain"],
+                    domain=TimeoutDomain.UI_GIT_PROBE,
                     cwd=project_path,
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
                 )
                 status_lines = [
                     line for line in status_result.stdout.strip().split("\n") if line

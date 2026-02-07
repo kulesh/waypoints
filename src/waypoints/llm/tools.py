@@ -7,6 +7,7 @@ from waypoints.memory import (
     IMMUTABLE_BLOCKED_TOP_LEVEL_DIRS,
     load_or_build_project_memory,
 )
+from waypoints.runtime import TimeoutDomain, get_command_runner
 
 LEGACY_BLOCKED_TOP_LEVEL_DIRS = frozenset(
     {
@@ -91,17 +92,9 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
     Returns:
         Result string to send back to the model and/or log.
     """
-    import os
     import re
-    import signal
-    import subprocess
 
-    def _decode_stream(data: str | bytes | None) -> str:
-        if data is None:
-            return ""
-        if isinstance(data, bytes):
-            return data.decode(errors="replace")
-        return data
+    command_runner = get_command_runner()
 
     try:
         blocked_dirs = _resolve_blocked_top_level_dirs(cwd)
@@ -139,55 +132,29 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
         if name == "bash":
             command = arguments["command"]
             raw_timeout = arguments.get("timeout")
-            timeout: float = 120.0
+            timeout: float | None = None
             if isinstance(raw_timeout, (int, float)):
                 timeout = raw_timeout / 1000 if raw_timeout > 1000 else raw_timeout
 
-            process = subprocess.Popen(
-                command,
-                shell=True,
+            result = command_runner.run(
+                command=command,
+                domain=TimeoutDomain.LLM_TOOL_BASH,
                 cwd=cwd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,
+                shell=True,
+                requested_timeout_seconds=timeout,
             )
-
-            timed_out = False
-            stdout = ""
-            stderr = ""
-            try:
-                stdout, stderr = process.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired as exc:
-                timed_out = True
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                except Exception:
-                    process.terminate()
-
-                try:
-                    extra_stdout, extra_stderr = process.communicate(timeout=2)
-                except subprocess.TimeoutExpired:
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    except Exception:
-                        process.kill()
-                    extra_stdout, extra_stderr = process.communicate()
-
-                stdout = _decode_stream(exc.stdout) + _decode_stream(extra_stdout)
-                stderr = _decode_stream(exc.stderr) + _decode_stream(extra_stderr)
-
-            output = stdout
-            if stderr:
-                output += f"\nSTDERR:\n{stderr}"
-            if timed_out:
-                output += f"\nError: Command timed out after {timeout:g}s"
-            if process.returncode != 0:
-                output += f"\nExit code: {process.returncode}"
+            output = result.stdout
+            if result.stderr:
+                output += f"\nSTDERR:\n{result.stderr}"
+            if result.timed_out:
+                output += (
+                    "\nError: Command timed out "
+                    f"after {result.final_attempt.timeout_seconds:g}s"
+                )
+            if result.signal_sequence:
+                output += f"\nSignals: {' -> '.join(result.signal_sequence)}"
+            if result.effective_exit_code != 0:
+                output += f"\nExit code: {result.effective_exit_code}"
             return output or "(no output)"
 
         if name == "glob":

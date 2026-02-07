@@ -20,6 +20,7 @@ main.py
            -> models/* (Project, Journey, FlightPlan, Dialogue, Session)
            -> llm/* (ChatClient + prompts + validation)
            -> fly/* (execution, logs, interventions)
+           -> runtime/* (command runner + timeout policy)
            -> git/* (optional commits/tags)
 ```
 

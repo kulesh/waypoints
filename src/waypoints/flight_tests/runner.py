@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
+from waypoints.runtime import TimeoutDomain, get_command_runner
 
 CASE_DIR_PATTERN = re.compile(r"^L(?P<level>\d+)-(?P<slug>[a-z0-9][a-z0-9-]*)$")
 LEVEL_TOKEN_PATTERN = re.compile(r"^L(?P<level>\d+)$")
@@ -142,6 +143,7 @@ def execute_flight_tests(
 ) -> list[FlightTestResult]:
     """Execute (or plan) smoke tests for discovered cases."""
     results: list[FlightTestResult] = []
+    command_runner = get_command_runner()
 
     for case in cases:
         validation_issues = validate_flight_test_case(case)
@@ -184,24 +186,13 @@ def execute_flight_tests(
         }
 
         try:
-            completed = subprocess.run(
-                ["bash", str(case.smoke_test_script)],
+            completed = command_runner.run(
+                command=["bash", str(case.smoke_test_script)],
+                domain=TimeoutDomain.FLIGHT_TEST,
                 cwd=project_path,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
                 env=env,
-                check=False,
+                requested_timeout_seconds=float(timeout_seconds),
             )
-        except subprocess.TimeoutExpired:
-            results.append(
-                FlightTestResult(
-                    case=case,
-                    status=FlightTestStatus.ERROR,
-                    message=f"timed out after {timeout_seconds}s",
-                )
-            )
-            continue
         except OSError as exc:
             results.append(
                 FlightTestResult(
@@ -211,10 +202,22 @@ def execute_flight_tests(
                 )
             )
             continue
+        if completed.timed_out:
+            results.append(
+                FlightTestResult(
+                    case=case,
+                    status=FlightTestStatus.ERROR,
+                    message=f"timed out after {timeout_seconds}s",
+                    return_code=completed.effective_exit_code,
+                    stdout=completed.stdout,
+                    stderr=completed.stderr,
+                )
+            )
+            continue
 
         status = (
             FlightTestStatus.PASSED
-            if completed.returncode == 0
+            if completed.effective_exit_code == 0
             else FlightTestStatus.FAILED
         )
         results.append(
@@ -224,7 +227,7 @@ def execute_flight_tests(
                 message=(
                     "ok" if status == FlightTestStatus.PASSED else "smoke test failed"
                 ),
-                return_code=completed.returncode,
+                return_code=completed.effective_exit_code,
                 stdout=completed.stdout,
                 stderr=completed.stderr,
             )

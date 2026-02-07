@@ -3,7 +3,6 @@
 import json
 import logging
 import re
-import subprocess
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -50,6 +49,7 @@ from waypoints.orchestration import JourneyCoordinator
 from waypoints.orchestration.fly_presenter import build_state_message, build_status_line
 from waypoints.orchestration.fly_service import FlyService
 from waypoints.orchestration.types import NextAction
+from waypoints.runtime import TimeoutDomain, get_command_runner
 from waypoints.tui.screens.intervention import InterventionModal
 from waypoints.tui.utils import (
     format_token_count,
@@ -131,25 +131,22 @@ INLINE_CODE_PATTERN = re.compile(r"`([^`]+)`")
 def get_git_status_summary(project_path: Path) -> str:
     """Get git status with colored indicator: 'branch [color]●[/] N changed'."""
     try:
+        runner = get_command_runner()
         # Get current branch
-        branch_result = subprocess.run(
-            ["git", "branch", "--show-current"],
+        branch_result = runner.run(
+            command=["git", "branch", "--show-current"],
+            domain=TimeoutDomain.UI_GIT_PROBE,
             cwd=project_path,
-            capture_output=True,
-            text=True,
-            timeout=5,
         )
-        if branch_result.returncode != 0:
+        if branch_result.effective_exit_code != 0:
             return ""  # Not a git repo
         branch = branch_result.stdout.strip() or "HEAD"
 
         # Get status (use -uall to show individual files in untracked directories)
-        status_result = subprocess.run(
-            ["git", "status", "--porcelain", "-uall"],
+        status_result = runner.run(
+            command=["git", "status", "--porcelain", "-uall"],
+            domain=TimeoutDomain.UI_GIT_PROBE,
             cwd=project_path,
-            capture_output=True,
-            text=True,
-            timeout=5,
         )
         lines = [line for line in status_result.stdout.strip().split("\n") if line]
 
