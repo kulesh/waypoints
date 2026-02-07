@@ -699,6 +699,65 @@ async def test_execute_resumes_session_and_uses_protocol_nudge(
 
 
 @pytest.mark.anyio
+async def test_execute_surfaces_failed_bash_command_in_intervention(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Intervention summary should include the exact failed bash command."""
+
+    async def fake_agent_query(**kwargs: object):
+        del kwargs
+        yield StreamToolUse(
+            tool_name="Bash",
+            tool_input={
+                "command": (
+                    "/Users/kulesh/.cargo/bin/cargo run -- "
+                    "/Users/kulesh/dev/flight-test/projects/"
+                    "actuator 2>&1 | head -30 &\n"
+                    "sleep 2\n"
+                    'echo "Started app"\n'
+                    "sleep 1\n"
+                    'pkill -f "canopy.*actuator" 2>/dev/null || true'
+                )
+            },
+            tool_output=(
+                "error: could not find `Cargo.toml` in "
+                "`/Users/kulesh/dev/flight-test/projects/actuator` or any parent "
+                "directory\nStarted app\n"
+            ),
+        )
+        raise RuntimeError(
+            "Command failed with exit code -15 (exit code: -15)\n"
+            "Error output: Check stderr output for details"
+        )
+
+    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_resolve_validation_commands",
+        lambda self, project_path, checklist: [],
+    )
+
+    project = _TestProject(tmp_path)
+    waypoint = Waypoint(
+        id="WP-1",
+        title="Intervention diagnostics",
+        objective="Show failed command details in intervention",
+        acceptance_criteria=["Criterion 1"],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+
+    with pytest.raises(InterventionNeededError) as exc_info:
+        await executor.execute()
+
+    intervention = exc_info.value.intervention
+    assert "Failed command:" in intervention.error_summary
+    assert "/Users/kulesh/.cargo/bin/cargo run --" in intervention.error_summary
+    assert 'pkill -f "canopy.*actuator"' in intervention.error_summary
+    assert "could not find `Cargo.toml`" in intervention.error_summary
+    assert intervention.context["last_tool_name"] == "Bash"
+
+
+@pytest.mark.anyio
 async def test_execute_reports_non_file_tool_use_progress(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

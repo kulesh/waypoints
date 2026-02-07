@@ -179,6 +179,9 @@ class _LoopState:
     # Per-iteration state (reset at start of each _run_iteration)
     iter_scope_drift_detected: bool = False
     iter_stage_reports_logged: int = 0
+    last_tool_name: str | None = None
+    last_tool_input: dict[str, object] = field(default_factory=dict)
+    last_tool_output: str | None = None
 
 
 class WaypointExecutor:
@@ -457,6 +460,9 @@ class WaypointExecutor:
                 )
 
             elif isinstance(chunk, StreamToolUse):
+                s.last_tool_name = chunk.tool_name
+                s.last_tool_input = dict(chunk.tool_input)
+                s.last_tool_output = chunk.tool_output
                 self._log_writer.log_tool_call(
                     s.iteration,
                     chunk.tool_name,
@@ -844,6 +850,9 @@ class WaypointExecutor:
             elif (reset_time := extract_reset_time(s.full_output)) is not None:
                 error_summary = f"Model usage budget exceeded. Resets {reset_time}."
 
+        if failed_command_summary := self._failed_command_summary(s):
+            error_summary = f"{error_summary}\n\n{failed_command_summary}"
+
         self._report_progress(
             s.iteration,
             self.max_iterations,
@@ -870,6 +879,9 @@ class WaypointExecutor:
                 "full_output": s.full_output[-2000:],
                 "api_error_type": api_error_type.value,
                 "original_error": str(e),
+                "last_tool_name": s.last_tool_name,
+                "last_tool_input": s.last_tool_input,
+                "last_tool_output_tail": self._truncate_output(s.last_tool_output),
                 "configured_budget_usd": settings.llm_budget_usd,
                 "current_cost_usd": (
                     self.metrics_collector.total_cost
@@ -904,6 +916,36 @@ class WaypointExecutor:
             error_summary=error_summary,
         )
         raise InterventionNeededError(intervention) from e
+
+    def _failed_command_summary(self, s: _LoopState) -> str | None:
+        """Build a concise failed-command summary for intervention surfacing."""
+        if s.last_tool_name != "Bash":
+            return None
+        command = s.last_tool_input.get("command")
+        if not isinstance(command, str) or not command.strip():
+            return None
+
+        command_block = command.strip()
+        if len(command_block) > 500:
+            command_block = command_block[:500] + "..."
+        details = [f"Failed command:\n{command_block}"]
+
+        output_tail = self._truncate_output(s.last_tool_output)
+        if output_tail:
+            details.append(f"Last command output (tail):\n{output_tail}")
+
+        return "\n\n".join(details)
+
+    def _truncate_output(self, output: str | None) -> str | None:
+        """Trim output to an intervention-friendly tail snippet."""
+        if not output:
+            return None
+        cleaned = output.strip()
+        if not cleaned:
+            return None
+        if len(cleaned) <= 800:
+            return cleaned
+        return f"...{cleaned[-800:]}"
 
     def _raise_intervention(
         self,
