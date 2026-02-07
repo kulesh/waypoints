@@ -48,6 +48,7 @@ class ArtifactType(Enum):
     IDEA_BRIEF = "idea_brief"
     PRODUCT_SPEC = "product_spec"
     FLIGHT_PLAN = "flight_plan"
+    ITERATION_REQUESTS = "iteration_requests"
 
 
 class BundleFileType(Enum):
