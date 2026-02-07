@@ -80,6 +80,57 @@ class TestExecutionLogViewMode:
         assert payload["error"] == "boom"
         assert payload["foo"] == "bar"
 
+    def test_log_tool_call_entry_renders_validation_timeout_events(self) -> None:
+        panel = WaypointDetailPanel(project=SimpleNamespace(), flight_plan=FlightPlan())
+
+        class _FakeLog:
+            def __init__(self) -> None:
+                self.lines: list[str] = []
+
+            def write_log(self, line: str) -> None:
+                self.lines.append(line)
+
+            def write(self, line: str) -> None:
+                self.lines.append(str(line))
+
+        fake_log = _FakeLog()
+        entry = SimpleNamespace(
+            metadata={
+                "tool_name": "ValidationCommand",
+                "tool_input": {
+                    "command": "cargo clippy -- -D warnings",
+                    "category": "lint",
+                    "attempts": 2,
+                    "timed_out": True,
+                    "timeout_seconds": 900.0,
+                    "signals": ["SIGTERM", "SIGKILL"],
+                    "timeout_events": [
+                        {
+                            "event_type": "warning",
+                            "attempt": 1,
+                            "timeout_seconds": 900.0,
+                            "detail": "Timeout threshold approaching",
+                        },
+                        {
+                            "event_type": "retry",
+                            "attempt": 1,
+                            "timeout_seconds": 900.0,
+                            "detail": "Retrying after timeout with backoff",
+                        },
+                    ],
+                },
+                "tool_output": "exit_code=124",
+            }
+        )
+
+        panel._log_tool_call_entry(fake_log, entry)
+        rendered = "\n".join(fake_log.lines)
+        assert "cargo clippy -- -D warnings" in rendered
+        assert "timed_out=yes" in rendered
+        assert "signals: SIGTERM -> SIGKILL" in rendered
+        assert "timeout: warning" in rendered
+        assert "timeout: retry" in rendered
+
 
 class TestStatusBarMessage:
     """Tests for the _get_state_message method."""

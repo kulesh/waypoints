@@ -29,7 +29,7 @@ from waypoints.git.receipt import (
 from waypoints.llm.client import StreamChunk, agent_query
 from waypoints.llm.prompts import build_verification_prompt
 from waypoints.models.waypoint import Waypoint
-from waypoints.runtime import TimeoutDomain, get_command_runner
+from waypoints.runtime import CommandEvent, TimeoutDomain, get_command_runner
 
 if TYPE_CHECKING:
     from waypoints.fly.execution_log import ExecutionLogWriter
@@ -38,6 +38,31 @@ if TYPE_CHECKING:
     from waypoints.models.project import Project
 
 logger = logging.getLogger(__name__)
+
+
+def _serialize_timeout_event(event: CommandEvent) -> dict[str, object]:
+    """Convert command timeout event to stable metadata payload."""
+    return {
+        "event_type": event.event_type,
+        "attempt": event.attempt,
+        "timeout_seconds": event.timeout_seconds,
+        "detail": event.detail,
+    }
+
+
+def _format_timeout_events(events: list[CommandEvent]) -> str:
+    """Format command timeout events for human-readable diagnostics."""
+    if not events:
+        return ""
+    lines = ["Timeout lifecycle:"]
+    for event in events:
+        detail = f" - {event.detail}" if event.detail else ""
+        lines.append(
+            "  "
+            f"[attempt {event.attempt}] {event.event_type} "
+            f"(budget={event.timeout_seconds:g}s){detail}"
+        )
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True)
@@ -196,6 +221,7 @@ class ReceiptFinalizer:
 
         for cmd in commands:
             start_time = datetime.now(UTC)
+            timeout_events: list[CommandEvent] = []
             try:
                 runner_result = command_runner.run(
                     command=cmd.command,
@@ -205,6 +231,7 @@ class ReceiptFinalizer:
                     shell=True,
                     executable=shell_executable,
                     category=cmd.category,
+                    on_event=timeout_events.append,
                 )
                 stdout = runner_result.stdout
                 stderr = runner_result.stderr
@@ -225,11 +252,18 @@ class ReceiptFinalizer:
                         stderr += "\nSignals: " + " -> ".join(
                             runner_result.signal_sequence
                         )
+                event_summary = _format_timeout_events(timeout_events)
+                if event_summary:
+                    if stderr:
+                        stderr = f"{stderr}\n{event_summary}"
+                    else:
+                        stderr = event_summary
             except Exception as exc:  # pragma: no cover - safety net
                 stdout = ""
                 stderr = f"Error running validation command: {exc}"
                 exit_code = 1
                 runner_result = None
+                timeout_events = []
 
             label = cmd.name or cmd.command
             evidence[label] = CapturedEvidence(
@@ -263,6 +297,9 @@ class ReceiptFinalizer:
                     "signals": list(runner_result.signal_sequence)
                     if runner_result
                     else [],
+                    "timeout_events": [
+                        _serialize_timeout_event(event) for event in timeout_events
+                    ],
                 },
                 (
                     f"exit_code={exit_code}; duration="

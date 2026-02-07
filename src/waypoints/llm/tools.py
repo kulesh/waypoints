@@ -7,7 +7,7 @@ from waypoints.memory import (
     IMMUTABLE_BLOCKED_TOP_LEVEL_DIRS,
     load_or_build_project_memory,
 )
-from waypoints.runtime import TimeoutDomain, get_command_runner
+from waypoints.runtime import CommandEvent, TimeoutDomain, get_command_runner
 
 LEGACY_BLOCKED_TOP_LEVEL_DIRS = frozenset(
     {
@@ -96,6 +96,19 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
 
     command_runner = get_command_runner()
 
+    def _format_timeout_events(events: list[CommandEvent]) -> str:
+        if not events:
+            return ""
+        lines = ["Timeout lifecycle:"]
+        for event in events:
+            detail = f" - {event.detail}" if event.detail else ""
+            lines.append(
+                "  "
+                f"[attempt {event.attempt}] {event.event_type} "
+                f"(budget={event.timeout_seconds:g}s){detail}"
+            )
+        return "\n".join(lines)
+
     try:
         blocked_dirs = _resolve_blocked_top_level_dirs(cwd)
         if name == "read_file":
@@ -136,12 +149,14 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
             if isinstance(raw_timeout, (int, float)):
                 timeout = raw_timeout / 1000 if raw_timeout > 1000 else raw_timeout
 
+            timeout_events: list[CommandEvent] = []
             result = command_runner.run(
                 command=command,
                 domain=TimeoutDomain.LLM_TOOL_BASH,
                 cwd=cwd,
                 shell=True,
                 requested_timeout_seconds=timeout,
+                on_event=timeout_events.append,
             )
             output = result.stdout
             if result.stderr:
@@ -153,6 +168,9 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
                 )
             if result.signal_sequence:
                 output += f"\nSignals: {' -> '.join(result.signal_sequence)}"
+            event_summary = _format_timeout_events(timeout_events)
+            if event_summary:
+                output += f"\n{event_summary}"
             if result.effective_exit_code != 0:
                 output += f"\nExit code: {result.effective_exit_code}"
             return output or "(no output)"

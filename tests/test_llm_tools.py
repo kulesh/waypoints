@@ -17,6 +17,7 @@ def test_execute_tool_bash_timeout_reports_timeout_and_exit_code() -> None:
     command = f'"{executable}" -c "import time; time.sleep(2)"'
     result = execute_tool("bash", {"command": command, "timeout": 0.1}, cwd=None)
     assert "Command timed out after" in result
+    assert "Timeout lifecycle:" in result
     assert "Exit code:" in result
 
 
