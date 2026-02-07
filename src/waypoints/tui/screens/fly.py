@@ -2274,14 +2274,20 @@ class FlyScreen(Screen[None]):
             self.notify("Waypoint execution failed", severity="error")
             return
 
+        # Capture before handle_execution_result, which may clear
+        # coordinator.current_waypoint when selecting the next waypoint.
+        completed_waypoint = self.current_waypoint
+
         config = GitConfig.load(self.project.slug)
         next_action = self.coordinator.handle_execution_result(
-            self.current_waypoint, result, git_config=config
+            completed_waypoint, result, git_config=config
         )
 
         # Dispatch on coordinator's decision
         if next_action.action in ("continue", "complete"):
-            self._apply_success_effects(log, detail_panel, next_action)
+            self._apply_success_effects(
+                log, detail_panel, next_action, completed_waypoint
+            )
         elif next_action.action == "intervention":
             log.log_error(next_action.message or "Execution failed")
             self.coordinator.transition(JourneyState.FLY_INTERVENTION)
@@ -2302,22 +2308,21 @@ class FlyScreen(Screen[None]):
         log: ExecutionLog,
         detail_panel: WaypointDetailPanel,
         next_action: NextAction,
+        completed_waypoint: Waypoint,
     ) -> None:
         """Apply UI effects for a successful waypoint completion."""
-        assert self.current_waypoint is not None
-
         # Log success and verification summary
-        log.log_success(f"Waypoint {self.current_waypoint.id} complete!")
+        log.log_success(f"Waypoint {completed_waypoint.id} complete!")
 
         self._live_criteria_completed = ExecutionLogReader.get_completed_criteria(
-            self.project, self.current_waypoint.id
+            self.project, completed_waypoint.id
         )
-        self._log_verification_summary(self.current_waypoint, log)
+        self._log_verification_summary(completed_waypoint, log)
 
         # Log commit result
         cr = next_action.commit_result
         if cr and cr.committed:
-            self.notify(f"Committed: {self.current_waypoint.id}")
+            self.notify(f"Committed: {completed_waypoint.id}")
             self.coordinator.log_git_commit(True, cr.commit_hash or "", cr.message)
         elif cr and not cr.committed and cr.message:
             if "Nothing to commit" not in cr.message:
