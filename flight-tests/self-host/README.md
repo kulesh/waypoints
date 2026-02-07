@@ -5,24 +5,26 @@ This directory contains the infrastructure for testing Waypoints by having it bu
 ## Quick Start (Semi-Automatic)
 
 ```bash
-# 1. Create isolated flight test directory (OUTSIDE dev tree!)
-mkdir -p ~/flight-tests/waypoints-self-host
+# 1. Launch the self-host harness (artifacts outside dev tree)
+./flight-tests/self-host/run.sh ~/flight-tests/waypoints-self-host
 
-# 2. Run Waypoints FROM dev tree, artifacts go to flight test directory
-uv run --directory /Users/kulesh/dev/waypoints waypoints \
-    --workdir ~/flight-tests/waypoints-self-host
-
-# 3. Enter project details:
+# 2. Enter project details:
 #    Name: "Waypoints V2"
 #    Idea: "Build Waypoints - an AI-native software development TUI..."
 
-# 4. Follow the phases, observe results
-# 5. Fill out review-checklist.md
+# 3. Follow the phases, observe results
+# 4. Fill out review-checklist.md
+# 5. Summarize checklist progress
+python ./flight-tests/self-host/report.py ./flight-tests/self-host/review-checklist.md
 ```
 
-**Note**: The `--workdir` flag is required when using `uv run --directory` because
-`--directory` changes the working directory. Without `--workdir`, artifacts would
-be written to the dev tree.
+`run.sh` calls:
+
+```bash
+uv run --directory <repo-root> waypoints --workdir <target-dir>
+```
+
+This keeps generated artifacts out of the repository working tree.
 
 ## Directory Structure
 
@@ -53,7 +55,8 @@ Always verify before running:
 
 1. **Phase 1 (Now)**: Semi-automatic - run TUI manually, use review checklist
 2. **Phase 2 (Next)**: Add CLI automation (`waypoints new`, `waypoints run`)
-3. **Phase 3 (Later)**: Fully scripted with CI integration
+3. **Phase 3 (In Progress)**: Scripted launch + checklist summary helpers
+4. **Phase 4 (Later)**: CI integration
 
 ## Results
 
