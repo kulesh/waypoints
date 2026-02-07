@@ -74,3 +74,5 @@ This document defines centralized timeout behavior for subprocess execution.
   - Git status probes use `ui_git_probe` policy.
 - `src/waypoints/orchestration/debrief.py`
   - Debrief git probes use `ui_git_probe` policy.
+- `src/waypoints/git/service.py`
+  - Git operations use `git_operation` policy via the shared command runner.

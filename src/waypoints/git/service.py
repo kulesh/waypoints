@@ -10,6 +10,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from waypoints.runtime import TimeoutDomain, get_command_runner
+
 logger = logging.getLogger(__name__)
 
 # Default .gitignore content for waypoints projects
@@ -82,13 +84,36 @@ class GitService:
         """Run a git command."""
         cmd = ["git", *args]
         logger.debug("Running: %s", " ".join(cmd))
-        return subprocess.run(
-            cmd,
+        result = get_command_runner().run(
+            command=cmd,
+            domain=TimeoutDomain.GIT_OPERATION,
             cwd=self.working_dir,
-            capture_output=True,
-            text=True,
-            check=check,
         )
+        stdout = result.stdout
+        stderr = result.stderr
+        if result.timed_out:
+            timeout_msg = (
+                "Command timed out after "
+                f"{result.final_attempt.timeout_seconds:g}s"
+            )
+            stderr = f"{stderr}\n{timeout_msg}" if stderr else timeout_msg
+            if result.signal_sequence:
+                stderr += "\nSignals: " + " -> ".join(result.signal_sequence)
+
+        completed = subprocess.CompletedProcess(
+            cmd,
+            result.effective_exit_code,
+            stdout,
+            stderr,
+        )
+        if check and completed.returncode != 0:
+            raise subprocess.CalledProcessError(
+                completed.returncode,
+                cmd,
+                output=completed.stdout,
+                stderr=completed.stderr,
+            )
+        return completed
 
     def is_git_repo(self) -> bool:
         """Check if current directory is inside a git repository."""
