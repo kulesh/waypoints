@@ -932,6 +932,52 @@ class WaypointDetailPanel(Vertical):
                     output = output[:400] + "..."
                 log.write_log(f"[dim]{output}[/]")
             return
+        if tool_name == "ValidationCommand" and isinstance(tool_input, dict):
+            command = str(tool_input.get("command", "")).strip()
+            category = str(tool_input.get("category", "")).strip() or "validation"
+            attempts = tool_input.get("attempts")
+            timed_out = bool(tool_input.get("timed_out", False))
+            timeout_seconds = tool_input.get("timeout_seconds")
+            signals = tool_input.get("signals", [])
+            timeout_events = tool_input.get("timeout_events", [])
+
+            if command:
+                log.write_log(f"[dim]$ {command}[/]")
+            summary_bits = [f"category={category}"]
+            if isinstance(attempts, int):
+                summary_bits.append(f"attempts={attempts}")
+            if timeout_seconds is not None:
+                summary_bits.append(f"budget={timeout_seconds}s")
+            summary_bits.append(f"timed_out={'yes' if timed_out else 'no'}")
+            log.write_log(f"[dim]  {' · '.join(summary_bits)}[/]")
+
+            if isinstance(signals, list) and signals:
+                rendered_signals = " -> ".join(str(item) for item in signals)
+                log.write_log(f"[dim]  signals: {rendered_signals}[/]")
+
+            if isinstance(timeout_events, list):
+                for raw_event in timeout_events:
+                    if not isinstance(raw_event, dict):
+                        continue
+                    event_type = str(raw_event.get("event_type", "event"))
+                    attempt = raw_event.get("attempt")
+                    budget = raw_event.get("timeout_seconds")
+                    detail = str(raw_event.get("detail", "")).strip()
+                    bits = [event_type]
+                    if attempt is not None:
+                        bits.append(f"attempt={attempt}")
+                    if budget is not None:
+                        bits.append(f"budget={budget}s")
+                    if detail:
+                        bits.append(detail)
+                    log.write_log(f"[yellow]  timeout: {' · '.join(bits)}[/]")
+
+            if isinstance(tool_output, str) and tool_output.strip():
+                output = tool_output.strip()
+                if len(output) > 400:
+                    output = output[:400] + "..."
+                log.write_log(f"[dim]  output: {output}[/]")
+            return
 
         # Fallback for other tools
         log.write_log(f"[dim]→ {tool_name}[/]")

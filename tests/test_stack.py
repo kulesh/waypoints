@@ -367,6 +367,11 @@ class TestRunValidationCwd:
         # pwd output should contain the subdir path, not project root
         assert str(subdir) in evidence["tests"].stdout.strip()
 
+        finalizer._log_writer.log_finalize_tool_call.assert_called()
+        tool_input = finalizer._log_writer.log_finalize_tool_call.call_args.args[1]
+        assert "timeout_events" in tool_input
+        assert isinstance(tool_input["timeout_events"], list)
+
     def test_run_validation_falls_back_to_project_path(self, tmp_path: Path) -> None:
         """Command without cwd uses project_path as working directory."""
         cmd = ValidationCommand(

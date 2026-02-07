@@ -46,6 +46,15 @@ This document defines centralized timeout behavior for subprocess execution.
    - if still running, send `SIGKILL`.
 4. Capture and return stdout/stderr and signal sequence for diagnostics.
 
+## Visibility
+
+- Host validation entries (`ValidationCommand`) include:
+  - attempts, timeout budget, timed-out flag, signal sequence
+  - structured timeout events (`warning`, `terminate`, `kill`, `retry`)
+- Fly summary and raw execution log views surface these timeout events.
+- `Bash` tool outputs include timeout lifecycle lines so intervention/debug logs
+  show not just failure but the timeout path that led to it.
+
 ## Adaptive Timeout Behavior
 
 - Commands are keyed by domain + category + cwd + normalized command.
