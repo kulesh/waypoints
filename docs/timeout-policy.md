@@ -15,6 +15,8 @@ This document defines centralized timeout behavior for subprocess execution.
   - Domain policies, bounds, and backoff strategy.
 - `src/waypoints/runtime/timeout_history.py`
   - In-process command duration history and adaptive timeout hints.
+  - Persisted to XDG state path: `~/.local/state/waypoints/timeout-history.json`
+    (or `$XDG_STATE_HOME/waypoints/timeout-history.json`).
 - `src/waypoints/runtime/command_runner.py`
   - Shared subprocess runner with timeout, retries, and signal lifecycle.
 
