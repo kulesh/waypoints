@@ -3,9 +3,9 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from waypoints.models.dialogue import DialogueHistory, Message
+from waypoints.models.dialogue import DialogueHistory, Message, MessageRole
 from waypoints.models.schema import migrate_if_needed, write_schema_fields
 
 if TYPE_CHECKING:
@@ -20,7 +20,15 @@ class SessionWriter:
     - Subsequent lines: individual messages
     """
 
-    def __init__(self, project: "Project", phase: str, session_id: str) -> None:
+    def __init__(
+        self,
+        project: "Project",
+        phase: str,
+        session_id: str,
+        *,
+        file_path: Path | None = None,
+        write_header: bool = True,
+    ) -> None:
         """Initialize session writer.
 
         Args:
@@ -31,8 +39,26 @@ class SessionWriter:
         self.project = project
         self.phase = phase
         self.session_id = session_id
-        self.file_path = self._generate_path()
-        self._write_header()
+        self.file_path = file_path or self._generate_path()
+        if write_header:
+            self._write_header()
+
+    @classmethod
+    def resume(
+        cls,
+        project: "Project",
+        phase: str,
+        session_id: str,
+        file_path: Path,
+    ) -> "SessionWriter":
+        """Resume appending to an existing session file without rewriting header."""
+        return cls(
+            project=project,
+            phase=phase,
+            session_id=session_id,
+            file_path=file_path,
+            write_header=False,
+        )
 
     def _generate_path(self) -> Path:
         """Generate the JSONL file path for this session."""
@@ -52,10 +78,54 @@ class SessionWriter:
         with open(self.file_path, "w", encoding="utf-8") as f:
             f.write(json.dumps(header) + "\n")
 
+    @property
+    def partial_path(self) -> Path:
+        """Path for in-progress assistant response snapshot."""
+        return self.file_path.with_suffix(f"{self.file_path.suffix}.partial.json")
+
     def append_message(self, message: Message) -> None:
         """Append a single message to the JSONL file."""
         with open(self.file_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(message.to_dict()) + "\n")
+
+    def write_partial_message(self, message: Message) -> None:
+        """Persist in-progress assistant content for crash recovery."""
+        payload: dict[str, Any] = message.to_dict()
+        payload["partial"] = True
+        self.project.get_sessions_path().mkdir(parents=True, exist_ok=True)
+        self.partial_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def finalize_partial_message(self, message: Message) -> None:
+        """Append final assistant message and clear partial snapshot."""
+        self.append_message(message)
+        self.clear_partial_message()
+
+    def clear_partial_message(self) -> None:
+        """Remove persisted partial assistant snapshot if present."""
+        try:
+            self.partial_path.unlink()
+        except FileNotFoundError:
+            return
+
+    def promote_partial_to_log(self) -> Message | None:
+        """Promote persisted partial assistant snapshot into the session log."""
+        if not self.partial_path.exists():
+            return None
+
+        try:
+            data = json.loads(self.partial_path.read_text(encoding="utf-8"))
+            message = Message.from_dict(data)
+        except (OSError, json.JSONDecodeError, KeyError, ValueError):
+            self.clear_partial_message()
+            return None
+
+        if message.role != MessageRole.ASSISTANT:
+            self.clear_partial_message()
+            return None
+
+        self.append_message(message)
+        self.clear_partial_message()
+        return message
 
 
 class SessionReader:
@@ -94,7 +164,28 @@ class SessionReader:
                     # Message line
                     history.messages.append(Message.from_dict(data))
 
+        partial_message = cls._load_partial_message(file_path)
+        if partial_message and not any(
+            msg.id == partial_message.id for msg in history.messages
+        ):
+            history.messages.append(partial_message)
+
         return history
+
+    @classmethod
+    def _load_partial_message(cls, file_path: Path) -> Message | None:
+        """Load in-progress assistant message snapshot, if present."""
+        partial_path = file_path.with_suffix(f"{file_path.suffix}.partial.json")
+        if not partial_path.exists():
+            return None
+
+        try:
+            data = json.loads(partial_path.read_text(encoding="utf-8"))
+            if data.get("role") != MessageRole.ASSISTANT.value:
+                return None
+            return Message.from_dict(data)
+        except (OSError, json.JSONDecodeError, KeyError, ValueError):
+            return None
 
     @classmethod
     def list_sessions(cls, project: "Project", phase: str | None = None) -> list[Path]:

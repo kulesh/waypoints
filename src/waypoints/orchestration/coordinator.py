@@ -14,6 +14,7 @@ Benefits:
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from waypoints.fly.executor import ExecutionContext, ExecutionResult
@@ -320,6 +321,9 @@ class JourneyCoordinator:
         self, user_response: str, on_chunk: ChunkCallback | None = None
     ) -> str:
         return self._shape.continue_qa_dialogue(user_response, on_chunk)
+
+    def resume_qa_dialogue(self, history: DialogueHistory, session_file: Path) -> None:
+        self._shape.resume_qa_dialogue(history, session_file)
 
     def generate_idea_brief(
         self,

@@ -9,6 +9,7 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from waypoints.llm.client import ChatClient, StreamChunk
 from waypoints.llm.prompts import (
@@ -21,7 +22,7 @@ from waypoints.llm.prompts import (
     SPEC_SYSTEM_PROMPT,
     SUMMARY_SYSTEM_PROMPT,
 )
-from waypoints.models import DialogueHistory, MessageRole, SessionWriter
+from waypoints.models import DialogueHistory, Message, MessageRole, SessionWriter
 from waypoints.orchestration.types import ChunkCallback
 
 if TYPE_CHECKING:
@@ -42,6 +43,22 @@ class ShapePhase:
     def dialogue_history(self) -> DialogueHistory | None:
         """Get the current dialogue history."""
         return self._coord._dialogue_history
+
+    def resume_qa_dialogue(self, history: DialogueHistory, session_file: Path) -> None:
+        """Resume Q&A from an existing persisted session."""
+        self._coord._dialogue_history = history
+        writer = SessionWriter.resume(
+            project=self._coord.project,
+            phase="ideation",
+            session_id=history.session_id,
+            file_path=session_file,
+        )
+        promoted = writer.promote_partial_to_log()
+        if promoted is not None and not any(
+            msg.id == promoted.id for msg in self._coord._dialogue_history.messages
+        ):
+            self._coord._dialogue_history.messages.append(promoted)
+        self._coord._session_writer = writer
 
     def start_qa_dialogue(
         self,
@@ -84,7 +101,10 @@ class ShapePhase:
 
         # Add to history and persist
         initial_msg = self._coord._dialogue_history.add_message(
-            MessageRole.USER, initial_context
+            MessageRole.USER,
+            initial_context,
+            internal=True,
+            context_type="idea_seed",
         )
         self._coord._session_writer.append_message(initial_msg)
 
@@ -92,20 +112,34 @@ class ShapePhase:
 
         # Stream response from LLM
         response_content = ""
+        assistant_message_id = str(uuid4())
+        assistant_timestamp = datetime.now(UTC)
         for result in self._coord.llm.stream_message(
             messages=self._coord._dialogue_history.to_api_format(),
             system=QA_SYSTEM_PROMPT,
         ):
             if isinstance(result, StreamChunk):
                 response_content += result.text
+                partial = Message(
+                    role=MessageRole.ASSISTANT,
+                    content=response_content,
+                    timestamp=assistant_timestamp,
+                    id=assistant_message_id,
+                    metadata={"partial": True},
+                )
+                self._coord._session_writer.write_partial_message(partial)
                 if on_chunk:
                     on_chunk(result.text)
 
         # Save assistant response to history
-        assistant_msg = self._coord._dialogue_history.add_message(
-            MessageRole.ASSISTANT, response_content
+        assistant_msg = Message(
+            role=MessageRole.ASSISTANT,
+            content=response_content,
+            timestamp=assistant_timestamp,
+            id=assistant_message_id,
         )
-        self._coord._session_writer.append_message(assistant_msg)
+        self._coord._dialogue_history.messages.append(assistant_msg)
+        self._coord._session_writer.finalize_partial_message(assistant_msg)
 
         return response_content
 
@@ -143,20 +177,34 @@ class ShapePhase:
 
         # Stream response from LLM
         response_content = ""
+        assistant_message_id = str(uuid4())
+        assistant_timestamp = datetime.now(UTC)
         for result in self._coord.llm.stream_message(
             messages=self._coord._dialogue_history.to_api_format(),
             system=QA_SYSTEM_PROMPT,
         ):
             if isinstance(result, StreamChunk):
                 response_content += result.text
+                partial = Message(
+                    role=MessageRole.ASSISTANT,
+                    content=response_content,
+                    timestamp=assistant_timestamp,
+                    id=assistant_message_id,
+                    metadata={"partial": True},
+                )
+                self._coord._session_writer.write_partial_message(partial)
                 if on_chunk:
                     on_chunk(result.text)
 
         # Save assistant response to history
-        assistant_msg = self._coord._dialogue_history.add_message(
-            MessageRole.ASSISTANT, response_content
+        assistant_msg = Message(
+            role=MessageRole.ASSISTANT,
+            content=response_content,
+            timestamp=assistant_timestamp,
+            id=assistant_message_id,
         )
-        self._coord._session_writer.append_message(assistant_msg)
+        self._coord._dialogue_history.messages.append(assistant_msg)
+        self._coord._session_writer.finalize_partial_message(assistant_msg)
 
         return response_content
 

@@ -136,6 +136,71 @@ class TestSessionWriter:
         assert writer.file_path.exists()
         assert (tmp_path / "nested" / "sessions").exists()
 
+    def test_resume_writer_appends_without_rewriting_header(
+        self, mock_project: MockProject
+    ) -> None:
+        """Resumed writer should keep original header and append messages."""
+        writer = SessionWriter(mock_project, "ideation", "session-resume")
+        original_header = _read_jsonl_entries(writer.file_path)[0]
+
+        resumed = SessionWriter.resume(
+            project=mock_project,
+            phase="ideation",
+            session_id="session-resume",
+            file_path=writer.file_path,
+        )
+        resumed.append_message(
+            Message(role=MessageRole.USER, content="continued", id="resume-msg")
+        )
+
+        entries = _read_jsonl_entries(writer.file_path)
+        assert entries[0] == original_header
+        assert entries[1]["content"] == "continued"
+
+    def test_partial_message_is_persisted_and_cleared_on_finalize(
+        self, mock_project: MockProject
+    ) -> None:
+        """Partial assistant snapshots survive until finalized."""
+        writer = SessionWriter(mock_project, "ideation", "session-partial")
+        partial = Message(
+            role=MessageRole.ASSISTANT,
+            content="partial answer",
+            id="assistant-partial",
+        )
+        final = Message(
+            role=MessageRole.ASSISTANT,
+            content="complete answer",
+            id="assistant-partial",
+        )
+
+        writer.write_partial_message(partial)
+        assert writer.partial_path.exists()
+
+        writer.finalize_partial_message(final)
+        assert not writer.partial_path.exists()
+
+        entries = _read_jsonl_entries(writer.file_path)
+        assert entries[-1]["content"] == "complete answer"
+
+    def test_promote_partial_to_log(self, mock_project: MockProject) -> None:
+        """Promoting partial message appends it and removes snapshot."""
+        writer = SessionWriter(mock_project, "ideation", "session-promote")
+        writer.write_partial_message(
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="Recovered partial",
+                id="assistant-promote",
+            )
+        )
+
+        promoted = writer.promote_partial_to_log()
+        assert promoted is not None
+        assert promoted.content == "Recovered partial"
+        assert not writer.partial_path.exists()
+
+        entries = _read_jsonl_entries(writer.file_path)
+        assert entries[-1]["id"] == "assistant-promote"
+
 
 class TestSessionReader:
     """Tests for SessionReader."""
@@ -186,6 +251,26 @@ class TestSessionReader:
         assert loaded_msg.content == "Test content"
         assert loaded_msg.id == "specific-id"
         assert loaded_msg.metadata == {"key": "value"}
+
+    def test_load_includes_partial_assistant_snapshot(
+        self, mock_project: MockProject
+    ) -> None:
+        """Reader appends in-progress assistant snapshot when present."""
+        writer = SessionWriter(mock_project, "ideation", "session-with-partial")
+        writer.append_message(Message(role=MessageRole.USER, content="Q", id="q1"))
+        writer.write_partial_message(
+            Message(
+                role=MessageRole.ASSISTANT,
+                content="In progress...",
+                id="a1",
+                metadata={"partial": True},
+            )
+        )
+
+        history = SessionReader.load(writer.file_path)
+        assert len(history.messages) == 2
+        assert history.messages[-1].role == MessageRole.ASSISTANT
+        assert history.messages[-1].content == "In progress..."
 
     def test_list_sessions(self, mock_project: MockProject) -> None:
         """List session files for project."""

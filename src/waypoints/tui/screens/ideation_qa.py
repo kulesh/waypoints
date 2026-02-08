@@ -13,8 +13,8 @@ from textual.widgets import Footer, Header, Rule, Static
 if TYPE_CHECKING:
     from waypoints.tui.app import WaypointsApp
 
-from waypoints.models import JourneyState, Project
-from waypoints.models.dialogue import MessageRole
+from waypoints.models import JourneyState, Project, SessionReader
+from waypoints.models.dialogue import DialogueHistory, MessageRole
 from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.messages import (
     StreamingChunk,
@@ -133,7 +133,58 @@ class IdeationQAScreen(BaseDialogueScreen):
             reason="ideation_qa.start",
         )
 
-        self._start_qa()
+        resumed = self._resume_latest_qa_session()
+        if not resumed:
+            self._start_qa()
+
+    def _resume_latest_qa_session(self) -> bool:
+        """Resume latest persisted ideation session when available."""
+        session_files = SessionReader.list_sessions(self.project, phase="ideation")
+        if not session_files:
+            return False
+
+        latest_session = session_files[0]
+        history = SessionReader.load(latest_session)
+        if not history.messages:
+            return False
+
+        # If we only have the hidden seed context and no assistant reply yet,
+        # re-run start flow to ask the first question.
+        if not any(msg.role == MessageRole.ASSISTANT for msg in history.messages):
+            return False
+
+        self.coordinator.resume_qa_dialogue(history, latest_session)
+        self._hydrate_dialogue_from_history(history)
+
+        if history.messages[-1].metadata.get("partial"):
+            self.notify(
+                "Recovered a partial AI response from the previous session.",
+                severity="warning",
+            )
+
+        logger.info("Resumed ideation Q&A from %s", latest_session.name)
+        return True
+
+    def _hydrate_dialogue_from_history(self, history: DialogueHistory) -> None:
+        """Render persisted dialogue into the panel without restarting Q&A."""
+        self.history = DialogueHistory(phase=self.phase_name)
+        for msg in history.messages:
+            if msg.metadata.get("internal"):
+                continue
+            if msg.role == MessageRole.USER:
+                self.dialogue_view.add_user_message(msg.content)
+                self.history.add_message(
+                    MessageRole.USER,
+                    msg.content,
+                    **msg.metadata,
+                )
+            elif msg.role == MessageRole.ASSISTANT:
+                self.dialogue_view.add_assistant_message(msg.content)
+                self.history.add_message(
+                    MessageRole.ASSISTANT,
+                    msg.content,
+                    **msg.metadata,
+                )
 
     def handle_user_message(self, text: str) -> None:
         """Process user's answer."""

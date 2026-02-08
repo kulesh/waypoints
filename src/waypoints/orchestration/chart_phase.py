@@ -6,6 +6,9 @@ managing the waypoint graph.
 """
 
 import logging
+import re
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from waypoints.llm.client import ChatClient, StreamChunk
@@ -72,7 +75,11 @@ class ChartPhase:
         prompt = WAYPOINT_GENERATION_PROMPT.format(spec=spec_with_notes)
         logger.info("Generating waypoints from spec: %d chars", len(spec))
 
-        full_response = self._stream_chart_response(prompt, on_chunk)
+        full_response = self._stream_chart_response(
+            prompt,
+            on_chunk,
+            snapshot_label="flight-plan",
+        )
         try:
             waypoints = self._parse_waypoints(
                 full_response,
@@ -82,7 +89,11 @@ class ChartPhase:
         except WaypointValidationError as exc:
             logger.warning("Chart validation failed, retrying: %s", exc.errors)
             retry_prompt = _build_chart_retry_prompt(prompt, exc.errors)
-            full_response = self._stream_chart_response(retry_prompt, on_chunk)
+            full_response = self._stream_chart_response(
+                retry_prompt,
+                on_chunk,
+                snapshot_label="flight-plan-retry",
+            )
             waypoints = self._parse_waypoints(
                 full_response,
                 spec_sections=spec_sections,
@@ -154,7 +165,11 @@ class ChartPhase:
 
         logger.info("Breaking down waypoint: %s", waypoint.id)
 
-        full_response = self._stream_chart_response(prompt, on_chunk)
+        full_response = self._stream_chart_response(
+            prompt,
+            on_chunk,
+            snapshot_label=f"breakdown-{waypoint.id}",
+        )
 
         # Parse sub-waypoints (pass existing IDs for validation)
         existing_ids = (
@@ -172,7 +187,11 @@ class ChartPhase:
         except WaypointValidationError as exc:
             logger.warning("Chart validation failed, retrying: %s", exc.errors)
             retry_prompt = _build_chart_retry_prompt(prompt, exc.errors)
-            full_response = self._stream_chart_response(retry_prompt, on_chunk)
+            full_response = self._stream_chart_response(
+                retry_prompt,
+                on_chunk,
+                snapshot_label=f"breakdown-{waypoint.id}-retry",
+            )
             sub_waypoints = self._parse_waypoints(
                 full_response,
                 existing_ids,
@@ -193,6 +212,8 @@ class ChartPhase:
         self,
         prompt: str,
         on_chunk: ChunkCallback | None = None,
+        *,
+        snapshot_label: str = "chart-response",
     ) -> str:
         """Stream chart response text from the LLM."""
         if self._coord.llm is None:
@@ -202,12 +223,14 @@ class ChartPhase:
             )
 
         full_response = ""
+        snapshot_path = self._chart_snapshot_path(snapshot_label)
         for result in self._coord.llm.stream_message(
             messages=[{"role": "user", "content": prompt}],
             system=CHART_SYSTEM_PROMPT,
         ):
             if isinstance(result, StreamChunk):
                 full_response += result.text
+                self._persist_stream_snapshot(snapshot_path, full_response)
                 if on_chunk:
                     on_chunk(result.text)
         return full_response
@@ -268,12 +291,14 @@ class ChartPhase:
 
         # Stream response from LLM
         full_response = ""
+        snapshot_path = self._chart_snapshot_path("add-waypoint")
         for result in self._coord.llm.stream_message(
             messages=[{"role": "user", "content": prompt}],
             system=CHART_SYSTEM_PROMPT,
         ):
             if isinstance(result, StreamChunk):
                 full_response += result.text
+                self._persist_stream_snapshot(snapshot_path, full_response)
                 if on_chunk:
                     on_chunk(result.text)
 
@@ -364,12 +389,14 @@ class ChartPhase:
 
         # Stream response from LLM
         full_response = ""
+        snapshot_path = self._chart_snapshot_path("reprioritize")
         for result in self._coord.llm.stream_message(
             messages=[{"role": "user", "content": prompt}],
             system=CHART_SYSTEM_PROMPT,
         ):
             if isinstance(result, StreamChunk):
                 full_response += result.text
+                self._persist_stream_snapshot(snapshot_path, full_response)
                 if on_chunk:
                     on_chunk(result.text)
 
@@ -434,6 +461,21 @@ class ChartPhase:
 
         logger.info("Parsed %d waypoints from LLM response", len(waypoints))
         return waypoints
+
+    def _chart_snapshot_path(self, label: str) -> Path:
+        """Create a durable snapshot file path for streaming chart output."""
+        safe_label = re.sub(r"[^a-zA-Z0-9_-]+", "-", label).strip("-") or "chart"
+        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        chart_dir = self._coord.project.get_sessions_path() / "chart"
+        chart_dir.mkdir(parents=True, exist_ok=True)
+        return chart_dir / f"{safe_label}-{timestamp}.stream.txt"
+
+    def _persist_stream_snapshot(self, path: Path, content: str) -> None:
+        """Persist current stream content for crash recovery/debugging."""
+        try:
+            path.write_text(content, encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Failed to persist chart stream snapshot %s: %s", path, exc)
 
     def _next_waypoint_id(self) -> str:
         """Generate next available waypoint ID."""
