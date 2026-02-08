@@ -19,6 +19,7 @@ from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory
 from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.mixins import MentionProcessingMixin
+from waypoints.tui.screens.transition_guard import can_enter_state
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
 
@@ -116,6 +117,8 @@ class ProductSpecScreen(Screen[None]):
         self.history = history
         self.spec_content: str = ""
         self.is_editing: bool = False
+        self._is_generating: bool = False
+        self._stream_file_path: Path | None = None
         self._coordinator: JourneyCoordinator | None = None
 
     @property
@@ -164,12 +167,24 @@ class ProductSpecScreen(Screen[None]):
         # Set up metrics collection for this project
         self.waypoints_app.set_project_for_metrics(self.project)
 
+        journey = self.project.journey
+        if not can_enter_state(journey, JourneyState.SHAPE_SPEC_GENERATING):
+            state_label = journey.state.value if journey else "unknown"
+            logger.warning(
+                "Cannot generate product spec from state %s; redirecting to resume",
+                state_label,
+            )
+            self.notify("Current state changed. Redirecting to the correct screen.")
+            self.app.call_later(self._redirect_to_current_phase)
+            return
+
         # Transition journey state: SHAPE_BRIEF_REVIEW -> SHAPE_SPEC_GENERATING
         self.coordinator.transition(
             JourneyState.SHAPE_SPEC_GENERATING,
             reason="product_spec.generate",
         )
 
+        self._is_generating = True
         self._generate_spec()
 
     @work(thread=True)
@@ -185,6 +200,8 @@ class ProductSpecScreen(Screen[None]):
         def on_chunk(chunk: str) -> None:
             nonlocal accumulated_content
             accumulated_content += chunk
+            self.spec_content = accumulated_content
+            self._persist_stream_snapshot()
             self.app.call_from_thread(self._update_spec_display, accumulated_content)
 
         try:
@@ -197,16 +214,34 @@ class ProductSpecScreen(Screen[None]):
             self.app.call_from_thread(self.waypoints_app.update_header_cost)
 
             self.spec_content = spec_content
+            self._persist_stream_snapshot()
             self.app.call_from_thread(self._finalize_spec)
 
         except Exception as e:
+            self._is_generating = False
             logger.exception("Error generating spec: %s", e)
             self.spec_content = f"# Error\n\nFailed to generate specification: {e}"
             self.app.call_from_thread(self._update_spec_display, self.spec_content)
             self.app.call_from_thread(self.notify, f"Error: {e}", severity="error")
 
-        # Stop thinking indicator
+        # Stop thinking indicator.
         self.app.call_from_thread(self._set_thinking, False)
+
+    def _next_output_file_path(self) -> Path:
+        """Allocate a stable output file for this generation run."""
+        if self._stream_file_path is None:
+            timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            docs_dir = self.project.get_docs_path()
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            self._stream_file_path = docs_dir / f"product-spec-{timestamp}.md"
+        return self._stream_file_path
+
+    def _persist_stream_snapshot(self) -> None:
+        """Persist latest generated content to disk during streaming."""
+        try:
+            self._next_output_file_path().write_text(self.spec_content)
+        except OSError as e:
+            logger.exception("Failed to persist streamed spec: %s", e)
 
     def _set_thinking(self, thinking: bool) -> None:
         """Toggle the model status indicator."""
@@ -224,7 +259,7 @@ class ProductSpecScreen(Screen[None]):
         editor.text = self.spec_content
 
         # Update file path display (coordinator already saved)
-        file_path = self._get_latest_file_path()
+        file_path = self._stream_file_path or self._get_latest_file_path()
         self.query_one("#file-path", Static).update(str(file_path))
 
         # Transition journey state: SHAPE_SPEC_GENERATING -> SHAPE_SPEC_REVIEW
@@ -235,11 +270,13 @@ class ProductSpecScreen(Screen[None]):
 
         self.notify(f"Saved to {file_path.name}", severity="information")
         logger.info("Spec generation complete: %d chars", len(self.spec_content))
+        self._is_generating = False
 
     def _save_to_disk(self) -> None:
         """Save the spec content to disk (for edits)."""
-        file_path = self._get_latest_file_path()
+        file_path = self._stream_file_path or self._get_latest_file_path()
         try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(self.spec_content)
             logger.info("Saved spec to %s", file_path)
             self.notify(f"Saved to {file_path.name}", severity="information")
@@ -279,9 +316,17 @@ class ProductSpecScreen(Screen[None]):
 
     def action_proceed_to_waypoints(self) -> None:
         """Proceed to CHART phase (waypoint planning)."""
+        if self._is_generating:
+            self.notify("Product spec generation is still running. Please wait.")
+            return
+
         if self.is_editing:
             editor = self.query_one("#spec-editor", TextArea)
             self.spec_content = editor.text
+
+        if not self.spec_content.strip():
+            self.notify("Product spec is empty. Wait for generation to complete.")
+            return
 
         # Save before proceeding
         self._save_to_disk()
@@ -296,6 +341,10 @@ class ProductSpecScreen(Screen[None]):
                 "history": self.history,
             },
         )
+
+    def _redirect_to_current_phase(self) -> None:
+        """Route to screen matching current persisted journey phase."""
+        self.waypoints_app._resume_project(self.project)
 
     def action_back(self) -> None:
         """Go back to Idea Brief screen."""

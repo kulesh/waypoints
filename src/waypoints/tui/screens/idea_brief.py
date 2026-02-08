@@ -19,6 +19,7 @@ from waypoints.models import JourneyState, Project
 from waypoints.models.dialogue import DialogueHistory
 from waypoints.orchestration import JourneyCoordinator
 from waypoints.tui.mixins import MentionProcessingMixin
+from waypoints.tui.screens.transition_guard import can_enter_state
 from waypoints.tui.widgets.dialogue import ThinkingIndicator
 from waypoints.tui.widgets.status_indicator import ModelStatusIndicator
 
@@ -113,6 +114,8 @@ class IdeaBriefScreen(Screen[None]):
         self.history = history
         self.brief_content: str = ""
         self.is_editing: bool = False
+        self._is_generating: bool = False
+        self._stream_file_path: Path | None = None
         self._coordinator: JourneyCoordinator | None = None
 
     @property
@@ -167,6 +170,7 @@ class IdeaBriefScreen(Screen[None]):
             reason="idea_brief.generate",
         )
 
+        self._is_generating = True
         self._generate_brief()
 
     @work(thread=True)
@@ -184,6 +188,8 @@ class IdeaBriefScreen(Screen[None]):
         def on_chunk(chunk: str) -> None:
             nonlocal accumulated_content
             accumulated_content += chunk
+            self.brief_content = accumulated_content
+            self._persist_stream_snapshot()
             self.app.call_from_thread(self._update_brief_display, accumulated_content)
 
         try:
@@ -196,16 +202,34 @@ class IdeaBriefScreen(Screen[None]):
             self.app.call_from_thread(self.waypoints_app.update_header_cost)
 
             self.brief_content = brief_content
+            self._persist_stream_snapshot()
             self.app.call_from_thread(self._finalize_brief)
 
         except Exception as e:
+            self._is_generating = False
             logger.exception("Error generating brief: %s", e)
             self.brief_content = f"# Error\n\nFailed to generate brief: {e}"
             self.app.call_from_thread(self._update_brief_display, self.brief_content)
             self.app.call_from_thread(self.notify, f"Error: {e}", severity="error")
 
-        # Stop thinking indicator
+        # Stop thinking indicator.
         self.app.call_from_thread(self._set_thinking, False)
+
+    def _next_output_file_path(self) -> Path:
+        """Allocate a stable output file for this generation run."""
+        if self._stream_file_path is None:
+            timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            docs_dir = self.project.get_docs_path()
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            self._stream_file_path = docs_dir / f"idea-brief-{timestamp}.md"
+        return self._stream_file_path
+
+    def _persist_stream_snapshot(self) -> None:
+        """Persist latest generated content to disk during streaming."""
+        try:
+            self._next_output_file_path().write_text(self.brief_content)
+        except OSError as e:
+            logger.exception("Failed to persist streamed brief: %s", e)
 
     def _set_thinking(self, thinking: bool) -> None:
         """Toggle the model status indicator."""
@@ -223,7 +247,7 @@ class IdeaBriefScreen(Screen[None]):
         editor.text = self.brief_content
 
         # Update file path display (coordinator already saved)
-        file_path = self._get_latest_file_path()
+        file_path = self._stream_file_path or self._get_latest_file_path()
         self.query_one("#file-path", Static).update(str(file_path))
 
         # Transition journey state: SHAPE_BRIEF_GENERATING -> SHAPE_BRIEF_REVIEW
@@ -234,11 +258,13 @@ class IdeaBriefScreen(Screen[None]):
 
         self.notify(f"Saved to {file_path.name}", severity="information")
         logger.info("Brief generation complete: %d chars", len(self.brief_content))
+        self._is_generating = False
 
     def _save_to_disk(self) -> None:
         """Save the brief content to disk (for edits)."""
-        file_path = self._get_latest_file_path()
+        file_path = self._stream_file_path or self._get_latest_file_path()
         try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(self.brief_content)
             logger.info("Saved brief to %s", file_path)
             self.notify(f"Saved to {file_path.name}", severity="information")
@@ -278,9 +304,28 @@ class IdeaBriefScreen(Screen[None]):
 
     def action_proceed_to_spec(self) -> None:
         """Proceed to Product Specification phase."""
+        if self._is_generating:
+            self.notify("Idea brief generation is still running. Please wait.")
+            return
+
         if self.is_editing:
             editor = self.query_one("#brief-editor", TextArea)
             self.brief_content = editor.text
+
+        if not self.brief_content.strip():
+            self.notify("Idea brief is empty. Wait for generation to complete.")
+            return
+
+        journey = self.project.journey
+        if not can_enter_state(journey, JourneyState.SHAPE_SPEC_GENERATING):
+            state_label = journey.state.value if journey else "unknown"
+            logger.warning(
+                "Cannot continue to product spec from state %s; redirecting to resume",
+                state_label,
+            )
+            self.notify("Current state changed. Redirecting to the correct screen.")
+            self.app.call_later(self._redirect_to_current_phase)
+            return
 
         # Save before proceeding
         self._save_to_disk()
@@ -294,6 +339,10 @@ class IdeaBriefScreen(Screen[None]):
                 "history": self.history,
             },
         )
+
+    def _redirect_to_current_phase(self) -> None:
+        """Route to screen matching current persisted journey phase."""
+        self.waypoints_app._resume_project(self.project)
 
     def action_back(self) -> None:
         """Go back to project selection."""
