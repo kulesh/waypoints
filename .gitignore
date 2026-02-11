@@ -26,7 +26,6 @@ htmlcov/
 .waypoints/
 *.log
 .uv-cache/
-.beads/
 .claude/
 tmp/
 
