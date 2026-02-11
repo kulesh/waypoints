@@ -1,7 +1,7 @@
 """FLY screen for waypoint implementation."""
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -39,10 +39,19 @@ from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
 from waypoints.orchestration.coordinator_fly import prepare_waypoint_for_rerun
-from waypoints.orchestration.fly_presenter import build_state_message, build_status_line
+from waypoints.orchestration.fly_presenter import build_status_line
 from waypoints.orchestration.fly_service import FlyService
 from waypoints.orchestration.types import NextAction
 from waypoints.runtime import TimeoutDomain, get_command_runner
+from waypoints.tui.screens.fly_session import FlySession
+from waypoints.tui.screens.fly_status import derive_state_message, format_countdown
+from waypoints.tui.screens.fly_timers import (
+    activate_budget_wait,
+    clear_budget_wait,
+    elapsed_seconds,
+    evaluate_budget_wait_tick,
+    transition_execution_timers,
+)
 from waypoints.tui.screens.intervention import InterventionModal
 from waypoints.tui.widgets import fly_waypoint_list_panel as _fly_waypoint_list_panel
 from waypoints.tui.widgets.file_preview import FilePreviewModal
@@ -167,18 +176,74 @@ class FlyScreen(Screen[None]):
             flight_plan=flight_plan,
         )
         self._fly_service = FlyService(self.coordinator)
+        self._session = FlySession()
 
-        self._additional_iterations: int = 0
-
-        # Timer tracking
-        self._execution_start: datetime | None = None
-        self._elapsed_before_pause: float = 0.0
-        self._ticker_timer: Timer | None = None
-        self._budget_wait_timer: Timer | None = None
-        self._budget_resume_at: datetime | None = None
-        self._budget_resume_waypoint_id: str | None = None
         # Track live criteria completion for cross-check with receipt
         self._live_criteria_completed: set[int] = set()
+
+    def _ensure_session(self) -> FlySession:
+        session = getattr(self, "_session", None)
+        if session is None:
+            session = FlySession()
+            self._session = session
+        return session
+
+    # Compatibility accessors during FlySession migration.
+    @property
+    def _additional_iterations(self) -> int:
+        return self._ensure_session().additional_iterations
+
+    @_additional_iterations.setter
+    def _additional_iterations(self, value: int) -> None:
+        self._ensure_session().additional_iterations = value
+
+    @property
+    def _execution_start(self) -> datetime | None:
+        return self._ensure_session().execution_start
+
+    @_execution_start.setter
+    def _execution_start(self, value: datetime | None) -> None:
+        self._ensure_session().execution_start = value
+
+    @property
+    def _elapsed_before_pause(self) -> float:
+        return self._ensure_session().elapsed_before_pause
+
+    @_elapsed_before_pause.setter
+    def _elapsed_before_pause(self, value: float) -> None:
+        self._ensure_session().elapsed_before_pause = value
+
+    @property
+    def _ticker_timer(self) -> Timer | None:
+        return self._ensure_session().ticker_timer
+
+    @_ticker_timer.setter
+    def _ticker_timer(self, value: Timer | None) -> None:
+        self._ensure_session().ticker_timer = value
+
+    @property
+    def _budget_wait_timer(self) -> Timer | None:
+        return self._ensure_session().budget_wait_timer
+
+    @_budget_wait_timer.setter
+    def _budget_wait_timer(self, value: Timer | None) -> None:
+        self._ensure_session().budget_wait_timer = value
+
+    @property
+    def _budget_resume_at(self) -> datetime | None:
+        return self._ensure_session().budget_resume_at
+
+    @_budget_resume_at.setter
+    def _budget_resume_at(self, value: datetime | None) -> None:
+        self._ensure_session().budget_resume_at = value
+
+    @property
+    def _budget_resume_waypoint_id(self) -> str | None:
+        return self._ensure_session().budget_resume_waypoint_id
+
+    @_budget_resume_waypoint_id.setter
+    def _budget_resume_waypoint_id(self, value: str | None) -> None:
+        self._ensure_session().budget_resume_waypoint_id = value
 
     @property
     def waypoints_app(self) -> "WaypointsApp":
@@ -249,12 +314,12 @@ class FlyScreen(Screen[None]):
 
     def on_unmount(self) -> None:
         """Stop active timers when leaving the screen."""
-        if self._ticker_timer:
-            self._ticker_timer.stop()
-            self._ticker_timer = None
-        if self._budget_wait_timer:
-            self._budget_wait_timer.stop()
-            self._budget_wait_timer = None
+        transition_execution_timers(
+            self._ensure_session(),
+            state=ExecutionState.IDLE.value,
+            start_ticker=lambda: self.set_interval(1.0, self._update_ticker),
+        )
+        clear_budget_wait(self._ensure_session())
         git_timer = getattr(self, "_git_status_timer", None)
         if git_timer:
             git_timer.stop()
@@ -427,48 +492,21 @@ class FlyScreen(Screen[None]):
 
     def _get_state_message(self, state: ExecutionState) -> str:
         """Get the status bar message for a given execution state."""
-        if state == ExecutionState.PAUSED:
-            budget_resume_waypoint_id = getattr(
-                self, "_budget_resume_waypoint_id", None
-            )
-            budget_resume_at = getattr(self, "_budget_resume_at", None)
-            if budget_resume_waypoint_id:
-                if budget_resume_at:
-                    remaining_secs = max(
-                        0,
-                        int((budget_resume_at - datetime.now(UTC)).total_seconds()),
-                    )
-                    return (
-                        f"Budget pause on {budget_resume_waypoint_id}. "
-                        f"Auto-resume in {self._format_countdown(remaining_secs)}"
-                    )
-                return (
-                    f"Budget pause on {budget_resume_waypoint_id}. "
-                    "Press 'r' after budget resets."
-                )
-
-        return build_state_message(
+        return derive_state_message(
             state=state.value,
             current_waypoint=self.current_waypoint,
             get_completion_status=self._get_completion_status,
+            budget_resume_waypoint_id=self._ensure_session().budget_resume_waypoint_id,
+            budget_resume_at=self._ensure_session().budget_resume_at,
         )
 
     def _format_countdown(self, total_seconds: int) -> str:
         """Format a countdown for status-bar display."""
-        hours, rem = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(rem, 60)
-        if hours > 0:
-            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        return f"{minutes:02d}:{seconds:02d}"
+        return format_countdown(total_seconds)
 
     def _clear_budget_wait(self) -> None:
         """Clear any active budget-wait countdown state."""
-        self._budget_resume_at = None
-        self._budget_resume_waypoint_id = None
-        budget_wait_timer = getattr(self, "_budget_wait_timer", None)
-        if budget_wait_timer:
-            budget_wait_timer.stop()
-        self._budget_wait_timer = None
+        clear_budget_wait(self._ensure_session())
 
     def _activate_budget_wait(
         self, intervention: Intervention, log: ExecutionLog
@@ -481,9 +519,6 @@ class FlyScreen(Screen[None]):
                 self.current_waypoint.id if self.current_waypoint else None
             ),
         )
-        self._budget_resume_waypoint_id = details.waypoint_id
-        self._budget_resume_at = details.resume_at
-
         # Budget pause is recoverable work: keep waypoint pending, not failed.
         if self.current_waypoint:
             self.coordinator.mark_waypoint_status(
@@ -510,15 +545,13 @@ class FlyScreen(Screen[None]):
         self.query_one(StatusHeader).set_normal()
         self._refresh_waypoint_list()
 
-        if self._budget_wait_timer:
-            self._budget_wait_timer.stop()
-            self._budget_wait_timer = None
-        if self._budget_resume_at:
-            self._budget_wait_timer = self.set_interval(1.0, self._on_budget_wait_tick)
-            remaining_secs = max(
-                0,
-                int((self._budget_resume_at - datetime.now(UTC)).total_seconds()),
-            )
+        remaining_secs = activate_budget_wait(
+            self._ensure_session(),
+            waypoint_id=details.waypoint_id,
+            resume_at=details.resume_at,
+            start_timer=lambda: self.set_interval(1.0, self._on_budget_wait_tick),
+        )
+        if remaining_secs is not None:
             self.notify(
                 "Budget limit reached. "
                 f"Auto-resume in {self._format_countdown(remaining_secs)}.",
@@ -532,21 +565,12 @@ class FlyScreen(Screen[None]):
 
     def _on_budget_wait_tick(self) -> None:
         """Update budget countdown and auto-resume when reset time is reached."""
-        if self._budget_resume_at is None:
-            if self._budget_wait_timer:
-                self._budget_wait_timer.stop()
-                self._budget_wait_timer = None
-            return
-
-        remaining_secs = int(
-            (self._budget_resume_at - datetime.now(UTC)).total_seconds()
-        )
-        if remaining_secs > 0:
+        decision = evaluate_budget_wait_tick(self._ensure_session())
+        if decision.should_refresh_status:
             self._update_status_bar(self.execution_state)
             return
 
-        target_waypoint_id = self._budget_resume_waypoint_id
-        self._clear_budget_wait()
+        target_waypoint_id = decision.resume_waypoint_id
 
         if self.execution_state != ExecutionState.PAUSED:
             return
@@ -581,11 +605,10 @@ class FlyScreen(Screen[None]):
 
     def _update_ticker(self) -> None:
         """Update the status bar with elapsed time and cost."""
-        if self._execution_start is None:
+        total_elapsed = elapsed_seconds(self._ensure_session())
+        if total_elapsed is None:
             return
 
-        current_elapsed = (datetime.now(UTC) - self._execution_start).total_seconds()
-        total_elapsed = self._elapsed_before_pause + current_elapsed
         minutes, seconds = divmod(int(total_elapsed), 60)
 
         cost = (
@@ -616,7 +639,7 @@ class FlyScreen(Screen[None]):
         list_panel = self.query_one(WaypointListPanel)
         list_panel.update_action_hint(message)
 
-        if state == ExecutionState.RUNNING and self._execution_start:
+        if state == ExecutionState.RUNNING and self._ensure_session().execution_start:
             # Timer callback will handle updates
             return
 
@@ -642,27 +665,11 @@ class FlyScreen(Screen[None]):
 
     def watch_execution_state(self, state: ExecutionState) -> None:
         """Update UI when execution state changes."""
-        # Handle timer based on state transitions
-        if state == ExecutionState.RUNNING:
-            # Start or resume timer
-            self._execution_start = datetime.now(UTC)
-            self._ticker_timer = self.set_interval(1.0, self._update_ticker)
-        elif state == ExecutionState.PAUSED:
-            # Accumulate elapsed time before stopping
-            if self._execution_start:
-                elapsed = (datetime.now(UTC) - self._execution_start).total_seconds()
-                self._elapsed_before_pause += elapsed
-            if self._ticker_timer:
-                self._ticker_timer.stop()
-                self._ticker_timer = None
-        elif state in (ExecutionState.DONE, ExecutionState.IDLE):
-            # Reset everything
-            if self._ticker_timer:
-                self._ticker_timer.stop()
-                self._ticker_timer = None
-            self._elapsed_before_pause = 0.0
-            self._execution_start = None
-            self._clear_budget_wait()
+        transition_execution_timers(
+            self._ensure_session(),
+            state=state.value,
+            start_ticker=lambda: self.set_interval(1.0, self._update_ticker),
+        )
 
         # Update status bar
         self._update_status_bar(state)
