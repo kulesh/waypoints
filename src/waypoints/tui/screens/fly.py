@@ -1111,12 +1111,6 @@ class FlyScreen(Screen[None]):
             self.coordinator.clear_intervention()
             return
 
-        # Keep UI-level rollback side effect (git reset + plan reload) while
-        # delegating status mutation and next-action selection to coordinator.
-        if result and result.action == InterventionAction.ROLLBACK:
-            log.write_log("Rolling back to last safe tag")
-            self._rollback_to_safe_tag(result.rollback_tag)
-
         if resolution.action == "budget_wait" and current is not None:
             self._activate_budget_wait(current, log)
             self.coordinator.clear_intervention()
@@ -1171,21 +1165,14 @@ class FlyScreen(Screen[None]):
                 )
             elif result and result.action == InterventionAction.WAIT:
                 self.notify("Execution paused")
+            elif result and result.action == InterventionAction.ROLLBACK:
+                rollback_message = next_action.message or "Rollback attempt paused."
+                if rollback_message.lower().startswith("rollback failed:"):
+                    self.notify(rollback_message, severity="warning")
+                else:
+                    self.notify(rollback_message)
 
         self.coordinator.clear_intervention()
-
-    def _rollback_to_safe_tag(self, tag: str | None) -> None:
-        """Rollback git to the specified tag or find the last safe one."""
-        result = self.coordinator.rollback_to_tag(tag)
-        if result.success:
-            self.notify(result.message)
-            if result.flight_plan:
-                self.flight_plan = result.flight_plan
-                self._refresh_waypoint_list()
-        elif "No rollback tag" in result.message:
-            self.notify(result.message, severity="warning")
-        else:
-            self.notify(result.message, severity="error")
 
     def _refresh_waypoint_list(
         self, execution_state: ExecutionState | None = None

@@ -51,6 +51,9 @@ from waypoints.fly.intervention import (
     InterventionType,
 )
 from waypoints.fly.intervention_policy import classify_execution_error
+from waypoints.fly.kickoff_prompt import (
+    build_iteration_kickoff_prompt as _build_iteration_kickoff_prompt_payload,
+)
 from waypoints.fly.protocol import parse_stage_reports
 from waypoints.fly.provenance import (
     WorkspaceDiffSummary,
@@ -956,32 +959,20 @@ class WaypointExecutor:
             for idx, criterion in captured_criteria.items()
             if criterion.status == "verified"
         }
-        unresolved_lines = [
-            f"- [ ] [{idx}] {text}"
-            for idx, text in enumerate(self.waypoint.acceptance_criteria)
-            if idx not in verified_criteria
-        ]
-        unresolved_block = (
-            "\n".join(unresolved_lines)
-            if unresolved_lines
-            else "- All criteria appear verified; finish protocol and validation."
-        )
-        return (
-            "Iteration kickoff\n"
-            f"Reason: {reason_code}\n"
-            f"Details: {reason_detail}\n\n"
-            f"Current waypoint: {self.waypoint.id} - {self.waypoint.title}\n"
-            f"Objective: {self.waypoint.objective}\n\n"
-            "Unresolved criteria:\n"
-            f"{unresolved_block}\n\n"
-            "Required next action:\n"
-            "- Continue implementation from current filesystem state.\n"
-            "- Run only necessary validations for changed code.\n"
-            "- Report structured execution stages.\n\n"
-            "Completion rule (strict):\n"
-            f"- Emit exactly: {completion_marker}\n"
-            "- Do not use aliases like WAYPOINT_COMPLETE.\n"
-            "- Do not re-audit unrelated waypoints."
+        return _build_iteration_kickoff_prompt_payload(
+            reason_code=reason_code,
+            reason_detail=reason_detail,
+            completion_marker=completion_marker,
+            waypoint_id=self.waypoint.id,
+            waypoint_title=self.waypoint.title,
+            waypoint_objective=self.waypoint.objective,
+            acceptance_criteria=self.waypoint.acceptance_criteria,
+            verified_criteria=verified_criteria,
+            spec_context_summary=self.waypoint.spec_context_summary.strip(),
+            spec_section_refs=self.waypoint.spec_section_refs,
+            waypoint_spec_hash=self.waypoint.spec_context_hash,
+            current_spec_hash=self._current_spec_hash,
+            spec_context_stale=self._spec_context_stale,
         )
 
     def _detect_protocol_issues(

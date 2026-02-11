@@ -361,7 +361,7 @@ def test_build_intervention_resolution_skip_computes_next_action_without_mutatio
     assert action.waypoint.id == "WP-002"
 
 
-def test_build_intervention_resolution_rollback_pauses_and_sets_pending() -> None:
+def test_build_intervention_resolution_rollback_requests_pause() -> None:
     plan = FlightPlan()
     waypoint = Waypoint(
         id="WP-001",
@@ -385,9 +385,9 @@ def test_build_intervention_resolution_rollback_pauses_and_sets_pending() -> Non
         rollback_tag="waypoint/WP-000",
     )
 
-    assert new_status == WaypointStatus.PENDING
+    assert new_status is None
     assert action.action == "pause"
-    assert action.message == "Rolled back to waypoint/WP-000"
+    assert action.message == "Rollback requested for waypoint/WP-000"
 
 
 def test_build_intervention_resolution_abort_marks_failed_and_aborts() -> None:

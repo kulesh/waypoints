@@ -170,8 +170,15 @@ def build_intervention_resolution(
 
     if action == InterventionAction.ROLLBACK:
         return (
-            WaypointStatus.PENDING,
-            NextAction(action="pause", message=f"Rolled back to {rollback_tag}"),
+            None,
+            NextAction(
+                action="pause",
+                message=(
+                    f"Rollback requested for {rollback_tag}"
+                    if rollback_tag
+                    else "Rollback requested"
+                ),
+            ),
         )
 
     if action == InterventionAction.ABORT:

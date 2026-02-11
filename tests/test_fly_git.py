@@ -29,11 +29,13 @@ class _GitStub:
         commit_success: bool = True,
         commit_message: str = "ok",
         reset_success: bool = True,
+        head_commit: str | None = "deadbeef",
     ) -> None:
         self._is_repo = is_repo
         self._commit_success = commit_success
         self._commit_message = commit_message
         self._reset_success = reset_success
+        self._head_commit = head_commit
         self.init_calls = 0
         self.stage_calls: list[str] = []
         self.commit_calls: list[str] = []
@@ -58,8 +60,8 @@ class _GitStub:
             message=self._commit_message,
         )
 
-    def get_head_commit(self) -> str:
-        return "deadbeef"
+    def get_head_commit(self) -> str | None:
+        return self._head_commit
 
     def tag(self, name: str, message: str) -> None:
         self.tag_calls.append((name, message))
@@ -154,4 +156,43 @@ def test_rollback_to_tag_loads_flight_plan(
 
     assert result.success is True
     assert result.flight_plan is loaded_plan
+    assert result.resolved_ref == "demo/WP-101"
     assert git.reset_calls == ["demo/WP-101"]
+
+
+def test_rollback_to_tag_without_tag_falls_back_to_head(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = _ProjectStub(tmp_path)
+    git = _GitStub(is_repo=True, reset_success=True, head_commit="abc1234")
+    loaded_plan = object()
+
+    class _Reader:
+        @staticmethod
+        def load(project_obj: object) -> object:
+            _ = project_obj
+            return loaded_plan
+
+    monkeypatch.setattr("waypoints.orchestration.fly_git.FlightPlanReader", _Reader)
+
+    result = rollback_to_tag(project, None, git_service=git)
+
+    assert result.success is True
+    assert result.flight_plan is loaded_plan
+    assert result.resolved_ref == "HEAD"
+    assert "HEAD (abc1234)" in result.message
+    assert git.reset_calls == ["HEAD"]
+
+
+def test_rollback_to_tag_without_anchor_returns_actionable_message(
+    tmp_path: Path,
+) -> None:
+    project = _ProjectStub(tmp_path)
+    git = _GitStub(is_repo=True, reset_success=True, head_commit=None)
+
+    result = rollback_to_tag(project, None, git_service=git)
+
+    assert result.success is False
+    assert "No rollback reference available" in result.message
+    assert "git add -A && git commit" in result.message
+    assert result.resolved_ref is None

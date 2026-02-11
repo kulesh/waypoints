@@ -243,12 +243,39 @@ class FlyPhase:
         Budget-exceeded interventions are auto-handled (budget wait).
         Everything else requires a modal.
         """
+        self._seed_rollback_context(intervention)
         self._current_intervention = intervention
         show_modal = intervention.type != InterventionType.BUDGET_EXCEEDED
         return InterventionPresentation(
             show_modal=show_modal,
             intervention=intervention,
         )
+
+    def _seed_rollback_context(self, intervention: Intervention) -> None:
+        """Populate intervention context with a best-effort rollback reference."""
+        if (
+            "last_safe_ref" in intervention.context
+            or "last_safe_tag" in intervention.context
+        ):
+            return
+
+        git_service = self._coord.git
+        if git_service is None:
+            return
+
+        try:
+            if not git_service.is_git_repo():
+                return
+            head_commit = git_service.get_head_commit()
+            if head_commit is None:
+                return
+            intervention.context["last_safe_ref"] = "HEAD"
+            intervention.context["last_safe_commit"] = head_commit
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to seed rollback context for intervention on %s",
+                intervention.waypoint.id,
+            )
 
     def store_worker_intervention(self, intervention: Intervention) -> None:
         """Store an intervention caught by the worker thread for main-thread pickup."""
@@ -430,6 +457,47 @@ class FlyPhase:
         Returns:
             NextAction indicating what UI should do next
         """
+        if action == InterventionAction.ROLLBACK:
+            rollback_ref = rollback_tag
+            if rollback_ref is None:
+                context_ref = intervention.context.get("last_safe_ref")
+                if isinstance(context_ref, str) and context_ref.strip():
+                    rollback_ref = context_ref.strip()
+                elif (
+                    context_tag := intervention.context.get("last_safe_tag")
+                ) and isinstance(context_tag, str):
+                    rollback_ref = context_tag.strip()
+
+            rollback_result = self.rollback_to_tag(rollback_ref)
+            self._coord.current_waypoint = None
+            if rollback_result.success:
+                if self._coord.flight_plan is not None:
+                    rolled_back_waypoint = self._coord.flight_plan.get_waypoint(
+                        intervention.waypoint.id
+                    )
+                    if rolled_back_waypoint is not None:
+                        rolled_back_waypoint.status = WaypointStatus.PENDING
+                        rolled_back_waypoint.completed_at = None
+                self._coord.save_flight_plan()
+                return NextAction(
+                    action="pause",
+                    message=(
+                        f"{rollback_result.message}. "
+                        "Waypoint reset to PENDING; press 'r' to retry."
+                    ),
+                )
+
+            return NextAction(
+                action="pause",
+                message=(
+                    f"Rollback failed: {rollback_result.message} "
+                    "Fix path: ensure a git rollback anchor exists via "
+                    "`git add -A && git commit -m "
+                    '"checkpoint: safe rollback anchor"`, '
+                    "then choose Rollback again."
+                ),
+            )
+
         new_status, next_action = build_intervention_resolution(
             flight_plan=self._coord.flight_plan,
             intervention=intervention,

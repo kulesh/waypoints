@@ -11,6 +11,7 @@ from waypoints.fly.intervention import (
     InterventionType,
 )
 from waypoints.models.waypoint import Waypoint, WaypointStatus
+from waypoints.tui.screens.intervention import InterventionModal
 
 
 @pytest.fixture
@@ -270,3 +271,50 @@ class TestInterventionNeededError:
 
         assert exc_info.value.intervention.type == InterventionType.EXECUTION_ERROR
         assert exc_info.value.intervention.waypoint.id == "WP-1"
+
+
+class TestInterventionModalRollbackContext:
+    """Tests rollback context resolution in InterventionModal."""
+
+    def test_action_rollback_prefers_last_safe_ref(
+        self, sample_waypoint: Waypoint
+    ) -> None:
+        intervention = Intervention(
+            type=InterventionType.EXECUTION_ERROR,
+            waypoint=sample_waypoint,
+            iteration=2,
+            max_iterations=10,
+            error_summary="Needs rollback",
+            context={"last_safe_ref": "HEAD", "last_safe_tag": "demo/WP-1"},
+        )
+        modal = InterventionModal(intervention)
+        captured: list[InterventionResult | None] = []
+        modal.dismiss = lambda result=None: captured.append(result)  # type: ignore[method-assign]
+
+        modal.action_rollback()
+
+        assert captured
+        assert captured[0] is not None
+        assert captured[0].action == InterventionAction.ROLLBACK
+        assert captured[0].rollback_tag == "HEAD"
+
+    def test_action_rollback_falls_back_to_last_safe_tag(
+        self, sample_waypoint: Waypoint
+    ) -> None:
+        intervention = Intervention(
+            type=InterventionType.EXECUTION_ERROR,
+            waypoint=sample_waypoint,
+            iteration=2,
+            max_iterations=10,
+            error_summary="Needs rollback",
+            context={"last_safe_tag": "demo/WP-1"},
+        )
+        modal = InterventionModal(intervention)
+        captured: list[InterventionResult | None] = []
+        modal.dismiss = lambda result=None: captured.append(result)  # type: ignore[method-assign]
+
+        modal.action_rollback()
+
+        assert captured
+        assert captured[0] is not None
+        assert captured[0].rollback_tag == "demo/WP-1"

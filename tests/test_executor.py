@@ -515,7 +515,14 @@ class TestWaypointExecutor:
         self, mock_project: MagicMock, waypoint: Waypoint
     ) -> None:
         """Kickoff prompt includes explicit reason and strict completion rule."""
+        waypoint.spec_context_summary = (
+            "Implement feature X with migration-safe behavior and tests."
+        )
+        waypoint.spec_section_refs = ["2.1 Scope", "5.2 Validation"]
+        waypoint.spec_context_hash = "abc123"
         executor = WaypointExecutor(mock_project, waypoint, "spec")
+        executor._current_spec_hash = "def456"
+        executor._spec_context_stale = True
         prompt = executor._build_iteration_kickoff_prompt(
             reason_code="protocol_violation",
             reason_detail="missing completion marker",
@@ -526,6 +533,27 @@ class TestWaypointExecutor:
         assert "missing completion marker" in prompt
         assert "<waypoint-complete>WP-1</waypoint-complete>" in prompt
         assert "Do not use aliases" in prompt
+        assert "Spec context capsule" in prompt
+        assert "docs/product-spec.md" in prompt
+        assert "2.1 Scope" in prompt
+        assert "Context stale: yes" in prompt
+
+    def test_build_iteration_kickoff_prompt_truncates_reason_detail(
+        self, mock_project: MagicMock, waypoint: Waypoint
+    ) -> None:
+        """Kickoff prompt should bound noisy reason details."""
+        executor = WaypointExecutor(mock_project, waypoint, "spec")
+        long_detail = "x" * 1500
+
+        prompt = executor._build_iteration_kickoff_prompt(
+            reason_code="host_validation_failed",
+            reason_detail=long_detail,
+            completion_marker="<waypoint-complete>WP-1</waypoint-complete>",
+            captured_criteria={},
+        )
+
+        assert "... (truncated)" in prompt
+        assert long_detail not in prompt
 
     def test_refresh_project_memory_builds_waypoint_context(
         self, mock_project: MagicMock, waypoint: Waypoint, tmp_path: Path

@@ -84,6 +84,7 @@ class RollbackResult:
 
     success: bool
     message: str
+    resolved_ref: str | None = None
     flight_plan: "FlightPlan | None" = None
     """Reloaded flight plan after rollback, or None on failure."""
 

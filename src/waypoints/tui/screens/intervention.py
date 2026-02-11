@@ -228,10 +228,13 @@ class InterventionModal(ModalScreen[InterventionResult | None]):
     def action_rollback(self) -> None:
         """Rollback to last safe git tag."""
         # Find the rollback tag from context if available
-        rollback_tag = self.intervention.context.get("last_safe_tag")
+        rollback_tag = self.intervention.context.get(
+            "last_safe_ref",
+            self.intervention.context.get("last_safe_tag"),
+        )
         result = InterventionResult(
             action=InterventionAction.ROLLBACK,
-            rollback_tag=rollback_tag,
+            rollback_tag=rollback_tag if isinstance(rollback_tag, str) else None,
         )
         self.dismiss(result)
 

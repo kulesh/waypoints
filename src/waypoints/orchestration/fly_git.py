@@ -159,23 +159,37 @@ def rollback_to_tag(
     if not git.is_git_repo():
         return RollbackResult(success=False, message="Not a git repository")
 
-    if not tag:
+    resolved_ref = tag.strip() if isinstance(tag, str) and tag.strip() else None
+    head_commit = git.get_head_commit()
+    if resolved_ref is None and head_commit is not None:
+        resolved_ref = "HEAD"
+    if resolved_ref is None:
         return RollbackResult(
             success=False,
-            message="No rollback tag specified",
+            message=(
+                "No rollback reference available. Create a rollback anchor with "
+                '`git add -A && git commit -m "checkpoint: safe rollback anchor"`.'
+            ),
         )
 
-    result = git.reset_hard(tag)
+    result = git.reset_hard(resolved_ref)
     if not result.success:
         return RollbackResult(
             success=False,
             message=f"Rollback failed: {result.message}",
+            resolved_ref=resolved_ref,
         )
 
     loaded = FlightPlanReader.load(project)
-    logger.info("Rolled back to %s", tag)
+    resolved_display = (
+        f"HEAD ({head_commit})"
+        if resolved_ref == "HEAD" and head_commit is not None
+        else resolved_ref
+    )
+    logger.info("Rolled back to %s", resolved_display)
     return RollbackResult(
         success=True,
-        message=f"Rolled back to {tag}",
+        message=f"Rolled back to {resolved_display}",
+        resolved_ref=resolved_ref,
         flight_plan=loaded,
     )
