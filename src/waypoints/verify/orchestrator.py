@@ -56,6 +56,26 @@ EXCLUDED_MANIFEST_FILES = {
 }
 
 
+def _read_str_list(data: dict[str, object], key: str) -> list[str]:
+    """Read a string list field from an untyped JSON payload."""
+    raw = data.get(key)
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, str)]
+
+
+def _read_str_dict(data: dict[str, object], key: str) -> dict[str, str]:
+    """Read a string dictionary field from an untyped JSON payload."""
+    raw = data.get(key)
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, str] = {}
+    for dict_key, value in raw.items():
+        if isinstance(dict_key, str) and isinstance(value, str):
+            result[dict_key] = value
+    return result
+
+
 @dataclass(frozen=True)
 class ExecutionSnapshot:
     """Execution result snapshot used for product-level comparison."""
@@ -90,12 +110,12 @@ class ExecutionSnapshot:
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "ExecutionSnapshot":
         return cls(
-            completed_waypoints=list(data.get("completed_waypoints", [])),
-            failed_waypoints=list(data.get("failed_waypoints", [])),
-            skipped_waypoints=list(data.get("skipped_waypoints", [])),
-            pending_waypoints=list(data.get("pending_waypoints", [])),
-            in_progress_waypoints=list(data.get("in_progress_waypoints", [])),
-            file_manifest=dict(data.get("file_manifest", {})),
+            completed_waypoints=_read_str_list(data, "completed_waypoints"),
+            failed_waypoints=_read_str_list(data, "failed_waypoints"),
+            skipped_waypoints=_read_str_list(data, "skipped_waypoints"),
+            pending_waypoints=_read_str_list(data, "pending_waypoints"),
+            in_progress_waypoints=_read_str_list(data, "in_progress_waypoints"),
+            file_manifest=_read_str_dict(data, "file_manifest"),
         )
 
 
@@ -234,9 +254,7 @@ def _compare_execution_snapshots(
 
     equivalent = len(differences) == 0
     verdict = (
-        ComparisonVerdict.EQUIVALENT
-        if equivalent
-        else ComparisonVerdict.DIFFERENT
+        ComparisonVerdict.EQUIVALENT if equivalent else ComparisonVerdict.DIFFERENT
     )
     rationale = (
         "Execution outcomes and product file manifest match reference."
@@ -477,8 +495,7 @@ def _run_verify(
         ref_exec_path = reference_dir / REFERENCE_EXECUTION_SUMMARY
         if not ref_exec_path.exists():
             print(
-                "Error: Reference execution snapshot not found: "
-                f"{ref_exec_path}",
+                f"Error: Reference execution snapshot not found: {ref_exec_path}",
                 file=sys.stderr,
             )
             print(

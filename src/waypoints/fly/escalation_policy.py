@@ -101,8 +101,7 @@ def build_escalation_decision(
 
     should_escalate = streak >= max_derailment_streak
     escalation_summary = (
-        "Execution repeatedly violated waypoint protocol. "
-        f"Issues: {next_reason_detail}"
+        f"Execution repeatedly violated waypoint protocol. Issues: {next_reason_detail}"
         if should_escalate
         else None
     )

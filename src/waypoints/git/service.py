@@ -93,8 +93,7 @@ class GitService:
         stderr = result.stderr
         if result.timed_out:
             timeout_msg = (
-                "Command timed out after "
-                f"{result.final_attempt.timeout_seconds:g}s"
+                f"Command timed out after {result.final_attempt.timeout_seconds:g}s"
             )
             stderr = f"{stderr}\n{timeout_msg}" if stderr else timeout_msg
             if result.signal_sequence:

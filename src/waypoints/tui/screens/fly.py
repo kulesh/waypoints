@@ -2036,9 +2036,7 @@ class FlyScreen(Screen[None]):
             self._refresh_waypoint_list()
             self.current_waypoint = selected
             action_label = (
-                "Retrying"
-                if prior_status == WaypointStatus.FAILED
-                else "Re-running"
+                "Retrying" if prior_status == WaypointStatus.FAILED else "Re-running"
             )
             self.notify(f"{action_label} {selected.id}")
 

@@ -16,6 +16,7 @@ This folder contains the product, architecture, and testing references for Waypo
 - [waypoint-spec-context-lifecycle.md](./waypoint-spec-context-lifecycle.md) - Waypoint spec context generation, fly usage, and backfill ops
 - [architecture-roadmap.md](./architecture-roadmap.md) - Long-term architecture plan
 - [unix-architecture-plan.md](./unix-architecture-plan.md) - UNIX-style architecture notes
+- [fly-main-decomposition-plan-2026-02-11.md](./fly-main-decomposition-plan-2026-02-11.md) - End-state and phased decomposition plan for FlyScreen/main CLI
 
 ## Protocols and Formats
 
