@@ -94,6 +94,7 @@ VALID_TRANSITIONS: dict[JourneyState, set[JourneyState]] = {
     },
     # LAND phase - can return to fix issues or start V2
     JourneyState.LAND_REVIEW: {
+        JourneyState.CHART_REVIEW,  # Edit flight plan for an iteration
         JourneyState.FLY_READY,  # Fix issues
         JourneyState.SPARK_IDLE,  # Start V2 iteration
     },

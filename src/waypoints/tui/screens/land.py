@@ -469,6 +469,7 @@ class LandScreen(Screen[None]):
         Binding("s", "show_ship", "Ship", show=True),
         Binding("i", "show_iterate", "Iterate", show=True),
         Binding("v", "show_genspec", "Gen Spec", show=True),
+        Binding("p", "edit_plan", "Edit Plan", show=True),
         Binding("f", "fix_issues", "Fix Issues", show=True),
         Binding("n", "new_iteration", "New V2", show=True),
         Binding("c", "close_project", "Close", show=True),
@@ -829,6 +830,23 @@ class LandScreen(Screen[None]):
                 "project": self.project,
                 "flight_plan": self.flight_plan,
                 "spec": self.spec,
+            },
+        )
+
+    def action_edit_plan(self) -> None:
+        """Return to Chart screen to edit the flight plan."""
+        self.coordinator.transition(
+            JourneyState.CHART_REVIEW,
+            reason="land.edit_plan",
+        )
+        spec = self.app._load_latest_doc(self.project, "product-spec")  # type: ignore[attr-defined]
+        brief = self.app._load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
+        self.waypoints_app.switch_phase(
+            "chart",
+            {
+                "project": self.project,
+                "spec": spec or self.spec,
+                "brief": brief,
             },
         )
 

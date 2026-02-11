@@ -8,6 +8,15 @@ from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration.types import CompletionStatus, NextAction
 
 
+def prepare_waypoint_for_rerun(waypoint: Waypoint) -> bool:
+    """Reset a completed/failed waypoint back to PENDING for re-execution."""
+    if waypoint.status not in (WaypointStatus.COMPLETE, WaypointStatus.FAILED):
+        return False
+    waypoint.status = WaypointStatus.PENDING
+    waypoint.completed_at = None
+    return True
+
+
 def build_completion_status(flight_plan: FlightPlan | None) -> CompletionStatus:
     """Compute completion summary for a flight plan."""
     if flight_plan is None:

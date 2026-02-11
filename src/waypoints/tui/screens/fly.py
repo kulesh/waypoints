@@ -46,6 +46,7 @@ from waypoints.models import JourneyState, Project
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
+from waypoints.orchestration.coordinator_fly import prepare_waypoint_for_rerun
 from waypoints.orchestration.fly_presenter import build_state_message, build_status_line
 from waypoints.orchestration.fly_service import FlyService
 from waypoints.orchestration.types import NextAction
@@ -2024,12 +2025,22 @@ class FlyScreen(Screen[None]):
         list_panel = self.query_one("#waypoint-list", WaypointListPanel)
         selected = list_panel.selected_waypoint
 
-        if selected and selected.status == WaypointStatus.FAILED:
-            # User wants to retry this specific failed waypoint
+        if selected and selected.status in (
+            WaypointStatus.FAILED,
+            WaypointStatus.COMPLETE,
+        ):
+            # User wants to rerun this specific waypoint.
+            prior_status = selected.status
+            prepare_waypoint_for_rerun(selected)
             self.coordinator.mark_waypoint_status(selected, WaypointStatus.PENDING)
             self._refresh_waypoint_list()
             self.current_waypoint = selected
-            self.notify(f"Retrying {selected.id}")
+            action_label = (
+                "Retrying"
+                if prior_status == WaypointStatus.FAILED
+                else "Re-running"
+            )
+            self.notify(f"{action_label} {selected.id}")
 
             # Update detail panel to show this waypoint
             detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
@@ -2052,7 +2063,10 @@ class FlyScreen(Screen[None]):
                 JourneyState.FLY_INTERVENTION,
             ):
                 self.coordinator.transition(JourneyState.FLY_EXECUTING)
-            elif journey and journey.state == JourneyState.CHART_REVIEW:
+            elif journey and journey.state in (
+                JourneyState.CHART_REVIEW,
+                JourneyState.LAND_REVIEW,
+            ):
                 self.coordinator.transition(JourneyState.FLY_READY)
                 self.coordinator.transition(JourneyState.FLY_EXECUTING)
             else:

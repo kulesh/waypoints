@@ -25,8 +25,12 @@ class TestJourneyState:
             assert state in VALID_TRANSITIONS, f"{state} missing from VALID_TRANSITIONS"
 
     def test_land_review_transitions(self) -> None:
-        """LAND_REVIEW can transition to FLY_READY or SPARK_IDLE."""
-        expected = {JourneyState.FLY_READY, JourneyState.SPARK_IDLE}
+        """LAND_REVIEW can transition to CHART_REVIEW, FLY_READY, or SPARK_IDLE."""
+        expected = {
+            JourneyState.CHART_REVIEW,
+            JourneyState.FLY_READY,
+            JourneyState.SPARK_IDLE,
+        }
         assert VALID_TRANSITIONS[JourneyState.LAND_REVIEW] == expected
 
     def test_all_states_reachable(self) -> None:
@@ -415,3 +419,16 @@ class TestTransitionPaths:
 
         journey = journey.transition(JourneyState.FLY_READY)
         assert journey.state == JourneyState.FLY_READY
+
+    def test_land_to_chart_review(self) -> None:
+        """LAND_REVIEW should support iteration planning via CHART_REVIEW."""
+        data = {
+            "state": "land:review",
+            "project_slug": "test",
+            "updated_at": datetime.now(UTC).isoformat(),
+            "state_history": [],
+        }
+        journey = Journey.from_dict(data)
+
+        journey = journey.transition(JourneyState.CHART_REVIEW)
+        assert journey.state == JourneyState.CHART_REVIEW

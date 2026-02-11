@@ -11,6 +11,7 @@ from waypoints.orchestration.coordinator_fly import (
     build_completion_status,
     build_intervention_resolution,
     build_next_action_after_success,
+    prepare_waypoint_for_rerun,
     select_next_waypoint_candidate,
 )
 
@@ -162,6 +163,35 @@ def test_select_next_candidate_resumes_in_progress_or_failed() -> None:
 
     assert waypoint is not None
     assert waypoint.id == "WP-010"
+
+
+def test_prepare_waypoint_for_rerun_resets_complete_waypoint() -> None:
+    waypoint = Waypoint(
+        id="WP-100",
+        title="Completed",
+        objective="Done",
+        status=WaypointStatus.COMPLETE,
+    )
+
+    changed = prepare_waypoint_for_rerun(waypoint)
+
+    assert changed is True
+    assert waypoint.status == WaypointStatus.PENDING
+    assert waypoint.completed_at is None
+
+
+def test_prepare_waypoint_for_rerun_ignores_pending_waypoint() -> None:
+    waypoint = Waypoint(
+        id="WP-101",
+        title="Pending",
+        objective="Todo",
+        status=WaypointStatus.PENDING,
+    )
+
+    changed = prepare_waypoint_for_rerun(waypoint)
+
+    assert changed is False
+    assert waypoint.status == WaypointStatus.PENDING
 
 
 def test_select_next_waypoint_candidate_handles_epics_readiness() -> None:

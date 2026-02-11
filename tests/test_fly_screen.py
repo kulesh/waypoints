@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +13,7 @@ from waypoints.fly.intervention import (
     InterventionNeededError,
     InterventionType,
 )
+from waypoints.models import JourneyState
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
@@ -440,3 +442,66 @@ class TestSelectNextWaypoint:
         assert selected is not None
         assert selected.id == "WP-002"
         assert selected.id != "WP-003"
+
+
+def test_action_start_reruns_completed_waypoint_from_land_state() -> None:
+    waypoint = Waypoint(
+        id="WP-001",
+        title="Completed task",
+        objective="Done",
+        status=WaypointStatus.COMPLETE,
+    )
+    waypoint.completed_at = datetime(2026, 2, 10, 12, 0, tzinfo=UTC)
+
+    transitions: list[JourneyState] = []
+    marked_statuses: list[WaypointStatus] = []
+    notifications: list[str] = []
+    shown_waypoints: list[str] = []
+    executed: list[bool] = []
+
+    list_panel = SimpleNamespace(selected_waypoint=waypoint)
+    detail_panel = SimpleNamespace(
+        show_waypoint=lambda selected, **_kwargs: shown_waypoints.append(selected.id)
+    )
+
+    class MockProject:
+        def __init__(self) -> None:
+            self.journey = SimpleNamespace(state=JourneyState.LAND_REVIEW)
+
+        def get_path(self) -> Path:
+            return Path("/tmp/test-project")
+
+    project = MockProject()
+    screen = FlyScreen(project=project, flight_plan=FlightPlan(), spec="spec")  # type: ignore[arg-type]
+
+    screen.coordinator.mark_waypoint_status = (  # type: ignore[method-assign]
+        lambda _wp, status: marked_statuses.append(status)
+    )
+    screen.coordinator.transition = (  # type: ignore[method-assign]
+        lambda state: transitions.append(state)
+    )
+    screen._clear_budget_wait = lambda: None  # type: ignore[method-assign]
+    screen.watch_execution_state = lambda _state: None  # type: ignore[method-assign]
+    screen._refresh_waypoint_list = lambda: None  # type: ignore[method-assign]
+    screen._execute_current_waypoint = lambda: executed.append(True)  # type: ignore[method-assign]
+    screen._get_waypoint_cost = lambda _waypoint_id: 0.0  # type: ignore[method-assign]
+    screen._get_waypoint_tokens = lambda _waypoint_id: (0, 0, False)  # type: ignore[method-assign]
+    screen._get_waypoint_cached_tokens_in = (  # type: ignore[method-assign]
+        lambda _waypoint_id: (0, False)
+    )
+    screen.notify = lambda message, **_kwargs: notifications.append(str(message))  # type: ignore[method-assign]
+    screen.query_one = lambda selector, *_args: (  # type: ignore[method-assign]
+        list_panel if selector == "#waypoint-list" else detail_panel
+    )
+
+    screen.action_start()
+
+    assert waypoint.status == WaypointStatus.PENDING
+    assert waypoint.completed_at is None
+    assert marked_statuses == [WaypointStatus.PENDING]
+    assert transitions == [JourneyState.FLY_READY, JourneyState.FLY_EXECUTING]
+    assert notifications == ["Re-running WP-001"]
+    assert shown_waypoints == ["WP-001"]
+    assert screen.coordinator.current_waypoint == waypoint
+    assert screen.execution_state == ExecutionState.RUNNING
+    assert executed == [True]
