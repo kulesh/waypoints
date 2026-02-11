@@ -22,10 +22,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from waypoints.config.app_root import dangerous_app_root
 from waypoints.config.settings import settings
+from waypoints.fly.escalation_policy import (
+    build_escalation_decision,
+    detect_protocol_issues,
+)
 from waypoints.fly.evidence import (
     CRITERION_PATTERN,
     VALIDATION_PATTERN,
@@ -49,6 +53,7 @@ from waypoints.fly.intervention import (
     InterventionNeededError,
     InterventionType,
 )
+from waypoints.fly.intervention_policy import classify_execution_error
 from waypoints.fly.protocol import parse_stage_reports
 from waypoints.fly.provenance import (
     WorkspaceDiffSummary,
@@ -63,22 +68,12 @@ from waypoints.git.receipt import (
     CriterionVerification,
 )
 from waypoints.llm.client import (
-    APIErrorType,
     StreamChunk,
     StreamComplete,
     StreamToolUse,
     agent_query,
-    classify_api_error,
-    extract_reset_datetime,
-    extract_reset_time,
 )
-from waypoints.llm.metrics import BudgetExceededError
 from waypoints.llm.prompts import build_execution_prompt
-from waypoints.llm.providers.base import (
-    BUDGET_PATTERNS,
-    RATE_LIMIT_PATTERNS,
-    UNAVAILABLE_PATTERNS,
-)
 from waypoints.memory import (
     ProjectMemoryIndex,
     WaypointMemoryRecord,
@@ -100,13 +95,6 @@ logger = logging.getLogger(__name__)
 # Max iterations before giving up
 MAX_ITERATIONS = 10
 MAX_PROTOCOL_DERAILMENT_STREAK = 2
-COMPLETION_ALIAS_HINTS = (
-    "waypoint_complete",
-    "waypoint completed",
-    "==completed==",
-    "implementation is complete",
-    "all waypoints",
-)
 
 
 class ExecutionResult(Enum):
@@ -223,6 +211,26 @@ class WaypointExecutor:
     def cancel(self) -> None:
         """Cancel the execution."""
         self._cancelled = True
+
+    def log_pause_event(self) -> None:
+        """Log a pause event when execution is temporarily halted."""
+        if self._log_writer is not None:
+            self._log_writer.log_pause()
+
+    def log_git_commit_event(
+        self,
+        success: bool,
+        commit_hash: str,
+        message: str,
+    ) -> None:
+        """Log a git commit event associated with this execution."""
+        if self._log_writer is not None:
+            self._log_writer.log_git_commit(success, commit_hash, message)
+
+    def log_intervention_resolved_event(self, action: str, **params: Any) -> None:
+        """Log that an intervention was resolved and execution resumed/paused."""
+        if self._log_writer is not None:
+            self._log_writer.log_intervention_resolved(action, **params)
 
     async def execute(self) -> ExecutionResult:
         """Execute the waypoint using iterative agentic loop.
@@ -430,102 +438,143 @@ class WaypointExecutor:
             waypoint_id=self.waypoint.id,
         ):
             if isinstance(chunk, StreamChunk):
-                iteration_output += chunk.text
-                s.full_output += chunk.text
-
-                if not s.completion_detected:
-                    self._parse_evidence(s)
-                    self._parse_stage_reports(s)
-
-                    if s.completion_marker in iteration_output:
-                        logger.info("Completion marker found!")
-                        s.completion_detected = True
-                        s.completion_iteration = s.iteration
-                        s.completion_output = iteration_output
-                        criterion_matches = CRITERION_PATTERN.findall(iteration_output)
-                        s.completion_criteria = {int(m[0]) for m in criterion_matches}
-                        self._log_writer.log_completion_detected(s.iteration)
-
-                if s.completion_detected:
-                    continue
-
-                criterion_matches = CRITERION_PATTERN.findall(s.full_output)
-                completed_indices = {int(m[0]) for m in criterion_matches}
-                self._report_progress(
-                    s.iteration,
-                    self.max_iterations,
-                    "streaming",
-                    chunk.text,
-                    criteria_completed=completed_indices,
+                iteration_output = self._handle_stream_text_chunk(
+                    s=s,
+                    chunk=chunk,
+                    iteration_output=iteration_output,
                 )
 
             elif isinstance(chunk, StreamToolUse):
-                s.last_tool_name = chunk.tool_name
-                s.last_tool_input = dict(chunk.tool_input)
-                s.last_tool_output = chunk.tool_output
-                self._log_writer.log_tool_call(
-                    s.iteration,
-                    chunk.tool_name,
-                    chunk.tool_input,
-                    chunk.tool_output,
+                self._handle_stream_tool_use_chunk(
+                    s=s,
+                    chunk=chunk,
+                    iteration_file_ops=iteration_file_ops,
                 )
-                if (
-                    isinstance(chunk.tool_output, str)
-                    and "Error: Access denied:" in chunk.tool_output
-                ):
-                    s.iter_scope_drift_detected = True
-                if chunk.tool_name == "Bash":
-                    command = chunk.tool_input.get("command")
-                    if isinstance(command, str) and chunk.tool_output:
-                        category = _detect_validation_category(command)
-                        stdout, stderr, exit_code = _parse_tool_output(
-                            chunk.tool_output
-                        )
-                        evidence = CapturedEvidence(
-                            command=command,
-                            exit_code=exit_code,
-                            stdout=stdout,
-                            stderr=stderr,
-                            captured_at=datetime.now(UTC),
-                        )
-                        s.tool_validation_evidence[_normalize_command(command)] = (
-                            evidence
-                        )
-                        if category:
-                            s.tool_validation_categories[category] = evidence
-                file_op = _extract_file_operation(chunk.tool_name, chunk.tool_input)
-                if file_op:
-                    iteration_file_ops.append(file_op)
-                    self._file_operations.append(file_op)
-                    self._report_progress(
-                        s.iteration,
-                        self.max_iterations,
-                        "tool_use",
-                        f"{file_op.tool_name}: {file_op.file_path}",
-                        file_operations=iteration_file_ops,
-                    )
-                else:
-                    summary = f"{chunk.tool_name}: {chunk.tool_input}"
-                    if len(summary) > 300:
-                        summary = summary[:300] + "..."
-                    self._report_progress(
-                        s.iteration,
-                        self.max_iterations,
-                        "tool_use",
-                        summary,
-                    )
 
             elif isinstance(chunk, StreamComplete):
-                iteration_cost = chunk.cost_usd
-                if chunk.session_id:
-                    s.resume_session_id = chunk.session_id
-                logger.info(
-                    "Iteration %d complete, cost: $%.4f",
-                    s.iteration,
-                    chunk.cost_usd or 0,
+                iteration_cost = self._handle_stream_complete_chunk(
+                    s=s,
+                    chunk=chunk,
                 )
 
         return iteration_output, iteration_cost
+
+    def _handle_stream_text_chunk(
+        self,
+        *,
+        s: _LoopState,
+        chunk: StreamChunk,
+        iteration_output: str,
+    ) -> str:
+        """Process a streamed text chunk and update completion/progress state."""
+        assert self._log_writer is not None
+        next_output = iteration_output + chunk.text
+        s.full_output += chunk.text
+
+        if not s.completion_detected:
+            self._parse_evidence(s)
+            self._parse_stage_reports(s)
+
+            if s.completion_marker in next_output:
+                logger.info("Completion marker found!")
+                s.completion_detected = True
+                s.completion_iteration = s.iteration
+                s.completion_output = next_output
+                criterion_matches = CRITERION_PATTERN.findall(next_output)
+                s.completion_criteria = {int(m[0]) for m in criterion_matches}
+                self._log_writer.log_completion_detected(s.iteration)
+
+        if s.completion_detected:
+            return next_output
+
+        criterion_matches = CRITERION_PATTERN.findall(s.full_output)
+        completed_indices = {int(m[0]) for m in criterion_matches}
+        self._report_progress(
+            s.iteration,
+            self.max_iterations,
+            "streaming",
+            chunk.text,
+            criteria_completed=completed_indices,
+        )
+        return next_output
+
+    def _handle_stream_tool_use_chunk(
+        self,
+        *,
+        s: _LoopState,
+        chunk: StreamToolUse,
+        iteration_file_ops: list[FileOperation],
+    ) -> None:
+        """Process a tool-use chunk and update evidence/progress state."""
+        assert self._log_writer is not None
+        s.last_tool_name = chunk.tool_name
+        s.last_tool_input = dict(chunk.tool_input)
+        s.last_tool_output = chunk.tool_output
+        self._log_writer.log_tool_call(
+            s.iteration,
+            chunk.tool_name,
+            chunk.tool_input,
+            chunk.tool_output,
+        )
+        if (
+            isinstance(chunk.tool_output, str)
+            and "Error: Access denied:" in chunk.tool_output
+        ):
+            s.iter_scope_drift_detected = True
+        if chunk.tool_name == "Bash":
+            command = chunk.tool_input.get("command")
+            if isinstance(command, str) and chunk.tool_output:
+                category = _detect_validation_category(command)
+                stdout, stderr, exit_code = _parse_tool_output(chunk.tool_output)
+                evidence = CapturedEvidence(
+                    command=command,
+                    exit_code=exit_code,
+                    stdout=stdout,
+                    stderr=stderr,
+                    captured_at=datetime.now(UTC),
+                )
+                s.tool_validation_evidence[_normalize_command(command)] = evidence
+                if category:
+                    s.tool_validation_categories[category] = evidence
+        file_op = _extract_file_operation(chunk.tool_name, chunk.tool_input)
+        if file_op:
+            iteration_file_ops.append(file_op)
+            self._file_operations.append(file_op)
+            self._report_progress(
+                s.iteration,
+                self.max_iterations,
+                "tool_use",
+                f"{file_op.tool_name}: {file_op.file_path}",
+                file_operations=iteration_file_ops,
+            )
+            return
+
+        summary = f"{chunk.tool_name}: {chunk.tool_input}"
+        if len(summary) > 300:
+            summary = summary[:300] + "..."
+        self._report_progress(
+            s.iteration,
+            self.max_iterations,
+            "tool_use",
+            summary,
+        )
+
+    def _handle_stream_complete_chunk(
+        self,
+        *,
+        s: _LoopState,
+        chunk: StreamComplete,
+    ) -> float | None:
+        """Process stream completion metadata and return iteration cost."""
+        iteration_cost = chunk.cost_usd
+        if chunk.session_id:
+            s.resume_session_id = chunk.session_id
+        logger.info(
+            "Iteration %d complete, cost: $%.4f",
+            s.iteration,
+            chunk.cost_usd or 0,
+        )
+        return iteration_cost
 
     def _parse_evidence(self, s: _LoopState) -> None:
         """Parse validation and criterion evidence from accumulated output."""
@@ -704,65 +753,40 @@ class WaypointExecutor:
             for idx, criterion in s.captured_criteria.items()
             if criterion.status == "verified"
         }
-        unresolved_criteria = sorted(
-            set(range(len(self.waypoint.acceptance_criteria))) - verified_criteria
-        )
-
-        protocol_issues = self._detect_protocol_issues(
+        decision = build_escalation_decision(
             iteration_output=iteration_output,
             completion_marker=s.completion_marker,
             stage_reports_logged=s.iter_stage_reports_logged,
             scope_drift_detected=s.iter_scope_drift_detected,
+            current_derailment_streak=s.protocol_derailment_streak,
+            acceptance_criteria=self.waypoint.acceptance_criteria,
+            verified_criteria=verified_criteria,
+            waypoint_id=self.waypoint.id,
+            max_derailment_streak=MAX_PROTOCOL_DERAILMENT_STREAK,
         )
-        if protocol_issues:
-            escalation_issues = [
-                issue
-                for issue in protocol_issues
-                if issue != "missing structured stage report"
-            ]
-            s.protocol_derailments.extend(protocol_issues)
-            if escalation_issues:
-                s.protocol_derailment_streak += 1
-            else:
-                s.protocol_derailment_streak = 0
-            s.next_reason_code = "protocol_violation"
-            s.next_reason_detail = "; ".join(protocol_issues)
+
+        s.protocol_derailments.extend(decision.protocol_issues)
+        s.protocol_derailment_streak = decision.protocol_derailment_streak
+        s.next_reason_code = decision.next_reason_code
+        s.next_reason_detail = decision.next_reason_detail
+
+        if decision.protocol_issues:
             self._log_writer.log_protocol_derailment(
                 iteration=s.iteration,
-                issues=protocol_issues,
+                issues=decision.protocol_issues,
                 action=(
                     "escalate_intervention"
-                    if s.protocol_derailment_streak >= MAX_PROTOCOL_DERAILMENT_STREAK
+                    if decision.should_escalate
                     else "nudge_and_retry"
                 ),
             )
-        elif unresolved_criteria:
-            s.protocol_derailment_streak = 0
-            remaining_labels = ", ".join(
-                f"[{idx}] {self.waypoint.acceptance_criteria[idx]}"
-                for idx in unresolved_criteria
-            )
-            s.next_reason_code = "incomplete_criteria"
-            s.next_reason_detail = (
-                f"{len(unresolved_criteria)} criteria unresolved: {remaining_labels}"
-            )
-        else:
-            s.protocol_derailment_streak = 0
-            s.next_reason_code = "validation_failure"
-            s.next_reason_detail = (
-                "Criteria appear complete, but completion protocol was not satisfied."
-            )
 
-        if s.protocol_derailment_streak >= MAX_PROTOCOL_DERAILMENT_STREAK:
-            summary = (
-                "Execution repeatedly violated waypoint protocol. "
-                f"Issues: {s.next_reason_detail}"
-            )
+        if decision.should_escalate and decision.escalation_summary is not None:
             self._raise_intervention(
                 project_path,
                 s,
                 InterventionType.EXECUTION_ERROR,
-                summary,
+                decision.escalation_summary,
             )
 
         # Record step
@@ -798,57 +822,8 @@ class WaypointExecutor:
         assert self._log_writer is not None
         logger.exception("Error during iteration %d: %s", s.iteration, e)
 
-        api_error_type = classify_api_error(e)
-        lower_output = s.full_output.lower()
-        if api_error_type == APIErrorType.UNKNOWN:
-            for pattern in BUDGET_PATTERNS:
-                if pattern in lower_output:
-                    api_error_type = APIErrorType.BUDGET_EXCEEDED
-                    break
-            if api_error_type == APIErrorType.UNKNOWN:
-                for pattern in RATE_LIMIT_PATTERNS:
-                    if pattern in lower_output:
-                        api_error_type = APIErrorType.RATE_LIMITED
-                        break
-                if api_error_type == APIErrorType.UNKNOWN:
-                    for pattern in UNAVAILABLE_PATTERNS:
-                        if pattern in lower_output:
-                            api_error_type = APIErrorType.API_UNAVAILABLE
-                            break
-
-        intervention_type = {
-            APIErrorType.RATE_LIMITED: InterventionType.RATE_LIMITED,
-            APIErrorType.API_UNAVAILABLE: InterventionType.API_UNAVAILABLE,
-            APIErrorType.BUDGET_EXCEEDED: InterventionType.BUDGET_EXCEEDED,
-        }.get(api_error_type, InterventionType.EXECUTION_ERROR)
-
-        error_summaries = {
-            APIErrorType.RATE_LIMITED: (
-                "Model provider rate limit reached. Wait a few minutes and retry."
-            ),
-            APIErrorType.API_UNAVAILABLE: (
-                "Model provider temporarily unavailable. Try again shortly."
-            ),
-            APIErrorType.BUDGET_EXCEEDED: (
-                "Model usage budget exceeded. Execution paused until budget resets."
-            ),
-        }
-        error_summary = error_summaries.get(api_error_type, str(e))
-
-        reset_at = extract_reset_datetime(str(e))
-        if reset_at is None and s.full_output:
-            reset_at = extract_reset_datetime(s.full_output)
-        if api_error_type == APIErrorType.BUDGET_EXCEEDED:
-            if isinstance(e, BudgetExceededError):
-                error_summary = (
-                    f"Configured budget ${e.limit_value:.2f} reached "
-                    f"(current ${e.current_value:.2f}). "
-                    "Execution paused until you increase the budget."
-                )
-            elif (reset_time := extract_reset_time(str(e))) is not None:
-                error_summary = f"Model usage budget exceeded. Resets {reset_time}."
-            elif (reset_time := extract_reset_time(s.full_output)) is not None:
-                error_summary = f"Model usage budget exceeded. Resets {reset_time}."
+        classification = classify_execution_error(e, full_output=s.full_output)
+        error_summary = classification.error_summary
 
         if failed_command_summary := self._failed_command_summary(s):
             error_summary = f"{error_summary}\n\n{failed_command_summary}"
@@ -870,14 +845,14 @@ class WaypointExecutor:
         self._log_writer.log_completion(ExecutionResult.FAILED.value)
 
         intervention = Intervention(
-            type=intervention_type,
+            type=classification.intervention_type,
             waypoint=self.waypoint,
             iteration=s.iteration,
             max_iterations=self.max_iterations,
             error_summary=error_summary,
             context={
                 "full_output": s.full_output[-2000:],
-                "api_error_type": api_error_type.value,
+                "api_error_type": classification.api_error_type.value,
                 "original_error": str(e),
                 "last_tool_name": s.last_tool_name,
                 "last_tool_input": s.last_tool_input,
@@ -889,7 +864,9 @@ class WaypointExecutor:
                     else None
                 ),
                 "resume_at_utc": (
-                    reset_at.astimezone(UTC).isoformat() if reset_at else None
+                    classification.reset_at.astimezone(UTC).isoformat()
+                    if classification.reset_at
+                    else None
                 ),
             },
         )
@@ -1086,20 +1063,13 @@ class WaypointExecutor:
         scope_drift_detected: bool,
     ) -> list[str]:
         """Detect recoverable protocol issues for iteration-to-iteration nudging."""
-        issues: list[str] = []
-        lower_output = iteration_output.lower()
-        waypoint_alias = f"{self.waypoint.id.lower()} complete"
-        claimed_complete = "complete" in lower_output and (
-            any(hint in lower_output for hint in COMPLETION_ALIAS_HINTS)
-            or waypoint_alias in lower_output
+        return detect_protocol_issues(
+            iteration_output=iteration_output,
+            completion_marker=completion_marker,
+            stage_reports_logged=stage_reports_logged,
+            scope_drift_detected=scope_drift_detected,
+            waypoint_id=self.waypoint.id,
         )
-        if claimed_complete and completion_marker not in iteration_output:
-            issues.append("claimed completion without exact completion marker")
-        if stage_reports_logged == 0:
-            issues.append("missing structured stage report")
-        if scope_drift_detected:
-            issues.append("attempted tool access to blocked project areas")
-        return issues
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the agent."""

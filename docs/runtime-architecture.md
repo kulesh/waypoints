@@ -78,20 +78,22 @@ main.py
 FLY execution path (from coordinator):
 ┌──────────────────────────────────────────────────────────────┐
 │ src/waypoints/orchestration/fly_phase.py                     │
-│ FlyPhase: executor lifecycle, intervention, budget, rollback │
+│ FlyPhase: executor lifecycle, intervention, budget, routing  │
 └─────┬────────────────────────────────────────────────────────┘
-      │ creates + manages
+      │ delegates execution + git policy
       ▼
-┌─────────────────────────────────────────────────────┐
-│ src/waypoints/fly/executor.py                       │
-│ WaypointExecutor (_LoopState + focused sub-methods) │
-└─────┬────────────────────────────────────────────────┘
+┌─────────────────────────────┐   ┌────────────────────────────────┐
+│ src/waypoints/fly/executor.py│   │ src/waypoints/orchestration/   │
+│ WaypointExecutor             │   │ fly_git.py                      │
+│ + intervention_policy.py     │   │ Commit/Rollback policy          │
+│ + escalation_policy.py       │   └────────────────────────────────┘
+└─────┬───────────────────────┘
       │ uses
       ▼
-┌──────────────────────────┐    ┌──────────────────────┐
-│ fly/execution_log.py     │    │ git/service.py       │
-│ receipts + audit trail   │    │ commits/tags         │
-└──────────────────────────┘    └──────────────────────┘
+┌──────────────────────────┐
+│ fly/execution_log.py     │
+│ receipts + audit trail   │
+└──────────────────────────┘
 
 Genspec + verification paths (CLI + TUI export):
 ┌─────────────────────────────┐  ┌─────────────────────────────┐
@@ -170,8 +172,9 @@ Genspec + verification paths (CLI + TUI export):
     - waypoint status mutations (`mark_waypoint_status`)
     - intervention classification and state (`classify_intervention`, `handle_intervention`)
     - budget wait computation (`compute_budget_wait`)
-    - git rollback (`rollback_to_tag`) and commit (`commit_waypoint`)
+    - git rollback (`rollback_to_tag`) and commit (`commit_waypoint`) via `fly_git.py`
     - execution logging (`log_pause`, `log_git_commit`, `log_intervention_resolved`)
+      via public `WaypointExecutor` logging APIs (no private attribute access)
     - flight plan persistence and parent completion checks
   - FlyScreen is a pure UI layer: renders progress, manages timers, shows modals
 
@@ -199,6 +202,8 @@ Genspec + verification paths (CLI + TUI export):
 - `JourneyCoordinator` owns all business logic and persistence for SHAPE/CHART/FLY.
   It delegates to phase-specific classes: `FlyPhase`, `ChartPhase`, `ShapePhase`.
 - `FlyPhase` manages executor lifecycle, intervention state, budget wait computation,
-  git rollback, and execution logging. FlyScreen delegates to it for all business logic.
+  and delegates git policy to `fly_git.py`.
+- `WaypointExecutor` delegates error classification to `fly/intervention_policy.py`
+  and protocol escalation decisions to `fly/escalation_policy.py`.
 - `WaypointsApp` controls resume routing by journey phase and loads docs/plan
   from disk before entering screens.

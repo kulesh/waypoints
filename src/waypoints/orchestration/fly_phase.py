@@ -23,6 +23,12 @@ from waypoints.orchestration.coordinator_fly import (
     build_next_action_after_success,
     select_next_waypoint_candidate,
 )
+from waypoints.orchestration.fly_git import (
+    commit_waypoint as commit_waypoint_with_policy,
+)
+from waypoints.orchestration.fly_git import (
+    rollback_to_tag as rollback_to_tag_with_policy,
+)
 from waypoints.orchestration.types import (
     BudgetWaitDetails,
     CommitResult,
@@ -147,20 +153,20 @@ class FlyPhase:
     def log_pause(self) -> None:
         """Log a pause event to the active executor's log."""
         ex = self._active_executor
-        if ex and ex._log_writer:
-            ex._log_writer.log_pause()
+        if ex is not None:
+            ex.log_pause_event()
 
     def log_git_commit(self, success: bool, commit_hash: str, message: str) -> None:
         """Log a git commit event to the active executor's log."""
         ex = self._active_executor
-        if ex and ex._log_writer:
-            ex._log_writer.log_git_commit(success, commit_hash, message)
+        if ex is not None:
+            ex.log_git_commit_event(success, commit_hash, message)
 
     def log_intervention_resolved(self, action: str, **params: Any) -> None:
         """Log intervention resolution to the active executor's log."""
         ex = self._active_executor
-        if ex and ex._log_writer:
-            ex._log_writer.log_intervention_resolved(action, **params)
+        if ex is not None:
+            ex.log_intervention_resolved_event(action, **params)
 
     # ─── Legacy execute_waypoint (used by headless callers) ──────────
 
@@ -454,107 +460,12 @@ class FlyPhase:
         waypoint: Waypoint,
         git_config: "GitConfig | None" = None,
     ) -> CommitResult:
-        """Commit waypoint changes to git.
-
-        Uses GitConfig to determine auto-commit, auto-init, receipt
-        validation, staging method, and tag creation. This is the single
-        source of truth for waypoint commits — both TUI and headless
-        callers use this method.
-
-        Args:
-            waypoint: The completed waypoint to commit
-            git_config: Git configuration. If None, loads from project.
-
-        Returns:
-            CommitResult describing what happened
-        """
-        from waypoints.git.config import GitConfig as GitConfigClass
-        from waypoints.git.service import GitService
-
-        config = git_config or GitConfigClass.load(self._coord.project.slug)
-        project_path = self._coord.project.get_path()
-
-        if not config.auto_commit:
-            return CommitResult(committed=False, message="Auto-commit disabled")
-
-        # Get or create git service
-        git = self._coord.git or GitService(project_path)
-
-        # Auto-init if needed
-        initialized = False
-        if not git.is_git_repo():
-            if config.auto_init:
-                init_result = git.init_repo()
-                if not init_result.success:
-                    return CommitResult(
-                        committed=False,
-                        message=f"Failed to init git repo: {init_result.message}",
-                    )
-                initialized = True
-            else:
-                return CommitResult(
-                    committed=False,
-                    message="Not a git repo and auto-init disabled",
-                )
-
-        # Validate receipt if configured
-        if config.run_checklist:
-            from waypoints.git.receipt import ReceiptValidator
-
-            validator = ReceiptValidator()
-            receipt_path = validator.find_latest_receipt(
-                self._coord.project, waypoint.id
-            )
-
-            if receipt_path is None:
-                return CommitResult(
-                    committed=False,
-                    message=f"No receipt found for {waypoint.id}",
-                )
-
-            validation = validator.validate(receipt_path)
-            if not validation.valid:
-                return CommitResult(
-                    committed=False,
-                    message=f"Receipt invalid: {validation.message}",
-                )
-
-        # Stage project files (config-aware staging)
-        slug = self._coord.project.slug
-        git.stage_project_files(slug)
-
-        # Commit
-        commit_msg = f"feat({slug}): Complete {waypoint.title}"
-        result = git.commit(commit_msg)
-
-        if not result.success:
-            if "Nothing to commit" in result.message:
-                return CommitResult(
-                    committed=False,
-                    message="Nothing to commit",
-                    initialized_repo=initialized,
-                )
-            return CommitResult(
-                committed=False,
-                message=f"Commit failed: {result.message}",
-                initialized_repo=initialized,
-            )
-
-        commit_hash = git.get_head_commit()
-
-        # Create tag if configured
-        tag_name = None
-        if config.create_waypoint_tags:
-            tag_name = f"{slug}/{waypoint.id}"
-            git.tag(tag_name, f"Completed waypoint: {waypoint.title}")
-
-        logger.info("Committed waypoint %s: %s", waypoint.id, commit_msg)
-        return CommitResult(
-            committed=True,
-            message=commit_msg,
-            commit_hash=commit_hash,
-            tag_name=tag_name,
-            initialized_repo=initialized,
+        """Commit waypoint changes to git via extracted policy helper."""
+        return commit_waypoint_with_policy(
+            self._coord.project,
+            waypoint,
+            git_config=git_config,
+            git_service=self._coord.git,
         )
 
     def rollback_to_tag(self, tag: str | None) -> RollbackResult:
@@ -566,37 +477,11 @@ class FlyPhase:
         Returns:
             RollbackResult with success status, message, and reloaded plan.
         """
-        from waypoints.git.service import GitService
-
-        project_path = self._coord.project.get_path()
-        git = self._coord.git or GitService(project_path)
-
-        if not git.is_git_repo():
-            return RollbackResult(success=False, message="Not a git repository")
-
-        if not tag:
-            return RollbackResult(
-                success=False,
-                message="No rollback tag specified",
-            )
-
-        result = git.reset_hard(tag)
-        if not result.success:
-            return RollbackResult(
-                success=False,
-                message=f"Rollback failed: {result.message}",
-            )
-
-        # Reload flight plan from disk after reset
-        from waypoints.models.flight_plan import FlightPlanReader
-
-        loaded = FlightPlanReader.load(self._coord.project)
-        if loaded:
-            self._coord.flight_plan = loaded
-
-        logger.info("Rolled back to %s", tag)
-        return RollbackResult(
-            success=True,
-            message=f"Rolled back to {tag}",
-            flight_plan=loaded,
+        result = rollback_to_tag_with_policy(
+            self._coord.project,
+            tag,
+            git_service=self._coord.git,
         )
+        if result.success and result.flight_plan is not None:
+            self._coord.flight_plan = result.flight_plan
+        return result

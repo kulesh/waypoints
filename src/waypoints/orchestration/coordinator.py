@@ -359,7 +359,7 @@ class JourneyCoordinator:
         except Exception as e:
             logger.error("Failed to save flight plan: %s", e)
 
-    def _log_waypoint_event(self, event_type: str, data: dict[str, Any]) -> None:
+    def log_waypoint_event(self, event_type: str, data: dict[str, Any]) -> None:
         try:
             from waypoints.models.waypoint_history import WaypointHistoryWriter
 

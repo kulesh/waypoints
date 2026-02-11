@@ -108,7 +108,7 @@ class ChartPhase:
         self._coord.save_flight_plan()
 
         # Log initial generation to audit trail
-        self._coord._log_waypoint_event(
+        self._coord.log_waypoint_event(
             "generated",
             {"waypoints": [wp.to_dict() for wp in waypoints]},
         )
@@ -541,7 +541,7 @@ class ChartPhase:
         self._coord.save_flight_plan()
 
         # Log to audit trail
-        self._coord._log_waypoint_event(
+        self._coord.log_waypoint_event(
             "updated",
             {
                 "waypoint_id": waypoint.id,
@@ -579,7 +579,7 @@ class ChartPhase:
         self._coord.save_flight_plan()
 
         # Log to audit trail
-        self._coord._log_waypoint_event(
+        self._coord.log_waypoint_event(
             "deleted",
             {
                 "waypoint_id": waypoint_id,
@@ -617,7 +617,7 @@ class ChartPhase:
         self._coord.save_flight_plan()
 
         # Log to audit trail
-        self._coord._log_waypoint_event(
+        self._coord.log_waypoint_event(
             "broken_down",
             {
                 "parent_id": parent_id,
@@ -645,7 +645,7 @@ class ChartPhase:
         self._coord.save_flight_plan()
 
         # Log to audit trail
-        self._coord._log_waypoint_event(
+        self._coord.log_waypoint_event(
             "added",
             {
                 "waypoint": waypoint.to_dict(),
@@ -694,7 +694,7 @@ class ChartPhase:
         self._coord.flight_plan.insert_waypoint_at(debug_waypoint, waypoint.id)
         self._coord.save_flight_plan()
 
-        self._coord._log_waypoint_event(
+        self._coord.log_waypoint_event(
             "debug_forked",
             {
                 "waypoint_id": waypoint.id,
@@ -730,7 +730,7 @@ class ChartPhase:
         self._coord.save_flight_plan()
 
         # Log to audit trail
-        self._coord._log_waypoint_event(
+        self._coord.log_waypoint_event(
             "reprioritized",
             {
                 "previous_order": previous_order,

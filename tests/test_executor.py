@@ -17,10 +17,11 @@ from waypoints.fly.executor import (
     WaypointExecutor,
     _extract_file_operation,
 )
-from waypoints.fly.intervention import InterventionNeededError
+from waypoints.fly.intervention import InterventionNeededError, InterventionType
 from waypoints.fly.stack import ValidationCommand
 from waypoints.git.config import Checklist
 from waypoints.git.receipt import CapturedEvidence, ChecklistReceipt
+from waypoints.llm.metrics import BudgetExceededError
 from waypoints.llm.prompts import build_execution_prompt
 from waypoints.llm.providers.base import StreamChunk, StreamComplete, StreamToolUse
 from waypoints.memory import WaypointMemoryRecord, save_waypoint_memory
@@ -755,6 +756,129 @@ async def test_execute_surfaces_failed_bash_command_in_intervention(
     assert 'pkill -f "canopy.*actuator"' in intervention.error_summary
     assert "could not find `Cargo.toml`" in intervention.error_summary
     assert intervention.context["last_tool_name"] == "Bash"
+
+
+@pytest.mark.anyio
+async def test_execute_classifies_rate_limit_intervention(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Rate-limit failures should map to RATE_LIMITED interventions."""
+
+    async def fake_agent_query(**kwargs: object):
+        del kwargs
+        if False:  # pragma: no cover - force async-generator shape
+            yield StreamChunk(text="")
+        raise RuntimeError("429 Too Many Requests: rate limit exceeded")
+
+    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_resolve_validation_commands",
+        lambda self, project_path, checklist: [],
+    )
+
+    project = _TestProject(tmp_path)
+    waypoint = Waypoint(
+        id="WP-1",
+        title="Rate limit handling",
+        objective="Classify provider rate limits",
+        acceptance_criteria=["Criterion 1"],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+
+    with pytest.raises(InterventionNeededError) as exc_info:
+        await executor.execute()
+
+    intervention = exc_info.value.intervention
+    assert intervention.type == InterventionType.RATE_LIMITED
+    assert intervention.context["api_error_type"] == "rate_limited"
+    assert "rate limit" in intervention.error_summary.lower()
+
+
+@pytest.mark.anyio
+async def test_execute_classifies_budget_intervention_with_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Budget errors should map to budget interventions with budget context."""
+
+    async def fake_agent_query(**kwargs: object):
+        del kwargs
+        if False:  # pragma: no cover - force async-generator shape
+            yield StreamChunk(text="")
+        raise BudgetExceededError("cost", current_value=11.0, limit_value=10.0)
+
+    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_resolve_validation_commands",
+        lambda self, project_path, checklist: [],
+    )
+
+    from waypoints.config.settings import settings
+
+    settings.llm_budget_usd = 25.0
+
+    project = _TestProject(tmp_path)
+    waypoint = Waypoint(
+        id="WP-1",
+        title="Budget handling",
+        objective="Classify budget exhaustion and preserve context",
+        acceptance_criteria=["Criterion 1"],
+    )
+    metrics_stub = SimpleNamespace(total_cost=11.5)
+    executor = WaypointExecutor(
+        project=project,
+        waypoint=waypoint,
+        spec="spec",
+        metrics_collector=metrics_stub,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(InterventionNeededError) as exc_info:
+        await executor.execute()
+
+    intervention = exc_info.value.intervention
+    assert intervention.type == InterventionType.BUDGET_EXCEEDED
+    assert intervention.context["api_error_type"] == "budget_exceeded"
+    assert intervention.context["configured_budget_usd"] == 25.0
+    assert intervention.context["current_cost_usd"] == 11.5
+    assert "configured budget $10.00 reached" in intervention.error_summary.lower()
+
+
+@pytest.mark.anyio
+async def test_execute_classifies_api_unavailable_intervention(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Provider-unavailable failures should map to API_UNAVAILABLE."""
+
+    async def fake_agent_query(**kwargs: object):
+        del kwargs
+        if False:  # pragma: no cover - force async-generator shape
+            yield StreamChunk(text="")
+        raise RuntimeError("503 service unavailable: provider overloaded")
+
+    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_resolve_validation_commands",
+        lambda self, project_path, checklist: [],
+    )
+
+    project = _TestProject(tmp_path)
+    waypoint = Waypoint(
+        id="WP-1",
+        title="Provider unavailable handling",
+        objective="Classify transient provider outages",
+        acceptance_criteria=["Criterion 1"],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+
+    with pytest.raises(InterventionNeededError) as exc_info:
+        await executor.execute()
+
+    intervention = exc_info.value.intervention
+    assert intervention.type == InterventionType.API_UNAVAILABLE
+    assert intervention.context["api_error_type"] == "api_unavailable"
+    assert "temporarily unavailable" in intervention.error_summary.lower()
 
 
 @pytest.mark.anyio
