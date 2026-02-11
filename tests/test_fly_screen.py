@@ -360,6 +360,109 @@ class TestWorkerInterventionHandling:
         assert pending.type == InterventionType.BUDGET_EXCEEDED
 
 
+class TestBudgetWaitAutoResume:
+    """Tests for budget-wait countdown auto-resume behavior."""
+
+    def test_budget_wait_tick_auto_resumes_failed_waypoint(self) -> None:
+        class MockProject:
+            def __init__(self) -> None:
+                self.journey = SimpleNamespace(state=JourneyState.FLY_PAUSED)
+
+            def get_path(self) -> Path:
+                return Path("/tmp/test-project")
+
+        waypoint = Waypoint(
+            id="WP-010",
+            title="Budget paused waypoint",
+            objective="Resume after reset",
+            status=WaypointStatus.FAILED,
+        )
+        flight_plan = FlightPlan(waypoints=[waypoint])
+        screen = FlyScreen(  # type: ignore[arg-type]
+            project=MockProject(),
+            flight_plan=flight_plan,
+            spec="spec",
+        )
+
+        marked_statuses: list[WaypointStatus] = []
+        transitions: list[JourneyState] = []
+        notifications: list[str] = []
+        executed: list[bool] = []
+
+        screen.current_waypoint = None
+        screen.watch_execution_state = lambda _state: None  # type: ignore[method-assign]
+        screen.execution_state = ExecutionState.PAUSED
+        screen._budget_resume_at = datetime.now(UTC)
+        screen._budget_resume_waypoint_id = waypoint.id
+        screen._budget_wait_timer = None
+        screen.coordinator.mark_waypoint_status = (  # type: ignore[method-assign]
+            lambda _wp, status: marked_statuses.append(status)
+        )
+        screen.coordinator.transition = (  # type: ignore[method-assign]
+            lambda state: transitions.append(state)
+        )
+        screen.notify = lambda message, **_kwargs: notifications.append(str(message))  # type: ignore[method-assign]
+        screen._execute_current_waypoint = lambda: executed.append(True)  # type: ignore[method-assign]
+        screen.query_one = lambda *_args, **_kwargs: SimpleNamespace(  # type: ignore[method-assign]
+            set_normal=lambda: None
+        )
+
+        screen._on_budget_wait_tick()
+
+        assert marked_statuses == [WaypointStatus.PENDING]
+        assert screen.current_waypoint == waypoint
+        assert transitions == [JourneyState.FLY_EXECUTING]
+        assert screen.execution_state == ExecutionState.RUNNING
+        assert executed == [True]
+        assert notifications[-1] == "Budget reset window reached. Resuming execution."
+
+    def test_budget_wait_tick_warns_when_no_waypoint_can_resume(self) -> None:
+        class MockProject:
+            def __init__(self) -> None:
+                self.journey = SimpleNamespace(state=JourneyState.FLY_PAUSED)
+
+            def get_path(self) -> Path:
+                return Path("/tmp/test-project")
+
+        flight_plan = FlightPlan()
+        screen = FlyScreen(  # type: ignore[arg-type]
+            project=MockProject(),
+            flight_plan=flight_plan,
+            spec="spec",
+        )
+
+        notifications: list[tuple[str, str | None]] = []
+        selected: list[bool] = []
+        executed: list[bool] = []
+
+        screen.current_waypoint = None
+        screen.watch_execution_state = lambda _state: None  # type: ignore[method-assign]
+        screen.execution_state = ExecutionState.PAUSED
+        screen._budget_resume_at = datetime.now(UTC)
+        screen._budget_resume_waypoint_id = None
+        screen._budget_wait_timer = None
+        screen._select_next_waypoint = (
+            lambda include_in_progress=False: selected.append(  # type: ignore[method-assign]
+                include_in_progress
+            )
+        )
+        screen.notify = lambda message, **kwargs: notifications.append(  # type: ignore[method-assign]
+            (str(message), kwargs.get("severity"))
+        )
+        screen._execute_current_waypoint = lambda: executed.append(True)  # type: ignore[method-assign]
+
+        screen._on_budget_wait_tick()
+
+        assert selected == [True]
+        assert screen.current_waypoint is None
+        assert screen.execution_state == ExecutionState.PAUSED
+        assert executed == []
+        assert notifications[-1] == (
+            "Budget reset reached, but no waypoint is ready to resume.",
+            "warning",
+        )
+
+
 class TestSelectNextWaypoint:
     """Tests for the waypoint selection logic."""
 
