@@ -184,6 +184,7 @@ docs/
 
 - [docs/README.md](./docs/README.md) - Documentation index
 - [docs/product-spec.md](./docs/product-spec.md) - Product specification
+- [docs/current-state.md](./docs/current-state.md) - Current implementation snapshot
 - [docs/runtime-architecture.md](./docs/runtime-architecture.md) - Runtime module map
 - [docs/journey-state-machine.md](./docs/journey-state-machine.md) - Journey states and transitions
 - [docs/project-memory-index.md](./docs/project-memory-index.md) - Project memory and directory indexing

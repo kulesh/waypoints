@@ -774,7 +774,7 @@ class ProjectSelectionScreen(Screen[None]):
         list_panel = self.query_one("#project-list-panel", ProjectListPanel)
         project = list_panel.selected_project
         if project:
-            self.app._resume_project(project)  # type: ignore[attr-defined]
+            self.app.resume_project(project)  # type: ignore[attr-defined]
 
     def action_new_project(self) -> None:
         """Create a new project - go to IdeationScreen."""
@@ -802,7 +802,7 @@ class ProjectSelectionScreen(Screen[None]):
 
                 if mode == "run":
                     self.notify(f"Imported: {project.name}")
-                    self.app._resume_project(project)  # type: ignore[attr-defined]
+                    self.app.resume_project(project)  # type: ignore[attr-defined]
                 else:
                     self.notify(f"Imported: {project.name} - ready for review")
             except Exception as e:
@@ -831,7 +831,7 @@ class ProjectSelectionScreen(Screen[None]):
         project = list_panel.selected_project
         if project:
             # Use the app's resume logic
-            self.app._resume_project(project)  # type: ignore[attr-defined]
+            self.app.resume_project(project)  # type: ignore[attr-defined]
 
     def action_delete_project(self) -> None:
         """Delete the selected project with confirmation."""

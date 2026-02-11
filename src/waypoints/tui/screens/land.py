@@ -262,9 +262,9 @@ class ShipPanel(VerticalScroll):
 
     def on_mount(self) -> None:
         """Show release notes or changelog preview."""
-        self._update_changelog()
+        self.refresh_changelog()
 
-    def _update_changelog(self) -> None:
+    def refresh_changelog(self) -> None:
         """Show release notes if available, otherwise show changelog preview."""
         content = self.query_one("#changelog-content", Markdown)
 
@@ -288,6 +288,10 @@ class ShipPanel(VerticalScroll):
                 lines.append(f"- {wp.title}")
 
         content.update("\n".join(lines) if lines else "No completed waypoints")
+
+    def _update_changelog(self) -> None:
+        """Compatibility wrapper for callers still using old private name."""
+        self.refresh_changelog()
 
 
 class IteratePanel(VerticalScroll):
@@ -839,8 +843,8 @@ class LandScreen(Screen[None]):
             JourneyState.CHART_REVIEW,
             reason="land.edit_plan",
         )
-        spec = self.app._load_latest_doc(self.project, "product-spec")  # type: ignore[attr-defined]
-        brief = self.app._load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
+        spec = self.app.load_latest_doc(self.project, "product-spec")  # type: ignore[attr-defined]
+        brief = self.app.load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
         self.waypoints_app.switch_phase(
             "chart",
             {
@@ -874,10 +878,10 @@ class LandScreen(Screen[None]):
     def action_generate_release(self) -> None:
         """Regenerate release notes."""
         if self.current_activity == LandActivity.SHIP:
-            self.project._generate_release_notes()
+            self.project.generate_release_notes()
             # Refresh the ship panel
             ship_panel = self.query_one("#ship-panel", ShipPanel)
-            ship_panel._update_changelog()
+            ship_panel.refresh_changelog()
             self.notify("Release notes regenerated")
 
     def action_create_tag(self) -> None:

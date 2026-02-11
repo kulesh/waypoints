@@ -1,5 +1,9 @@
 # Waypoints Product Specification
 
+> Status note (2026-02-11): this is the original product-spec and MVP framing
+> document. For the authoritative implemented-state view, see
+> `docs/current-state.md`.
+
 ## Introduction & Vision
 
 ### The Problem with Software Development Today
@@ -33,9 +37,10 @@ Like an aircraft's flight management system, Waypoints takes a destination (your
 3. **Create traceable journeys**: Every line of code connects back to the intent that spawned it
 4. **Enable confident delegation**: Developers trust the autopilot because they shaped the flight plan
 
-### MVP Objectives
+### Original MVP Objectives
 
-The MVP focuses on **Steps 1-3: Ideation through Waypoint Planning**. Execution (Step 4) comes post-MVP.
+At project inception, MVP focused on **Steps 1-3: Ideation through Waypoint
+Planning**, with execution (Step 4) scheduled post-MVP.
 
 | Objective | Success Criteria |
 |-----------|------------------|
@@ -106,8 +111,8 @@ Alex has a clear product vision but limited development experience. Traditional 
 │   └──────────┘      └──────────┘      └──────────┘      └──────────┘   │
 │                                                                         │
 │   Enter your        Refine through    Generate          Execute         │
-│   idea              Q&A dialogue      waypoints         (post-MVP)      │
-│                     → Idea Brief      → Flight Plan                     │
+│   idea              Q&A dialogue      waypoints         (originally      │
+│                     → Idea Brief      → Flight Plan     post-MVP)       │
 │                     → Product Spec                                      │
 │                                                                         │
 │   ─────────────────────── MVP SCOPE ───────────────────────             │
@@ -603,7 +608,7 @@ For MVP, we use `.waypoints/` in the project directory for simplicity and portab
 | **SPARK** | The phase where an idea is first captured. |
 | **SHAPE** | The phase where an idea is refined through dialogue into a brief and spec. |
 | **CHART** | The phase where a spec is decomposed into waypoints. |
-| **FLY** | The phase where waypoints are executed (post-MVP). |
+| **FLY** | The phase where waypoints are executed (implemented in runtime). |
 | **LAND** | The completion state when all waypoints are done. |
 | **Brief** | A concise document capturing the crystallized idea. |
 | **Clarity Score** | A percentage indicating how complete the brief is. |

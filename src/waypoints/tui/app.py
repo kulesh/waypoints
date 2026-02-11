@@ -162,7 +162,7 @@ class WaypointsApp(App[None]):
 
         self.push_screen(ProjectSelectionScreen())
 
-    def _resume_project(self, project: Project) -> None:
+    def resume_project(self, project: Project) -> None:
         """Resume a project from its current journey state."""
         if project.journey is None:
             logger.warning("Project %s has no journey, starting fresh", project.slug)
@@ -271,6 +271,10 @@ class WaypointsApp(App[None]):
     def _load_latest_doc(self, project: Project, doc_type: str) -> str | None:
         """Compatibility wrapper for callers still using old private name."""
         return self.load_latest_doc(project, doc_type)
+
+    def _resume_project(self, project: Project) -> None:
+        """Compatibility wrapper for callers still using old private name."""
+        self.resume_project(project)
 
     def _resume_brief_review(self, project: Project, brief: str) -> None:
         """Resume at brief review with existing content."""

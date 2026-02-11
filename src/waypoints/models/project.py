@@ -193,7 +193,7 @@ class Project:
         # Commit at milestone states (domain layer, not UX layer)
         self._commit_milestone_if_needed(target)
 
-    def _generate_release_notes(self) -> None:
+    def generate_release_notes(self) -> None:
         """Generate release notes from product spec and completed waypoints.
 
         Creates a docs/release-notes.md file with project summary
@@ -259,6 +259,10 @@ class Project:
         release_notes_path = docs_dir / "release-notes.md"
         release_notes_path.write_text("\n".join(lines))
         logger.info("Generated release notes: %s", release_notes_path)
+
+    def _generate_release_notes(self) -> None:
+        """Compatibility wrapper for callers still using old private name."""
+        self.generate_release_notes()
 
     def _extract_features_from_spec(self) -> list[str]:
         """Extract key features from the product specification.
@@ -355,7 +359,7 @@ class Project:
 
         # Generate release notes at landing (before staging)
         if state == JourneyState.LAND_REVIEW:
-            self._generate_release_notes()
+            self.generate_release_notes()
 
         config = GitConfig.load(self.slug)
         if not config.auto_commit:

@@ -217,7 +217,7 @@ class ChartScreen(Screen[None]):
             return
 
         # Let the app handle routing to the correct screen
-        self.waypoints_app._resume_project(self.project)
+        self.waypoints_app.resume_project(self.project)
 
     def _set_thinking(self, thinking: bool) -> None:
         """Set the header status indicator to thinking state."""
@@ -853,8 +853,8 @@ class ChartScreen(Screen[None]):
         from waypoints.tui.screens.product_spec import ProductSpecResumeScreen
 
         # Load spec and brief from disk to ensure we have content
-        spec = self.app._load_latest_doc(self.project, "product-spec")  # type: ignore[attr-defined]
-        brief = self.app._load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
+        spec = self.app.load_latest_doc(self.project, "product-spec")  # type: ignore[attr-defined]
+        brief = self.app.load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
         self.app.switch_screen(
             ProductSpecResumeScreen(
                 project=self.project, spec=spec or self.spec, brief=brief

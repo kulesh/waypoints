@@ -5,7 +5,8 @@ This folder contains the product, architecture, and testing references for Waypo
 ## Product and Vision
 
 - [idea.md](./idea.md) - Original idea and vision
-- [product-spec.md](./product-spec.md) - Full product specification
+- [product-spec.md](./product-spec.md) - Original product specification (vision + MVP scope)
+- [current-state.md](./current-state.md) - Runtime truth source for implemented capabilities
 
 ## Architecture
 

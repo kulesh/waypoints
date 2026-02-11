@@ -259,7 +259,7 @@ class RegenerateModal(ModalScreen[str | None]):
                 # Pop all screens and resume the new project
                 while len(self.waypoints_app.screen_stack) > 1:
                     self.waypoints_app.pop_screen()
-                self.waypoints_app._resume_project(result.project)
+                self.waypoints_app.resume_project(result.project)
             else:
                 error_msg = result.error or "Unknown error"
                 self.app.notify(f"Regeneration failed: {error_msg}", severity="error")

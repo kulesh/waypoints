@@ -145,3 +145,70 @@ def test_cli_parser_and_commands_stay_separated() -> None:
         "cli/commands modules should not build parsers or parse argv:\n"
         + "\n".join(command_violations)
     )
+
+
+def test_tui_screens_and_widgets_avoid_private_cross_component_calls() -> None:
+    """TUI code should call public APIs on app/project/widget collaborators."""
+    forbidden_private_calls = {
+        "_resume_project",
+        "_load_latest_doc",
+        "_generate_release_notes",
+        "_update_changelog",
+    }
+    target_files = sorted((SRC_ROOT / "tui" / "screens").glob("*.py")) + sorted(
+        (SRC_ROOT / "tui" / "widgets").glob("*.py")
+    )
+
+    violations: list[str] = []
+    for path in target_files:
+        source = path.read_text(encoding="utf-8")
+        tree = _parse_module(path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(
+                node.func, ast.Attribute
+            ):
+                continue
+            if node.func.attr not in forbidden_private_calls:
+                continue
+
+            owner = node.func.value
+            if isinstance(owner, ast.Name) and owner.id in {"self", "cls"}:
+                continue
+
+            expr = ast.get_source_segment(source, node) or ast.dump(
+                node, include_attributes=False
+            )
+            violations.append(
+                f"{path.relative_to(PROJECT_ROOT)}:L{node.lineno}: {expr}"
+            )
+
+    assert not violations, (
+        "Found private cross-component call sites in TUI code:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_hotspot_modules_stay_within_non_regression_size_budgets() -> None:
+    """Large modules should not grow while decomposition work is in progress."""
+    non_regression_budgets = {
+        "tui/screens/fly.py": 1145,
+        "tui/widgets/flight_plan.py": 800,
+        "fly/executor.py": 1205,
+        "tui/screens/land.py": 760,
+        "tui/screens/chart.py": 700,
+    }
+
+    violations: list[str] = []
+    for relative_path, line_budget in non_regression_budgets.items():
+        path = SRC_ROOT / relative_path
+        line_count = _non_empty_non_comment_line_count(path)
+        if line_count > line_budget:
+            violations.append(
+                f"{path.relative_to(PROJECT_ROOT)} exceeded budget: "
+                f"{line_count} > {line_budget}"
+            )
+
+    assert not violations, (
+        "Hotspot module size regressions detected. "
+        "Decompose modules or ratchet budgets deliberately:\n" + "\n".join(violations)
+    )

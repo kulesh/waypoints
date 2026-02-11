@@ -344,14 +344,14 @@ class ProductSpecScreen(Screen[None]):
 
     def _redirect_to_current_phase(self) -> None:
         """Route to screen matching current persisted journey phase."""
-        self.waypoints_app._resume_project(self.project)
+        self.waypoints_app.resume_project(self.project)
 
     def action_back(self) -> None:
         """Go back to Idea Brief screen."""
         from waypoints.tui.screens.idea_brief import IdeaBriefResumeScreen
 
         # Load brief from disk to ensure we have content
-        brief = self.app._load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
+        brief = self.app.load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
         self.app.switch_screen(
             IdeaBriefResumeScreen(project=self.project, brief=brief or "")
         )
@@ -561,7 +561,7 @@ class ProductSpecResumeScreen(Screen[None], MentionProcessingMixin):
         from waypoints.tui.screens.idea_brief import IdeaBriefResumeScreen
 
         # Load brief from disk to ensure we have content
-        brief = self.app._load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
+        brief = self.app.load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
         self.app.switch_screen(
             IdeaBriefResumeScreen(project=self.project, brief=brief or "")
         )

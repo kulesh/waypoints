@@ -38,16 +38,16 @@ Waypoints is an AI-native software development system. Testing it requires valid
 
 A set of reference projects with increasing complexity that Waypoints should be able to build.
 
-### Proposed Flight Tests
+### Flight Tests (Implemented vs Planned)
 
-| Level | Project | Tests |
-|-------|---------|-------|
-| L0 | Hello World CLI | Simplest possible: single file, prints output |
-| L1 | Todo App (CLI) | CRUD, file persistence, basic state |
-| L2 | REST API Server | HTTP endpoints, JSON, validation |
-| L3 | TUI Application | Textual-based, interactive, multiple screens |
-| L4 | LLM Integration | API calls, streaming, prompt management |
-| L5 | Waypoints (self) | **The ultimate test**: can it build itself? |
+| Level | Project | Tests | Status |
+|-------|---------|-------|--------|
+| L0 | Hello World CLI | Simplest possible: single file, prints output | Implemented |
+| L1 | Todo App (CLI) | CRUD, file persistence, basic state | Implemented |
+| L2 | REST API Server | HTTP endpoints, JSON, validation | Planned |
+| L3 | TUI Application | Textual-based, interactive, multiple screens | Planned |
+| L4 | LLM Integration | API calls, streaming, prompt management | Planned |
+| L5 | Waypoints (self) | **The ultimate test**: can it build itself? | Harness present |
 
 ### Flight Test Execution
 
@@ -59,17 +59,16 @@ flight-tests/
 │   ├── expected/
 │   │   ├── min_files.txt         # Minimum expected files
 │   │   └── smoke_test.sh         # ./hello should print "Hello"
-│   └── results/                  # Generated on each run
-│       └── 2026-01-08-run1/
 ├── L1-todo-cli/
 │   ├── input/
 │   │   └── idea.txt
 │   ├── expected/
 │   │   ├── min_files.txt
-│   │   ├── acceptance_criteria.yaml
 │   │   └── smoke_test.sh
-│   └── results/
-...
+└── self-host/
+    ├── run.sh                    # Isolated self-host harness launcher
+    ├── report.py                 # Checklist summarizer
+    └── review-checklist.md       # Manual review protocol
 ```
 
 ### Flight Test Metrics
@@ -234,8 +233,8 @@ uv run pytest -m "not slow" --timeout=30
 # Full suite (CI on main)
 uv run pytest --timeout=120
 
-# Flight test runs (scheduled/manual)
-python scripts/run_flight_tests.py --level L0-L4
+# Flight test runs (current implemented levels)
+python scripts/run_flight_tests.py --level L0-L1
 
 # Execute smoke tests against generated projects
 python scripts/run_flight_tests.py \
@@ -331,8 +330,8 @@ Current implementation status:
 
 | Metric | Target | Measurement |
 |--------|--------|-------------|
-| L0-L2 pass rate | 100% | Smoke tests pass |
-| L3-L4 pass rate | >80% | Smoke tests pass |
+| L0-L1 pass rate | 100% | Smoke tests pass |
+| L2-L4 pass rate | >80% (when implemented) | Smoke tests pass |
 | L5 (self) completion | Goal: 1 success | Full run without intervention |
 | Avg iterations/waypoint | <3 | Lower = better prompt effectiveness |
 | Cost per flight test | Track | Optimization opportunity |
