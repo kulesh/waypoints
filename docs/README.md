@@ -31,6 +31,10 @@ This folder contains the product, architecture, and testing references for Waypo
 
 - [testing-strategy.md](./testing-strategy.md) - End-to-end testing strategy
 
+## Packaging and Release
+
+- [homebrew-packaging.md](./homebrew-packaging.md) - Homebrew formula and tap update workflow
+
 ## Reviews and Notes
 
 - [claude-review.md](./claude-review.md) - Claude review notes

@@ -930,7 +930,9 @@ name = "waypoints"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "attrs" },
     { name = "claude-agent-sdk" },
+    { name = "jsonschema" },
     { name = "openai" },
     { name = "pyyaml" },
     { name = "textual" },
@@ -948,7 +950,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "attrs", specifier = ">=23.0.0" },
     { name = "claude-agent-sdk", specifier = ">=0.1.0" },
+    { name = "jsonschema", specifier = ">=4.0.0" },
     { name = "openai", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "textual", specifier = ">=0.50.0" },

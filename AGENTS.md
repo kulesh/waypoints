@@ -176,6 +176,7 @@ For full workflow details: `bd prime`
 - `docs/genspec-format.md` - Export format
 - `docs/protocol-v1.md` - JSON command/event protocol draft
 - `docs/testing-strategy.md` - Flight tests and quality gates
+- `docs/homebrew-packaging.md` - Homebrew formula and tap release workflow
 
 **Runtime entry points**
 - `src/waypoints/main.py` - Thin entrypoint + logging bootstrap

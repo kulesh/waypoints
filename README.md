@@ -71,6 +71,21 @@ The output of phases 1-3 is the **generative specification**—a complete, repro
 
 Waypoints requires Python 3.14+ and uses [uv](https://github.com/astral-sh/uv) for dependency management.
 
+### Homebrew (recommended)
+
+```bash
+brew tap kulesh/tap
+brew install waypoints
+```
+
+Or install without tapping:
+
+```bash
+brew install kulesh/tap/waypoints
+```
+
+### Local source install
+
 ```bash
 # Clone the repository
 git clone https://github.com/kulesh/waypoints.git
@@ -183,6 +198,7 @@ docs/
 ## Documentation
 
 - [docs/README.md](./docs/README.md) - Documentation index
+- [docs/homebrew-packaging.md](./docs/homebrew-packaging.md) - Homebrew packaging and release workflow
 - [docs/product-spec.md](./docs/product-spec.md) - Product specification
 - [docs/current-state.md](./docs/current-state.md) - Current implementation snapshot
 - [docs/runtime-architecture.md](./docs/runtime-architecture.md) - Runtime module map
@@ -265,6 +281,7 @@ uv run mypy src/
 ## FAQ
 
 - **What is a genspec?** A genspec is the distributable specification (idea brief, product spec, flight plan) that can be exported and used to recreate a project.
+- **How do I install from Homebrew?** Run `brew tap kulesh/tap` then `brew install waypoints`.
 - **Which LLMs are supported?** Waypoints supports Anthropic and OpenAI providers; configure the provider and model in settings.
 - **Which API key env vars do I need?** Use `ANTHROPIC_API_KEY` for Anthropic and `OPENAI_API_KEY` for OpenAI.
 - **Where is project state stored?** Each project persists under a `.waypoints/` directory with project metadata, documents, plans, and logs.
