@@ -170,6 +170,7 @@ For full workflow details: `bd prime`
 **Core docs**
 - `docs/product-spec.md` - Product spec and UX
 - `docs/runtime-architecture.md` - Module map and runtime flow
+- `docs/adr/0003-fly-screen-boundary-contract.md` - Fly UI/controller/domain ownership contract
 - `docs/journey-state-machine.md` - States, transitions, recovery
 - `docs/project-memory-index.md` - Project memory layout + directory policy
 - `docs/genspec-format.md` - Export format
@@ -177,12 +178,15 @@ For full workflow details: `bd prime`
 - `docs/testing-strategy.md` - Flight tests and quality gates
 
 **Runtime entry points**
-- `src/waypoints/main.py` - CLI + TUI entry
+- `src/waypoints/main.py` - Thin entrypoint + logging bootstrap
+- `src/waypoints/cli/app.py` - CLI routing + shared setup
+- `src/waypoints/cli/parser.py` - argparse construction only
 - `src/waypoints/tui/app.py` - TUI app + routing
 
 **Domain + orchestration**
 - `src/waypoints/models/` - Project, Journey, Waypoint, FlightPlan
 - `src/waypoints/orchestration/coordinator.py` - Business logic
+- `src/waypoints/orchestration/headless_fly.py` - Shared headless waypoint execution path
 
 **Execution + LLM**
 - `src/waypoints/fly/executor.py` - Waypoint execution loop

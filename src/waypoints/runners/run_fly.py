@@ -21,11 +21,10 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from waypoints.fly.executor import ExecutionResult
-from waypoints.fly.intervention import InterventionNeededError
 from waypoints.models import Project, WaypointStatus
 from waypoints.models.flight_plan import FlightPlanReader
 from waypoints.orchestration import JourneyCoordinator
+from waypoints.orchestration.headless_fly import execute_waypoint_with_coordinator
 
 
 def log_event(event_type: str, data: dict[str, Any]) -> None:
@@ -104,38 +103,43 @@ async def run_execution(args: argparse.Namespace) -> int:
             {"waypoint_id": waypoint.id, "title": waypoint.title},
         )
 
-        try:
-            result = await coordinator.execute_waypoint(
-                waypoint=waypoint,
-                max_iterations=args.max_iterations,
-                host_validations_enabled=args.host_validations_enabled,
+        outcome = await execute_waypoint_with_coordinator(
+            coordinator,
+            waypoint,
+            max_iterations=args.max_iterations,
+            host_validations_enabled=args.host_validations_enabled,
+        )
+
+        if outcome.kind == "success":
+            log_event(
+                "waypoint_completed",
+                {"waypoint_id": waypoint.id, "status": "success"},
             )
+            continue
 
-            # Route ALL results through coordinator (single source of truth)
-            coordinator.handle_execution_result(waypoint, result)
+        if outcome.kind == "failed":
+            status = outcome.result.value if outcome.result is not None else "failed"
+            log_event(
+                "waypoint_failed",
+                {"waypoint_id": waypoint.id, "status": status},
+            )
+            errors += 1
+            continue
 
-            if result == ExecutionResult.SUCCESS:
-                log_event(
-                    "waypoint_completed",
-                    {"waypoint_id": waypoint.id, "status": "success"},
-                )
-            else:
-                log_event(
-                    "waypoint_failed",
-                    {"waypoint_id": waypoint.id, "status": result.value},
-                )
-                errors += 1
-
-        except InterventionNeededError as e:
+        if outcome.kind == "intervention":
+            intervention = outcome.intervention
+            intervention_type = intervention.type.value if intervention else "unknown"
+            error_summary = (
+                intervention.error_summary if intervention else "Intervention required"
+            )
             log_event(
                 "intervention_needed",
                 {
                     "waypoint_id": waypoint.id,
-                    "intervention_type": e.intervention.type.value,
-                    "error_summary": e.intervention.error_summary,
+                    "intervention_type": intervention_type,
+                    "error_summary": error_summary,
                 },
             )
-            coordinator.mark_waypoint_status(waypoint, WaypointStatus.FAILED)
             if args.skip_intervention:
                 if args.verbose:
                     print(
@@ -143,24 +147,33 @@ async def run_execution(args: argparse.Namespace) -> int:
                         file=sys.stderr,
                     )
                 continue
-            else:
-                print(
-                    f"Error: Intervention required for {waypoint.id}",
-                    file=sys.stderr,
-                )
-                errors += 1
-                if not args.continue_on_error:
-                    break
-
-        except Exception as e:
-            log_event(
-                "waypoint_error",
-                {"waypoint_id": waypoint.id, "error": str(e)},
+            print(
+                f"Error: Intervention required for {waypoint.id}",
+                file=sys.stderr,
             )
-            coordinator.mark_waypoint_status(waypoint, WaypointStatus.FAILED)
             errors += 1
             if not args.continue_on_error:
                 break
+            continue
+
+        if outcome.error is not None:
+            log_event(
+                "waypoint_error",
+                {"waypoint_id": waypoint.id, "error": str(outcome.error)},
+            )
+            errors += 1
+            if not args.continue_on_error:
+                break
+            continue
+
+        # Defensive fallback: unknown outcome kind.
+        log_event(
+            "waypoint_error",
+            {"waypoint_id": waypoint.id, "error": "Unknown execution outcome"},
+        )
+        errors += 1
+        if not args.continue_on_error:
+            break
 
     log_event(
         "execution_finished",

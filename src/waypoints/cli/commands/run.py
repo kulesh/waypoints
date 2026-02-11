@@ -8,12 +8,11 @@ import logging
 import sys
 
 from waypoints.cli.context import load_project_or_error
+from waypoints.orchestration.headless_fly import execute_waypoint_with_coordinator
 
 
 def cmd_run(args: argparse.Namespace) -> int:
     """Execute waypoints for a project (headless mode)."""
-    from waypoints.fly.executor import ExecutionResult
-    from waypoints.fly.intervention import InterventionNeededError
     from waypoints.models.flight_plan import FlightPlanReader
     from waypoints.models.waypoint import WaypointStatus
     from waypoints.orchestration.coordinator import JourneyCoordinator
@@ -45,37 +44,43 @@ def cmd_run(args: argparse.Namespace) -> int:
             break
 
         print(f"Executing: {waypoint.id} - {waypoint.title}")
-
-        try:
-            result = asyncio.run(
-                coordinator.execute_waypoint(
-                    waypoint,
-                    max_iterations=args.max_iterations,
-                )
+        outcome = asyncio.run(
+            execute_waypoint_with_coordinator(
+                coordinator,
+                waypoint,
+                max_iterations=args.max_iterations,
+                host_validations_enabled=True,
             )
+        )
 
-            action = coordinator.handle_execution_result(waypoint, result)
-
-            if result == ExecutionResult.SUCCESS:
-                completed += 1
-                print("  ✓ Completed")
-            elif result == ExecutionResult.FAILED:
-                failed += 1
-                print("  ✗ Failed")
-                if args.on_error == "abort":
-                    print("\nAborting due to failure (--on-error=abort)")
-                    break
-                if args.on_error == "skip":
-                    print("  Skipping to next waypoint")
-                    continue
-
-            if action.action == "complete":
+        if outcome.kind == "success":
+            completed += 1
+            print("  ✓ Completed")
+            if outcome.next_action and outcome.next_action.action == "complete":
                 break
+            continue
 
-        except InterventionNeededError as e:
-            msg = e.intervention.error_summary
+        if outcome.kind == "failed":
+            failed += 1
+            print("  ✗ Failed")
+            if args.on_error == "abort":
+                print("\nAborting due to failure (--on-error=abort)")
+                break
+            if args.on_error == "skip":
+                print("  Skipping to next waypoint")
+                continue
+            if outcome.next_action and outcome.next_action.action == "complete":
+                break
+            continue
+
+        if outcome.kind == "intervention":
+            intervention = outcome.intervention
+            msg = (
+                intervention.error_summary
+                if intervention is not None
+                else "Unknown intervention"
+            )
             print(f"  ⚠ Intervention needed: {msg}", file=sys.stderr)
-            coordinator.mark_waypoint_status(waypoint, WaypointStatus.FAILED)
             if args.on_error == "abort":
                 print("\nAborting due to intervention (--on-error=abort)")
                 return 2
@@ -86,10 +91,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                 continue
             break
 
-        except Exception as e:
-            print(f"  ✗ Error: {e}", file=sys.stderr)
-            logging.exception("Waypoint execution error")
-            coordinator.mark_waypoint_status(waypoint, WaypointStatus.FAILED)
+        if outcome.error is not None:
+            print(f"  ✗ Error: {outcome.error}", file=sys.stderr)
+            logging.error("Waypoint execution error", exc_info=outcome.error)
             if args.on_error == "abort":
                 return 1
             if args.on_error == "skip":

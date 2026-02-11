@@ -17,6 +17,9 @@ This folder contains the product, architecture, and testing references for Waypo
 - [architecture-roadmap.md](./architecture-roadmap.md) - Long-term architecture plan
 - [unix-architecture-plan.md](./unix-architecture-plan.md) - UNIX-style architecture notes
 - [fly-main-decomposition-plan-2026-02-11.md](./fly-main-decomposition-plan-2026-02-11.md) - End-state and phased decomposition plan for FlyScreen/main CLI
+- [adr/0001-coordinator-phase-delegates.md](./adr/0001-coordinator-phase-delegates.md) - Coordinator facade and phase ownership
+- [adr/0002-single-source-status-mutations.md](./adr/0002-single-source-status-mutations.md) - Coordinator owns status mutations
+- [adr/0003-fly-screen-boundary-contract.md](./adr/0003-fly-screen-boundary-contract.md) - Fly UI/controller/domain boundary contract
 
 ## Protocols and Formats
 

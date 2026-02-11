@@ -5,53 +5,60 @@ the orchestration layer and supporting modules.
 
 ## Entry Points
 
-- `src/waypoints/main.py` is the CLI entry.
-  - Default: launches TUI (`WaypointsApp`).
-  - Subcommands: `export`, `import`, `run`, `compare`, `verify`.
+- `src/waypoints/main.py` is a thin entrypoint.
+  - Configures logging and delegates to `src/waypoints/cli/app.py::run`.
+- `src/waypoints/cli/parser.py` owns argparse construction.
+- `src/waypoints/cli/commands/*` owns command handlers.
+  - `export`, `import`, `run`, `compare`, `verify`, `view`, `memory`.
 
 ## High-Level Runtime Flow
 
 ```text
 main.py
-  -> tui/app.py (WaypointsApp)
-     -> screen routing and resume logic
-     -> TUI screens (ideation, qa, brief, spec, chart, fly, land)
+  -> cli/app.py (argv orchestration + command routing)
+     -> cli/commands/* (command handlers)
         -> JourneyCoordinator (business logic)
            -> models/* (Project, Journey, FlightPlan, Dialogue, Session)
            -> llm/* (ChatClient + prompts + validation)
            -> fly/* (execution, logs, interventions)
            -> runtime/* (command runner + timeout policy)
            -> git/* (optional commits/tags)
+  -> tui/app.py (for default TUI command)
+     -> screen routing and resume logic
+     -> TUI screens (ideation, qa, brief, spec, chart, fly, land)
 ```
 
 ## Module-Level Runtime Diagram
 
 ```text
-┌────────────────────────────┐
-│ src/waypoints/main.py      │
-│ CLI entry + command router │
-└──────────────┬─────────────┘
-               │
-      ┌────────┴─────────┐
-      │                  │
-      │ default (TUI)    │ subcommands (export/import/run/verify/compare)
-      │                  │
-┌─────▼──────────────────────┐          ┌─────────────────────────────────┐
-│ src/waypoints/tui/app.py   │          │ CLI handlers in main.py         │
-│ Textual App + screen nav   │          │ - genspec export/import         │
-└─────┬──────────────────────┘          │ - run (headless)                │
-      │                                  │ - verify/compare               │
-      │                                  └──────────────┬─────────────────┘
-      │                                                 │
-┌─────▼──────────────────────┐                          │
-│ TUI Screens (phase UIs)    │                          │
-│ src/waypoints/tui/screens/ │                          │
-│ ideation/brief/spec/chart/ │                          │
-│ fly/land                   │                          │
-└─────┬──────────────────────┘                          │
-      │ uses                                        uses
-      │                                             │
-┌─────▼─────────────────────────────────────────────▼─────┐
+┌──────────────────────────────────────┐
+│ src/waypoints/main.py                │
+│ thin entrypoint + logging bootstrap  │
+└──────────────────┬───────────────────┘
+                   │
+          ┌────────▼────────┐
+          │ cli/app.py      │
+          │ parse + route   │
+          └──────┬──────────┘
+                 │
+      ┌──────────┴───────────┐
+      │                      │
+      │ default (TUI)        │ subcommands (export/import/run/verify/...)
+      │                      │
+┌─────▼──────────────────────┐    ┌────────────────────────────────────────┐
+│ src/waypoints/tui/app.py   │    │ src/waypoints/cli/commands/*          │
+│ Textual App + screen nav   │    │ command business logic (no argparse)  │
+└─────┬──────────────────────┘    └──────────────────────┬─────────────────┘
+      │                                                  │
+┌─────▼──────────────────────┐                           │
+│ TUI Screens (phase UIs)    │                           │
+│ src/waypoints/tui/screens/ │                           │
+│ ideation/brief/spec/chart/ │                           │
+│ fly/land                   │                           │
+└─────┬──────────────────────┘                           │
+      │ uses                                         uses
+      │                                              │
+┌─────▼──────────────────────────────────────────────▼─────┐
 │ src/waypoints/orchestration/coordinator.py             │
 │ JourneyCoordinator: business logic + state transitions │
 └─────┬─────────────────────────────────────────────┬─────┘
@@ -166,6 +173,9 @@ Genspec + verification paths (CLI + TUI export):
 ### FLY (Execution)
 
 - `src/waypoints/tui/screens/fly.py`
+  - UI adapter layer + timer/session wiring.
+  - Uses `src/waypoints/tui/screens/fly_controller.py` for execution/intervention
+    branching decisions.
   - Delegates all business logic to `JourneyCoordinator` / `FlyPhase`:
     - journey transitions (`FLY_READY`, `FLY_EXECUTING`, `FLY_PAUSED`, `FLY_INTERVENTION`, `LAND_REVIEW`)
     - executor lifecycle (`create_executor`, `cancel_execution`, `execute_waypoint`)
@@ -186,16 +196,18 @@ Genspec + verification paths (CLI + TUI export):
     - transitions to `SPARK_IDLE` (new iteration)
   - Uses genspec export (`export_project`, `export_to_file`) for spec view/export.
 
-## Headless Flow (CLI `run`)
+## Headless Flow (CLI + Runner)
 
-- `src/waypoints/main.py::cmd_run`
-  - Loads project and flight plan
-  - Creates `JourneyCoordinator`
-  - Loop:
-    - `select_next_waypoint(...)`
-    - `execute_waypoint(...)` (via coordinator)
-    - `handle_execution_result(...)`
-  - Intervention errors surface to CLI and follow `--on-error` policy
+- `src/waypoints/cli/commands/run.py`
+  - User-facing headless command with `--on-error` policy.
+- `src/waypoints/runners/run_fly.py`
+  - JSONL-oriented runner for scripted pipelines.
+- Shared execution path:
+  - `src/waypoints/orchestration/headless_fly.py::execute_waypoint_with_coordinator`
+  - Normalizes waypoint outcomes:
+    - success/failure (result + next action)
+    - intervention (status marked failed)
+    - unexpected error (status marked failed)
 
 ## Notes on Ownership
 
@@ -207,3 +219,7 @@ Genspec + verification paths (CLI + TUI export):
   and protocol escalation decisions to `fly/escalation_policy.py`.
 - `WaypointsApp` controls resume routing by journey phase and loads docs/plan
   from disk before entering screens.
+- `cli/parser.py` is the only argparse owner; `cli/commands/*` modules are
+  parser-agnostic command handlers.
+- `orchestration/headless_fly.py` is the shared waypoint execution service for
+  both CLI run and JSONL runner flows.
