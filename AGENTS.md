@@ -170,12 +170,16 @@ For full workflow details: `bd prime`
 **Core docs**
 - `docs/product-spec.md` - Product spec and UX
 - `docs/runtime-architecture.md` - Module map and runtime flow
+- `docs/domain-model-ubiquitous-language.md` - Canonical domain language and model terms
 - `docs/adr/0003-fly-screen-boundary-contract.md` - Fly UI/controller/domain ownership contract
+- `docs/adr/0004-multi-agent-fly-handoff-protocol.md` - Multi-agent handoff protocol and role boundaries
+- `docs/multi-agent-waypoint-implementation-plan-2026-02-11.md` - Multi-agent rollout and backlog plan
 - `docs/journey-state-machine.md` - States, transitions, recovery
 - `docs/project-memory-index.md` - Project memory layout + directory policy
 - `docs/genspec-format.md` - Export format
 - `docs/protocol-v1.md` - JSON command/event protocol draft
 - `docs/testing-strategy.md` - Flight tests and quality gates
+- `docs/skills/README.md` - Skill pack catalog and resolver rules
 - `docs/homebrew-packaging.md` - Homebrew formula and tap release workflow
 
 **Runtime entry points**

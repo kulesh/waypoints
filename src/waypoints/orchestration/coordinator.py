@@ -241,8 +241,12 @@ class JourneyCoordinator:
     ) -> "CommitResult":
         return self._fly.commit_waypoint(waypoint, git_config)
 
+    def rollback_to_ref(self, ref: str | None) -> "RollbackResult":
+        return self._fly.rollback_to_ref(ref)
+
     def rollback_to_tag(self, tag: str | None) -> "RollbackResult":
-        return self._fly.rollback_to_tag(tag)
+        """Compatibility wrapper for legacy rollback tag naming."""
+        return self.rollback_to_ref(tag)
 
     def check_parent_completion(self, waypoint: Waypoint) -> None:
         self._fly.check_parent_completion(waypoint)
@@ -252,10 +256,15 @@ class JourneyCoordinator:
         intervention: Intervention,
         action: InterventionAction,
         additional_iterations: int = 5,
+        rollback_ref: str | None = None,
         rollback_tag: str | None = None,
     ) -> NextAction:
         return self._fly.handle_intervention(
-            intervention, action, additional_iterations, rollback_tag
+            intervention,
+            action,
+            additional_iterations,
+            rollback_ref=rollback_ref,
+            rollback_tag=rollback_tag,
         )
 
     def get_completion_status(self) -> CompletionStatus:

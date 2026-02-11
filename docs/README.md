@@ -11,6 +11,7 @@ This folder contains the product, architecture, and testing references for Waypo
 ## Architecture
 
 - [runtime-architecture.md](./runtime-architecture.md) - Runtime flow and module map
+- [domain-model-ubiquitous-language.md](./domain-model-ubiquitous-language.md) - Canonical domain model and ubiquitous language
 - [timeout-policy.md](./timeout-policy.md) - Central timeout domains, backoff, and signal lifecycle
 - [journey-state-machine.md](./journey-state-machine.md) - Journey states and transitions
 - [project-memory-index.md](./project-memory-index.md) - Persistent project memory and directory policy
@@ -21,11 +22,14 @@ This folder contains the product, architecture, and testing references for Waypo
 - [adr/0001-coordinator-phase-delegates.md](./adr/0001-coordinator-phase-delegates.md) - Coordinator facade and phase ownership
 - [adr/0002-single-source-status-mutations.md](./adr/0002-single-source-status-mutations.md) - Coordinator owns status mutations
 - [adr/0003-fly-screen-boundary-contract.md](./adr/0003-fly-screen-boundary-contract.md) - Fly UI/controller/domain boundary contract
+- [adr/0004-multi-agent-fly-handoff-protocol.md](./adr/0004-multi-agent-fly-handoff-protocol.md) - Multi-agent fly handoff protocol and role boundaries
+- [multi-agent-waypoint-implementation-plan-2026-02-11.md](./multi-agent-waypoint-implementation-plan-2026-02-11.md) - Phased plan for multi-agent waypoint execution
 
 ## Protocols and Formats
 
 - [protocol-v1.md](./protocol-v1.md) - Protocol specification
 - [genspec-format.md](./genspec-format.md) - Generative specification format
+- [skills/README.md](./skills/README.md) - Skill pack catalog and resolver contract
 
 ## Testing
 

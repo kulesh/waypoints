@@ -76,6 +76,10 @@ class _LoopState:
     next_reason_detail: str = "Initial waypoint execution."
     protocol_derailment_streak: int = 0
     protocol_derailments: list[str] = field(default_factory=list)
+    clarification_rounds: int = 0
+    clarification_signatures: set[str] = field(default_factory=set)
+    unresolved_clarification: bool = False
+    clarification_exhausted: bool = False
     workspace_before: "WorkspaceSnapshot | None" = None
     prompt: str = ""
     completion_marker: str = ""

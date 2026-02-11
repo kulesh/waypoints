@@ -1,5 +1,6 @@
 """Unit tests for WaypointExecutor."""
 
+import copy
 import json
 from datetime import datetime
 from pathlib import Path
@@ -8,8 +9,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from waypoints.config.settings import settings
 from waypoints.fly.executor import (
     CRITERION_PATTERN,
+    MAX_CLARIFICATION_ROUNDS,
     ExecutionContext,
     ExecutionResult,
     ExecutionStep,
@@ -19,6 +22,7 @@ from waypoints.fly.executor import (
 )
 from waypoints.fly.intervention import InterventionNeededError, InterventionType
 from waypoints.fly.stack import ValidationCommand
+from waypoints.fly.types import _LoopState
 from waypoints.git.config import Checklist
 from waypoints.git.receipt import CapturedEvidence, ChecklistReceipt
 from waypoints.llm.metrics import BudgetExceededError
@@ -842,8 +846,6 @@ async def test_execute_classifies_budget_intervention_with_context(
         lambda self, project_path, checklist: [],
     )
 
-    from waypoints.config.settings import settings
-
     settings.llm_budget_usd = 25.0
 
     project = _TestProject(tmp_path)
@@ -1516,3 +1518,200 @@ async def test_finalize_exposes_host_failure_details(tmp_path: Path) -> None:
     assert "Host validation failed" in summary
     assert "exited 101" in summary
     assert "unused assignment in validator.rs:90" in summary
+
+
+@pytest.mark.anyio
+async def test_finalize_allows_invalid_verifier_in_advisory_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = SimpleNamespace(get_path=lambda: tmp_path)
+    waypoint = Waypoint(
+        id="WP-792",
+        title="Advisory verifier",
+        objective="Do not block on verifier rejection in advisory mode",
+        acceptance_criteria=[],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+    executor._log_writer = DummyLogWriter()
+
+    command = "python -c \"print('host evidence')\""
+    validation_commands = [
+        ValidationCommand(name="tests", command=command, category="test")
+    ]
+    tool_evidence = CapturedEvidence(
+        command="ruff check .",
+        exit_code=0,
+        stdout="lint ok",
+        stderr="",
+        captured_at=datetime.now(),
+    )
+    finalizer = executor._make_finalizer()
+
+    async def _fake_verify(*_: object, **__: object) -> bool:
+        return False
+
+    monkeypatch.setattr(finalizer, "_verify_with_llm", _fake_verify)
+
+    snapshot = copy.deepcopy(settings._data)
+    try:
+        settings._data["fly"] = {
+            "multi_agent": {
+                "enabled": True,
+                "verifier_enabled": True,
+                "verifier_mode": "advisory",
+            }
+        }
+        result = await finalizer.finalize(
+            project_path=tmp_path,
+            captured_criteria={},
+            validation_commands=validation_commands,
+            reported_validation_commands=[],
+            tool_validation_categories={"linting": tool_evidence},
+            max_iterations=executor.max_iterations,
+        )
+    finally:
+        settings._data = snapshot
+
+    assert result is True
+
+
+@pytest.mark.anyio
+async def test_finalize_skips_verifier_when_gate_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = SimpleNamespace(get_path=lambda: tmp_path)
+    waypoint = Waypoint(
+        id="WP-793",
+        title="Verifier disabled",
+        objective="Skip verifier when rollout gate disabled",
+        acceptance_criteria=[],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+    executor._log_writer = DummyLogWriter()
+
+    command = "python -c \"print('host evidence')\""
+    validation_commands = [
+        ValidationCommand(name="tests", command=command, category="test")
+    ]
+    tool_evidence = CapturedEvidence(
+        command="ruff check .",
+        exit_code=0,
+        stdout="lint ok",
+        stderr="",
+        captured_at=datetime.now(),
+    )
+    finalizer = executor._make_finalizer()
+
+    async def _fail_verify(*_: object, **__: object) -> bool:
+        raise AssertionError("Verifier should be skipped when gate disabled")
+
+    monkeypatch.setattr(finalizer, "_verify_with_llm", _fail_verify)
+
+    snapshot = copy.deepcopy(settings._data)
+    try:
+        settings._data["fly"] = {
+            "multi_agent": {
+                "enabled": True,
+                "verifier_enabled": False,
+                "verifier_mode": "required",
+            }
+        }
+        result = await finalizer.finalize(
+            project_path=tmp_path,
+            captured_criteria={},
+            validation_commands=validation_commands,
+            reported_validation_commands=[],
+            tool_validation_categories={"linting": tool_evidence},
+            max_iterations=executor.max_iterations,
+        )
+    finally:
+        settings._data = snapshot
+
+    assert result is True
+
+
+class _ArtifactLogWriter:
+    def __init__(self) -> None:
+        self.artifacts: list[object] = []
+
+    def log_protocol_artifact(self, artifact: object) -> None:
+        self.artifacts.append(artifact)
+
+
+def test_extract_clarification_payloads_parses_structured_tags(tmp_path: Path) -> None:
+    project = SimpleNamespace(get_path=lambda: tmp_path)
+    waypoint = Waypoint(
+        id="WP-880",
+        title="Clarify",
+        objective="Test parser",
+        acceptance_criteria=[],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+
+    payloads = executor._extract_clarification_payloads(
+        """
+        <clarification-request>
+        {"question":"Which config file is canonical?","confidence":0.41}
+        </clarification-request>
+        """
+    )
+
+    assert len(payloads) == 1
+    assert payloads[0]["question"] == "Which config file is canonical?"
+
+
+def test_handle_clarification_requests_logs_request_and_response(
+    tmp_path: Path,
+) -> None:
+    project = SimpleNamespace(get_path=lambda: tmp_path)
+    waypoint = Waypoint(
+        id="WP-881",
+        title="Clarify",
+        objective="Test handling",
+        acceptance_criteria=[],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+    log_writer = _ArtifactLogWriter()
+    executor._log_writer = log_writer
+
+    loop_state = _LoopState(
+        full_output=(
+            "<clarification-request>"
+            '{"question":"Need direction","confidence":0.2}'
+            "</clarification-request>"
+        )
+    )
+
+    executor._handle_clarification_requests(loop_state)
+
+    assert loop_state.clarification_rounds == 1
+    assert loop_state.unresolved_clarification is False
+    assert len(log_writer.artifacts) == 2
+
+
+def test_handle_clarification_requests_marks_exhaustion(tmp_path: Path) -> None:
+    project = SimpleNamespace(get_path=lambda: tmp_path)
+    waypoint = Waypoint(
+        id="WP-882",
+        title="Clarify",
+        objective="Test exhaustion",
+        acceptance_criteria=[],
+    )
+    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
+    log_writer = _ArtifactLogWriter()
+    executor._log_writer = log_writer
+
+    loop_state = _LoopState(
+        clarification_rounds=MAX_CLARIFICATION_ROUNDS,
+        full_output=(
+            "<clarification-request>"
+            '{"question":"Need direction","confidence":0.2}'
+            "</clarification-request>"
+        ),
+    )
+
+    executor._handle_clarification_requests(loop_state)
+
+    assert loop_state.clarification_exhausted is True
+    assert loop_state.unresolved_clarification is True
+    assert loop_state.next_reason_code == "clarification_budget_exhausted"

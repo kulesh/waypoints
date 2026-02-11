@@ -202,10 +202,14 @@ docs/
 - [docs/product-spec.md](./docs/product-spec.md) - Product specification
 - [docs/current-state.md](./docs/current-state.md) - Current implementation snapshot
 - [docs/runtime-architecture.md](./docs/runtime-architecture.md) - Runtime module map
+- [docs/domain-model-ubiquitous-language.md](./docs/domain-model-ubiquitous-language.md) - Canonical domain model and naming language
+- [docs/adr/0004-multi-agent-fly-handoff-protocol.md](./docs/adr/0004-multi-agent-fly-handoff-protocol.md) - Multi-agent fly handoff protocol
+- [docs/multi-agent-waypoint-implementation-plan-2026-02-11.md](./docs/multi-agent-waypoint-implementation-plan-2026-02-11.md) - Multi-agent implementation plan
 - [docs/journey-state-machine.md](./docs/journey-state-machine.md) - Journey states and transitions
 - [docs/project-memory-index.md](./docs/project-memory-index.md) - Project memory and directory indexing
 - [docs/waypoint-spec-context-lifecycle.md](./docs/waypoint-spec-context-lifecycle.md) - Waypoint spec context lifecycle and refresh operations
 - [docs/genspec-format.md](./docs/genspec-format.md) - Genspec format reference
+- [docs/skills/README.md](./docs/skills/README.md) - Skill packs and resolver rules
 - [docs/testing-strategy.md](./docs/testing-strategy.md) - Testing approach
 - [docs/architecture-roadmap.md](./docs/architecture-roadmap.md) - Architecture roadmap
 
@@ -213,12 +217,27 @@ docs/
 
 ### State Persistence
 
-Each project creates a `.waypoints/` directory containing:
-- `project.json` - Project metadata
-- `dialogue.jsonl` - Conversation history
-- `flight-plan.json` - Waypoint definitions and status
+Each project persists under `<projects-root>/<slug>/`, where `<projects-root>`
+defaults to `.waypoints/projects/` in the launch workspace unless overridden in
+settings. A project directory contains:
+- `project.json` - Project metadata and journey state
+- `flight-plan.jsonl` - Waypoint definitions and status
 - `docs/` - Generated documents (idea brief, product spec)
-- `sessions/` - Execution logs and history
+- `sessions/` - Dialogue and execution logs
+- `receipts/` - Validation/verification evidence receipts
+
+### Multi-Agent Rollout Flags
+
+FLY multi-agent behavior is controlled through settings keys under
+`fly.multi_agent`:
+
+- `enabled` - master switch for multi-agent control-plane behavior
+- `verifier_enabled` - enable/disable verifier gate execution
+- `verifier_mode` - `required`, `advisory`, or `shadow`
+- `repair_enabled` - reserved switch for repair-role rollout
+- `clarification_required` - enforce clarification gating before completion
+- `context_prompt_budget_chars` - context envelope budget for prompt slices
+- `context_tool_output_budget_chars` - retained tool-output budget for reinjection
 
 ### Waypoint Execution
 

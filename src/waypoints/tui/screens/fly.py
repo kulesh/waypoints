@@ -1100,7 +1100,7 @@ class FlyScreen(Screen[None]):
         if result and result.action == InterventionAction.RETRY:
             params["additional_iterations"] = result.additional_iterations
         elif result and result.action == InterventionAction.ROLLBACK:
-            params["rollback_tag"] = result.rollback_tag
+            params["rollback_ref"] = result.rollback_ref
         if result is not None:
             self.coordinator.log_intervention_resolved(result.action.value, **params)
         if resolution.action == "missing_context":

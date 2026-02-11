@@ -276,6 +276,166 @@ class Settings:
         llm["use_web_auth"] = value
         self.set("llm", llm)
 
+    # --- Fly Multi-Agent Rollout Settings ---
+
+    def _get_fly_settings(self) -> dict[str, Any]:
+        raw = self._data.get("fly", {})
+        if isinstance(raw, dict):
+            return raw
+        return {}
+
+    def _set_fly_settings(self, fly: dict[str, Any]) -> None:
+        self.set("fly", fly)
+
+    @property
+    def fly_multi_agent_enabled(self) -> bool:
+        """Whether multi-agent fly behavior is enabled."""
+        fly = self._get_fly_settings()
+        multi_agent = fly.get("multi_agent", {})
+        if not isinstance(multi_agent, dict):
+            return True
+        return bool(multi_agent.get("enabled", True))
+
+    @fly_multi_agent_enabled.setter
+    def fly_multi_agent_enabled(self, value: bool) -> None:
+        fly = self._get_fly_settings()
+        multi_agent = fly.get("multi_agent", {})
+        if not isinstance(multi_agent, dict):
+            multi_agent = {}
+        multi_agent["enabled"] = bool(value)
+        fly["multi_agent"] = multi_agent
+        self._set_fly_settings(fly)
+
+    @property
+    def fly_multi_agent_verifier_enabled(self) -> bool:
+        """Whether verifier role should run in multi-agent mode."""
+        fly = self._get_fly_settings()
+        multi_agent = fly.get("multi_agent", {})
+        if not isinstance(multi_agent, dict):
+            return True
+        return bool(multi_agent.get("verifier_enabled", True))
+
+    @fly_multi_agent_verifier_enabled.setter
+    def fly_multi_agent_verifier_enabled(self, value: bool) -> None:
+        fly = self._get_fly_settings()
+        multi_agent = fly.get("multi_agent", {})
+        if not isinstance(multi_agent, dict):
+            multi_agent = {}
+        multi_agent["verifier_enabled"] = bool(value)
+        fly["multi_agent"] = multi_agent
+        self._set_fly_settings(fly)
+
+    @property
+    def fly_multi_agent_repair_enabled(self) -> bool:
+        """Whether optional repair role is enabled."""
+        fly = self._get_fly_settings()
+        multi_agent = fly.get("multi_agent", {})
+        if not isinstance(multi_agent, dict):
+            return False
+        return bool(multi_agent.get("repair_enabled", False))
+
+    @fly_multi_agent_repair_enabled.setter
+    def fly_multi_agent_repair_enabled(self, value: bool) -> None:
+        fly = self._get_fly_settings()
+        multi_agent = fly.get("multi_agent", {})
+        if not isinstance(multi_agent, dict):
+            multi_agent = {}
+        multi_agent["repair_enabled"] = bool(value)
+        fly["multi_agent"] = multi_agent
+        self._set_fly_settings(fly)
+
+    @property
+    def fly_multi_agent_clarification_required(self) -> bool:
+        """Whether clarification protocol is mandatory."""
+        fly = self._get_fly_settings()
+        multi_agent = fly.get("multi_agent", {})
+        if not isinstance(multi_agent, dict):
+            return True
+        return bool(multi_agent.get("clarification_required", True))
+
+    @fly_multi_agent_clarification_required.setter
+    def fly_multi_agent_clarification_required(self, value: bool) -> None:
+        fly = self._get_fly_settings()
+        multi_agent = fly.get("multi_agent", {})
+        if not isinstance(multi_agent, dict):
+            multi_agent = {}
+        multi_agent["clarification_required"] = bool(value)
+        fly["multi_agent"] = multi_agent
+        self._set_fly_settings(fly)
+
+    @property
+    def fly_multi_agent_verifier_mode(self) -> str:
+        """Verifier gate mode: required, advisory, or shadow."""
+        fly = self._get_fly_settings()
+        multi_agent = fly.get("multi_agent", {})
+        if not isinstance(multi_agent, dict):
+            return "required"
+        raw = str(multi_agent.get("verifier_mode", "required")).strip().lower()
+        if raw not in {"required", "advisory", "shadow"}:
+            return "required"
+        return raw
+
+    @fly_multi_agent_verifier_mode.setter
+    def fly_multi_agent_verifier_mode(self, value: str) -> None:
+        normalized = str(value).strip().lower()
+        if normalized not in {"required", "advisory", "shadow"}:
+            normalized = "required"
+        fly = self._get_fly_settings()
+        multi_agent = fly.get("multi_agent", {})
+        if not isinstance(multi_agent, dict):
+            multi_agent = {}
+        multi_agent["verifier_mode"] = normalized
+        fly["multi_agent"] = multi_agent
+        self._set_fly_settings(fly)
+
+    @property
+    def fly_context_prompt_budget_chars(self) -> int:
+        """Prompt context budget for builder/verifier context slices."""
+        fly = self._get_fly_settings()
+        multi_agent = fly.get("multi_agent", {})
+        if not isinstance(multi_agent, dict):
+            return 12000
+        raw = multi_agent.get("context_prompt_budget_chars", 12000)
+        try:
+            budget = int(raw)
+        except (TypeError, ValueError):
+            return 12000
+        return max(0, budget)
+
+    @fly_context_prompt_budget_chars.setter
+    def fly_context_prompt_budget_chars(self, value: int) -> None:
+        fly = self._get_fly_settings()
+        multi_agent = fly.get("multi_agent", {})
+        if not isinstance(multi_agent, dict):
+            multi_agent = {}
+        multi_agent["context_prompt_budget_chars"] = max(0, int(value))
+        fly["multi_agent"] = multi_agent
+        self._set_fly_settings(fly)
+
+    @property
+    def fly_context_tool_output_budget_chars(self) -> int:
+        """Budget for retained tool output snippets reused in prompts."""
+        fly = self._get_fly_settings()
+        multi_agent = fly.get("multi_agent", {})
+        if not isinstance(multi_agent, dict):
+            return 4000
+        raw = multi_agent.get("context_tool_output_budget_chars", 4000)
+        try:
+            budget = int(raw)
+        except (TypeError, ValueError):
+            return 4000
+        return max(0, budget)
+
+    @fly_context_tool_output_budget_chars.setter
+    def fly_context_tool_output_budget_chars(self, value: int) -> None:
+        fly = self._get_fly_settings()
+        multi_agent = fly.get("multi_agent", {})
+        if not isinstance(multi_agent, dict):
+            multi_agent = {}
+        multi_agent["context_tool_output_budget_chars"] = max(0, int(value))
+        fly["multi_agent"] = multi_agent
+        self._set_fly_settings(fly)
+
 
 # Global settings instance
 settings = Settings()

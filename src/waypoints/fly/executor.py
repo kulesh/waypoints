@@ -1,19 +1,4 @@
-"""Waypoint executor using Ralph-style iterative agentic execution.
-
-This module implements the core execution loop where Claude autonomously
-implements waypoints by writing code, running tests, and iterating until
-completion or max iterations reached.
-
-Key patterns from Ralph Wiggum technique:
-- Iterative loop until completion marker detected
-- File system as context (Claude reads its own previous work)
-- Clear completion markers: <waypoint-complete>WP-XXX</waypoint-complete>
-- Git checkpoints for progress
-
-Model-centric architecture ("Pilot and Dog"):
-- Model runs conceptual checklist, produces receipt
-- Code validates receipt before allowing commit
-"""
+"""Waypoint execution loop with receipt validation and intervention handling."""
 
 import logging
 import os
@@ -23,6 +8,23 @@ from typing import TYPE_CHECKING, Any
 
 from waypoints.config.app_root import dangerous_app_root
 from waypoints.config.settings import settings
+from waypoints.fly.clarification_runtime import (
+    MAX_CLARIFICATION_ROUNDS as _MAX_CLARIFICATION_ROUNDS,
+)
+from waypoints.fly.clarification_runtime import (
+    build_clarification_response as _build_clarification_response_runtime,
+)
+from waypoints.fly.clarification_runtime import (
+    extract_clarification_payloads as _extract_clarification_payloads_runtime,
+)
+from waypoints.fly.clarification_runtime import (
+    handle_clarification_requests as _handle_clarification_requests_runtime,
+)
+from waypoints.fly.context_envelope import (
+    apply_context_envelope,
+    clip_tool_output_for_context,
+)
+from waypoints.fly.covenant import DevelopmentCovenant
 from waypoints.fly.escalation_policy import (
     build_escalation_decision,
     detect_protocol_issues,
@@ -45,16 +47,35 @@ from waypoints.fly.evidence import (
     parse_tool_output as _parse_tool_output,
 )
 from waypoints.fly.execution_log import ExecutionLogWriter
+from waypoints.fly.executor_runtime import (
+    persist_waypoint_memory,
+    validate_no_external_changes,
+)
+from waypoints.fly.guidance_runtime import (
+    build_builder_turn_guidance,
+    build_executor_system_prompt,
+    load_builder_guidance_bundle,
+)
 from waypoints.fly.intervention import (
     Intervention,
     InterventionNeededError,
     InterventionType,
 )
-from waypoints.fly.intervention_policy import classify_execution_error
+from waypoints.fly.intervention_policy import (
+    classify_execution_error,
+    extract_intervention_reason,
+    needs_user_intervention,
+)
 from waypoints.fly.kickoff_prompt import (
     build_iteration_kickoff_prompt as _build_iteration_kickoff_prompt_payload,
 )
-from waypoints.fly.protocol import parse_stage_reports
+from waypoints.fly.protocol import (
+    ClarificationRequest,
+    ClarificationResponse,
+    FlyRole,
+    GuidancePacket,
+    parse_stage_reports,
+)
 from waypoints.fly.provenance import (
     WorkspaceDiffSummary,
     WorkspaceSnapshot,
@@ -83,11 +104,9 @@ from waypoints.llm.client import (
 from waypoints.llm.prompts import build_execution_prompt
 from waypoints.memory import (
     ProjectMemoryIndex,
-    WaypointMemoryRecord,
     build_waypoint_memory_context_details,
     format_directory_policy_for_prompt,
     load_or_build_project_memory,
-    save_waypoint_memory,
 )
 from waypoints.models.project import Project
 from waypoints.models.waypoint import Waypoint
@@ -102,6 +121,7 @@ logger = logging.getLogger(__name__)
 # Max iterations before giving up
 MAX_ITERATIONS = 10
 MAX_PROTOCOL_DERAILMENT_STREAK = 2
+MAX_CLARIFICATION_ROUNDS = _MAX_CLARIFICATION_ROUNDS
 
 
 class WaypointExecutor:
@@ -139,6 +159,8 @@ class WaypointExecutor:
         self._waypoint_memory_ids: tuple[str, ...] = ()
         self._current_spec_hash: str | None = None
         self._spec_context_stale: bool = False
+        self._development_covenant: DevelopmentCovenant | None = None
+        self._builder_guidance_packet: GuidancePacket | None = None
 
     def cancel(self) -> None:
         """Cancel the execution."""
@@ -184,7 +206,9 @@ class WaypointExecutor:
             result = await self._execute_impl(project_path)
 
             # Post-execution validation: check for escapes
-            violations = self._validate_no_external_changes(project_path)
+            violations = validate_no_external_changes(
+                project_path, self._file_operations
+            )
             if violations:
                 logger.error(
                     "SECURITY: Agent escaped project directory! Violations:\n%s",
@@ -211,13 +235,7 @@ class WaypointExecutor:
             os.chdir(original_cwd)
 
     async def _execute_impl(self, project_path: Path) -> ExecutionResult:
-        """Internal implementation of execute, runs in project directory.
-
-        Orchestrates iterations by delegating to focused methods:
-        - _run_iteration: stream one agent turn, parse evidence
-        - _handle_completion: finalize receipt, return or retry
-        - _escalate_if_needed: check protocol derailments, stuck agent
-        """
+        """Internal execution implementation that runs from project directory."""
         self._log_writer = ExecutionLogWriter(self.project, self.waypoint)
 
         checklist = Checklist.load(self.project)
@@ -226,17 +244,30 @@ class WaypointExecutor:
         )
         self._refresh_project_memory(project_path)
         self._refresh_spec_context_status()
+        self._refresh_development_covenant(project_path)
+        context_envelope, policy_context, waypoint_memory_context = (
+            apply_context_envelope(
+                waypoint_id=self.waypoint.id,
+                role=FlyRole.BUILDER,
+                prompt_budget_chars=settings.fly_context_prompt_budget_chars,
+                tool_output_budget_chars=settings.fly_context_tool_output_budget_chars,
+                directory_policy_context=self._directory_policy_context,
+                waypoint_memory_context=self._waypoint_memory_context,
+            )
+        )
+        self._log_protocol_artifact_if_supported(context_envelope)
 
         prompt = build_execution_prompt(
             self.waypoint,
             self.spec,
             project_path,
             checklist,
-            directory_policy_context=self._directory_policy_context,
-            waypoint_memory_context=self._waypoint_memory_context,
+            directory_policy_context=policy_context,
+            waypoint_memory_context=waypoint_memory_context,
             full_spec_pointer="docs/product-spec.md",
             spec_context_stale=self._spec_context_stale,
             current_spec_hash=self._current_spec_hash,
+            guidance_packet=self._builder_guidance_packet,
         )
 
         logger.info(
@@ -308,6 +339,9 @@ class WaypointExecutor:
     def _log_iteration_start(self, s: _LoopState, iter_prompt: str) -> None:
         """Log the start of an iteration with context metadata."""
         assert self._log_writer is not None
+        if (guidance_packet := self._build_turn_guidance_packet()) is not None:
+            self._log_protocol_artifact_if_supported(guidance_packet)
+
         is_first = s.iteration == 1
         self._log_writer.log_iteration_start(
             iteration=s.iteration,
@@ -337,12 +371,7 @@ class WaypointExecutor:
         s: _LoopState,
         iter_prompt: str,
     ) -> tuple[str, float | None]:
-        """Run one agent iteration: stream chunks, parse evidence.
-
-        Returns (iteration_output, iteration_cost).
-        Raises on API/execution error (caught by caller).
-        Updates s.full_output, s.captured_criteria, etc. in place.
-        """
+        """Run one agent iteration, updating loop state with streamed evidence."""
         assert self._log_writer is not None
         iteration_output = ""
         iteration_cost: float | None = None
@@ -407,6 +436,11 @@ class WaypointExecutor:
         if not s.completion_detected:
             self._parse_evidence(s)
             self._parse_stage_reports(s)
+            if (
+                settings.fly_multi_agent_enabled
+                and settings.fly_multi_agent_clarification_required
+            ):
+                self._handle_clarification_requests(s)
 
             if s.completion_marker in next_output:
                 logger.info("Completion marker found!")
@@ -442,7 +476,10 @@ class WaypointExecutor:
         assert self._log_writer is not None
         s.last_tool_name = chunk.tool_name
         s.last_tool_input = dict(chunk.tool_input)
-        s.last_tool_output = chunk.tool_output
+        s.last_tool_output = clip_tool_output_for_context(
+            chunk.tool_output,
+            settings.fly_context_tool_output_budget_chars,
+        )
         self._log_writer.log_tool_call(
             s.iteration,
             chunk.tool_name,
@@ -571,6 +608,33 @@ class WaypointExecutor:
                 summary,
             )
 
+    def _handle_clarification_requests(self, s: _LoopState) -> None:
+        """Capture clarification requests and emit orchestrator responses."""
+        _handle_clarification_requests_runtime(
+            s,
+            waypoint_id=self.waypoint.id,
+            log_artifact=self._log_protocol_artifact_if_supported,
+        )
+
+    def _extract_clarification_payloads(self, text: str) -> list[dict[str, Any]]:
+        """Extract structured clarification payloads from model output tags."""
+        return _extract_clarification_payloads_runtime(text)
+
+    def _build_clarification_response(
+        self,
+        request: ClarificationRequest,
+    ) -> ClarificationResponse:
+        """Generate deterministic orchestrator response for clarification."""
+        return _build_clarification_response_runtime(request)
+
+    def _log_protocol_artifact_if_supported(self, artifact: Any) -> None:
+        """Log protocol artifact when the active log writer supports it."""
+        if self._log_writer is None:
+            return
+        log_method = getattr(self._log_writer, "log_protocol_artifact", None)
+        if callable(log_method):
+            log_method(artifact)
+
     async def _handle_completion(
         self,
         project_path: Path,
@@ -578,11 +642,7 @@ class WaypointExecutor:
         iteration_output: str,
         iteration_cost: float | None,
     ) -> ExecutionResult | None:
-        """Finalize after completion marker detected.
-
-        Returns ExecutionResult.SUCCESS if receipt is valid, or None
-        to signal the caller to retry (receipt failed).
-        """
+        """Finalize after completion marker; return `None` to trigger retry."""
         assert self._log_writer is not None
         self.steps.append(
             ExecutionStep(
@@ -598,6 +658,28 @@ class WaypointExecutor:
             final_completed,
         )
         self._log_writer.log_iteration_end(s.iteration, iteration_cost)
+
+        if (
+            settings.fly_multi_agent_clarification_required
+            and s.unresolved_clarification
+        ):
+            summary = (
+                "Completion claim blocked because clarification remains unresolved."
+            )
+            self._log_writer.log_error(s.iteration, summary)
+            self._report_progress(
+                s.iteration,
+                MAX_ITERATIONS,
+                "clarification_pending",
+                summary,
+            )
+            s.next_reason_code = "clarification_pending"
+            s.next_reason_detail = summary
+            s.completion_detected = False
+            s.completion_iteration = None
+            s.completion_output = None
+            s.completion_criteria = None
+            return None
 
         finalizer = self._make_finalizer()
         receipt_valid = await finalizer.finalize(
@@ -681,6 +763,21 @@ class WaypointExecutor:
         Also records iteration step and determines next iteration reason.
         """
         assert self._log_writer is not None
+        if (
+            settings.fly_multi_agent_clarification_required
+            and s.clarification_exhausted
+        ):
+            self._raise_intervention(
+                project_path,
+                s,
+                InterventionType.CLARIFICATION_STALLED,
+                (
+                    "Clarification rounds exceeded policy limit. "
+                    "Fix path: review ambiguous acceptance criteria or product spec, "
+                    "then choose Edit/Retry."
+                ),
+            )
+
         verified_criteria = {
             idx
             for idx, criterion in s.captured_criteria.items()
@@ -814,8 +911,10 @@ class WaypointExecutor:
             s.iteration,
             ExecutionResult.INTERVENTION_NEEDED.value,
         )
-        self._persist_waypoint_memory(
+        persist_waypoint_memory(
             project_path=project_path,
+            waypoint=self.waypoint,
+            max_iterations=self.max_iterations,
             result=ExecutionResult.INTERVENTION_NEEDED.value,
             iteration=s.iteration,
             reported_validation_commands=s.reported_validation_commands,
@@ -824,6 +923,7 @@ class WaypointExecutor:
             protocol_derailments=s.protocol_derailments,
             workspace_summary=workspace_summary,
             error_summary=error_summary,
+            logger=logger,
         )
         raise InterventionNeededError(intervention) from e
 
@@ -890,8 +990,10 @@ class WaypointExecutor:
             s.iteration,
             ExecutionResult.INTERVENTION_NEEDED.value,
         )
-        self._persist_waypoint_memory(
+        persist_waypoint_memory(
             project_path=project_path,
+            waypoint=self.waypoint,
+            max_iterations=self.max_iterations,
             result=ExecutionResult.INTERVENTION_NEEDED.value,
             iteration=s.iteration,
             reported_validation_commands=s.reported_validation_commands,
@@ -900,6 +1002,7 @@ class WaypointExecutor:
             protocol_derailments=s.protocol_derailments,
             workspace_summary=workspace_summary,
             error_summary=error_summary,
+            logger=logger,
         )
         raise InterventionNeededError(intervention)
 
@@ -935,8 +1038,10 @@ class WaypointExecutor:
             s.iteration,
             result.value,
         )
-        self._persist_waypoint_memory(
+        persist_waypoint_memory(
             project_path=project_path,
+            waypoint=self.waypoint,
+            max_iterations=self.max_iterations,
             result=result.value,
             iteration=s.iteration,
             reported_validation_commands=s.reported_validation_commands,
@@ -944,6 +1049,8 @@ class WaypointExecutor:
             tool_validation_evidence=s.tool_validation_evidence,
             protocol_derailments=s.protocol_derailments,
             workspace_summary=workspace_summary,
+            error_summary=None,
+            logger=logger,
         )
         return result
 
@@ -994,30 +1101,11 @@ class WaypointExecutor:
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the agent."""
-        project_path = self.project.get_path()
-        policy_context = ""
-        if self._directory_policy_context:
-            policy_context = (
-                "\nProject memory policy (generated from repository scan):\n"
-                f"{self._directory_policy_context}\n"
-            )
-        return f"""You are implementing a software waypoint as part of a larger project.
-You have access to file and bash tools to read, write, and execute code.
-
-**CRITICAL CONSTRAINTS:**
-- Your working directory is: {project_path}
-- ONLY access files within this directory
-- NEVER use absolute paths outside the project
-- NEVER use ../ to escape the project directory
-{policy_context}
-
-Work methodically:
-1. First understand the existing codebase
-2. Make minimal, focused changes
-3. Test after each change
-4. Iterate until done
-
-When complete, output the completion marker specified in the instructions."""
+        return build_executor_system_prompt(
+            project_path=self.project.get_path(),
+            directory_policy_context=self._directory_policy_context,
+            guidance_packet=self._builder_guidance_packet,
+        )
 
     def _refresh_project_memory(self, project_path: Path) -> None:
         """Load and cache project memory policy for this execution."""
@@ -1066,6 +1154,38 @@ When complete, output the completion marker specified in the instructions."""
                 self._current_spec_hash,
             )
 
+    def _refresh_development_covenant(self, project_path: Path) -> None:
+        """Load covenant snapshot and create builder guidance packet."""
+        if not settings.fly_multi_agent_enabled:
+            self._development_covenant = None
+            self._builder_guidance_packet = None
+            return
+
+        try:
+            guidance_bundle = load_builder_guidance_bundle(
+                project_path,
+                waypoint_id=self.waypoint.id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to load development covenant for waypoint %s",
+                self.waypoint.id,
+            )
+            self._development_covenant = None
+            self._builder_guidance_packet = None
+            return
+
+        self._development_covenant = guidance_bundle.covenant
+        self._builder_guidance_packet = guidance_bundle.guidance_packet
+
+    def _build_turn_guidance_packet(self) -> GuidancePacket | None:
+        """Build a fresh guidance packet artifact for the current builder turn."""
+        return build_builder_turn_guidance(
+            waypoint_id=self.waypoint.id,
+            covenant=self._development_covenant,
+            baseline_packet=self._builder_guidance_packet,
+        )
+
     def _report_progress(
         self,
         iteration: int,
@@ -1090,38 +1210,11 @@ When complete, output the completion marker specified in the instructions."""
 
     def _needs_intervention(self, output: str) -> bool:
         """Check if the output indicates human intervention is needed."""
-        intervention_markers = [
-            "cannot proceed",
-            "need human help",
-            "blocked by",
-            "unable to complete",
-            "requires manual",
-        ]
-        lower_output = output.lower()
-        return any(marker in lower_output for marker in intervention_markers)
+        return needs_user_intervention(output)
 
     def _extract_intervention_reason(self, output: str) -> str:
         """Extract a meaningful intervention reason from the output."""
-        intervention_markers = [
-            "cannot proceed",
-            "need human help",
-            "blocked by",
-            "unable to complete",
-            "requires manual",
-        ]
-        lower_output = output.lower()
-
-        # Find which marker was triggered
-        for marker in intervention_markers:
-            if marker in lower_output:
-                # Extract surrounding context
-                idx = lower_output.find(marker)
-                start = max(0, idx - 100)
-                end = min(len(output), idx + len(marker) + 200)
-                context = output[start:end].strip()
-                return f"Agent indicated: ...{context}..."
-
-        return "Agent requested human intervention"
+        return extract_intervention_reason(output)
 
     def _resolve_validation_commands(
         self, project_path: Path, checklist: Checklist
@@ -1181,94 +1274,6 @@ When complete, output the completion marker specified in the instructions."""
                 self.waypoint.id,
             )
             return None
-
-    def _persist_waypoint_memory(
-        self,
-        *,
-        project_path: Path,
-        result: str,
-        iteration: int,
-        reported_validation_commands: list[str],
-        captured_criteria: dict[int, CriterionVerification],
-        tool_validation_evidence: dict[str, CapturedEvidence],
-        protocol_derailments: list[str],
-        workspace_summary: WorkspaceDiffSummary | None,
-        error_summary: str | None = None,
-    ) -> None:
-        """Persist waypoint execution memory for future waypoint retrieval."""
-        try:
-            verified_criteria = sorted(
-                idx
-                for idx, criterion in captured_criteria.items()
-                if criterion.status == "verified"
-            )
-            validation_commands = tuple(dict.fromkeys(reported_validation_commands))
-            useful_commands = tuple(
-                command
-                for command in dict.fromkeys(
-                    [*reported_validation_commands, *tool_validation_evidence.keys()]
-                )
-                if command
-            )
-            changed_files: tuple[str, ...] = ()
-            approx_tokens_changed: int | None = None
-            if workspace_summary is not None:
-                changed_files = tuple(
-                    item.path for item in workspace_summary.top_changed_files
-                )
-                approx_tokens_changed = workspace_summary.approx_tokens_changed
-
-            record = WaypointMemoryRecord(
-                schema_version="v1",
-                saved_at_utc=datetime.now(UTC).isoformat(),
-                waypoint_id=self.waypoint.id,
-                title=self.waypoint.title,
-                objective=self.waypoint.objective,
-                dependencies=tuple(self.waypoint.dependencies),
-                result=result,
-                iterations_used=iteration,
-                max_iterations=self.max_iterations,
-                protocol_derailments=tuple(protocol_derailments[-8:]),
-                error_summary=error_summary,
-                changed_files=changed_files,
-                approx_tokens_changed=approx_tokens_changed,
-                validation_commands=validation_commands,
-                useful_commands=useful_commands[:8],
-                verified_criteria=tuple(verified_criteria),
-            )
-            save_waypoint_memory(project_path, record)
-        except Exception:
-            logger.exception(
-                "Failed to persist waypoint memory for %s",
-                self.waypoint.id,
-            )
-
-    def _validate_no_external_changes(self, project_path: Path) -> list[str]:
-        """Check if any files were modified outside the project directory.
-
-        Returns a list of violation descriptions. Empty list means no violations.
-        """
-        violations: list[str] = []
-        project_root = project_path.resolve()
-
-        for file_op in self._file_operations:
-            if file_op.tool_name not in ("Edit", "Write", "Read"):
-                continue
-            if not file_op.file_path:
-                continue
-            try:
-                candidate = Path(file_op.file_path)
-                resolved = (
-                    candidate.resolve()
-                    if candidate.is_absolute()
-                    else (project_root / candidate).resolve()
-                )
-                if not resolved.is_relative_to(project_root):
-                    violations.append(str(file_op.file_path))
-            except OSError:
-                violations.append(str(file_op.file_path))
-
-        return violations
 
 
 async def execute_waypoint(

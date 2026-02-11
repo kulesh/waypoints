@@ -27,7 +27,7 @@ from waypoints.orchestration.fly_git import (
     commit_waypoint as commit_waypoint_with_policy,
 )
 from waypoints.orchestration.fly_git import (
-    rollback_to_tag as rollback_to_tag_with_policy,
+    rollback_to_ref as rollback_to_ref_with_policy,
 )
 from waypoints.orchestration.types import (
     BudgetWaitDetails,
@@ -444,6 +444,7 @@ class FlyPhase:
         intervention: Intervention,
         action: InterventionAction,
         additional_iterations: int = 5,
+        rollback_ref: str | None = None,
         rollback_tag: str | None = None,
     ) -> NextAction:
         """Handle user's response to an intervention.
@@ -452,23 +453,24 @@ class FlyPhase:
             intervention: The intervention that was shown
             action: User's chosen action
             additional_iterations: Extra iterations for RETRY
-            rollback_tag: Git tag for ROLLBACK
+            rollback_ref: Rollback git reference
+            rollback_tag: Legacy alias for rollback_ref
 
         Returns:
             NextAction indicating what UI should do next
         """
         if action == InterventionAction.ROLLBACK:
-            rollback_ref = rollback_tag
-            if rollback_ref is None:
+            target_ref = rollback_ref or rollback_tag
+            if target_ref is None:
                 context_ref = intervention.context.get("last_safe_ref")
                 if isinstance(context_ref, str) and context_ref.strip():
-                    rollback_ref = context_ref.strip()
+                    target_ref = context_ref.strip()
                 elif (
                     context_tag := intervention.context.get("last_safe_tag")
                 ) and isinstance(context_tag, str):
-                    rollback_ref = context_tag.strip()
+                    target_ref = context_tag.strip()
 
-            rollback_result = self.rollback_to_tag(rollback_ref)
+            rollback_result = self.rollback_to_ref(target_ref)
             self._coord.current_waypoint = None
             if rollback_result.success:
                 if self._coord.flight_plan is not None:
@@ -503,6 +505,7 @@ class FlyPhase:
             intervention=intervention,
             action=action,
             additional_iterations=additional_iterations,
+            rollback_ref=rollback_ref,
             rollback_tag=rollback_tag,
         )
 
@@ -536,20 +539,24 @@ class FlyPhase:
             git_service=self._coord.git,
         )
 
-    def rollback_to_tag(self, tag: str | None) -> RollbackResult:
-        """Rollback git to the specified tag and reload the flight plan.
+    def rollback_to_ref(self, ref: str | None) -> RollbackResult:
+        """Rollback git to the specified reference and reload the flight plan.
 
         Args:
-            tag: Git tag to reset to, or None for manual rollback.
+            ref: Git reference (tag/HEAD/commit-ish), or None for fallback logic.
 
         Returns:
             RollbackResult with success status, message, and reloaded plan.
         """
-        result = rollback_to_tag_with_policy(
+        result = rollback_to_ref_with_policy(
             self._coord.project,
-            tag,
+            ref,
             git_service=self._coord.git,
         )
         if result.success and result.flight_plan is not None:
             self._coord.flight_plan = result.flight_plan
         return result
+
+    def rollback_to_tag(self, tag: str | None) -> RollbackResult:
+        """Compatibility wrapper for legacy rollback tag naming."""
+        return self.rollback_to_ref(tag)

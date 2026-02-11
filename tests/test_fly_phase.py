@@ -149,8 +149,8 @@ def test_handle_intervention_rollback_success_resets_waypoint(
     )
     rolled_back_plan = FlightPlan(waypoints=[rolled_back_waypoint])
 
-    def _fake_rollback(tag: str | None) -> RollbackResult:
-        calls.append(tag)
+    def _fake_rollback(ref: str | None) -> RollbackResult:
+        calls.append(ref)
         coordinator.flight_plan = rolled_back_plan
         return RollbackResult(
             success=True,
@@ -159,7 +159,7 @@ def test_handle_intervention_rollback_success_resets_waypoint(
             flight_plan=rolled_back_plan,
         )
 
-    monkeypatch.setattr(phase, "rollback_to_tag", _fake_rollback)
+    monkeypatch.setattr(phase, "rollback_to_ref", _fake_rollback)
 
     action = phase.handle_intervention(
         intervention=intervention,
@@ -196,11 +196,11 @@ def test_handle_intervention_rollback_failure_pauses_with_fix_path(
 
     monkeypatch.setattr(
         phase,
-        "rollback_to_tag",
-        lambda tag: RollbackResult(
+        "rollback_to_ref",
+        lambda ref: RollbackResult(
             success=False,
             message="No rollback reference available.",
-            resolved_ref=tag,
+            resolved_ref=ref,
             flight_plan=None,
         ),
     )

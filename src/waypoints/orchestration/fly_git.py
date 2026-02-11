@@ -148,18 +148,18 @@ def commit_waypoint(
     )
 
 
-def rollback_to_tag(
+def rollback_to_ref(
     project: "Project",
-    tag: str | None,
+    ref: str | None,
     *,
     git_service: GitService | None = None,
 ) -> RollbackResult:
-    """Rollback git to a tag and load flight plan from disk."""
+    """Rollback git to a reference (tag/HEAD/commit-ish) and reload the plan."""
     git = git_service or GitService(project.get_path())
     if not git.is_git_repo():
         return RollbackResult(success=False, message="Not a git repository")
 
-    resolved_ref = tag.strip() if isinstance(tag, str) and tag.strip() else None
+    resolved_ref = ref.strip() if isinstance(ref, str) and ref.strip() else None
     head_commit = git.get_head_commit()
     if resolved_ref is None and head_commit is not None:
         resolved_ref = "HEAD"
@@ -193,3 +193,13 @@ def rollback_to_tag(
         resolved_ref=resolved_ref,
         flight_plan=loaded,
     )
+
+
+def rollback_to_tag(
+    project: "Project",
+    tag: str | None,
+    *,
+    git_service: GitService | None = None,
+) -> RollbackResult:
+    """Compatibility wrapper for legacy rollback tag naming."""
+    return rollback_to_ref(project, tag, git_service=git_service)

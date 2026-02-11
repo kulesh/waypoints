@@ -77,10 +77,10 @@ main.py
 └─────┬─────────┘                          ┌─────────▼───────────┐
       │ persist/load                       │ LLM providers       │
       ▼                                    │ src/waypoints/llm/  │
-┌──────────────────────────┐               │ providers/*         │
-│ .waypoints/ JSON/JSONL   │               └─────────────────────┘
-│ (project state + logs)   │
-└──────────────────────────┘
+┌──────────────────────────────────────────┐               │ providers/*         │
+│ <projects-root>/<slug>/ JSON/JSONL       │               └─────────────────────┘
+│ (project state + logs, configurable root)│
+└──────────────────────────────────────────┘
 
 FLY execution path (from coordinator):
 ┌──────────────────────────────────────────────────────────────┐
@@ -182,7 +182,7 @@ Genspec + verification paths (CLI + TUI export):
     - waypoint status mutations (`mark_waypoint_status`)
     - intervention classification and state (`classify_intervention`, `handle_intervention`)
     - budget wait computation (`compute_budget_wait`)
-    - git rollback (`rollback_to_tag`) and commit (`commit_waypoint`) via `fly_git.py`
+    - git rollback (`rollback_to_ref`) and commit (`commit_waypoint`) via `fly_git.py`
     - execution logging (`log_pause`, `log_git_commit`, `log_intervention_resolved`)
       via public `WaypointExecutor` logging APIs (no private attribute access)
     - flight plan persistence and parent completion checks

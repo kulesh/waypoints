@@ -9,7 +9,11 @@ import pytest
 
 from waypoints.git.config import GitConfig
 from waypoints.models.waypoint import Waypoint
-from waypoints.orchestration.fly_git import commit_waypoint, rollback_to_tag
+from waypoints.orchestration.fly_git import (
+    commit_waypoint,
+    rollback_to_ref,
+    rollback_to_tag,
+)
 
 
 class _ProjectStub:
@@ -137,7 +141,7 @@ def test_commit_waypoint_fails_when_receipt_missing(
     assert "No receipt found" in result.message
 
 
-def test_rollback_to_tag_loads_flight_plan(
+def test_rollback_to_ref_loads_flight_plan(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     project = _ProjectStub(tmp_path)
@@ -152,7 +156,7 @@ def test_rollback_to_tag_loads_flight_plan(
 
     monkeypatch.setattr("waypoints.orchestration.fly_git.FlightPlanReader", _Reader)
 
-    result = rollback_to_tag(project, "demo/WP-101", git_service=git)
+    result = rollback_to_ref(project, "demo/WP-101", git_service=git)
 
     assert result.success is True
     assert result.flight_plan is loaded_plan
@@ -160,7 +164,7 @@ def test_rollback_to_tag_loads_flight_plan(
     assert git.reset_calls == ["demo/WP-101"]
 
 
-def test_rollback_to_tag_without_tag_falls_back_to_head(
+def test_rollback_to_ref_without_ref_falls_back_to_head(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     project = _ProjectStub(tmp_path)
@@ -175,7 +179,7 @@ def test_rollback_to_tag_without_tag_falls_back_to_head(
 
     monkeypatch.setattr("waypoints.orchestration.fly_git.FlightPlanReader", _Reader)
 
-    result = rollback_to_tag(project, None, git_service=git)
+    result = rollback_to_ref(project, None, git_service=git)
 
     assert result.success is True
     assert result.flight_plan is loaded_plan
@@ -184,15 +188,39 @@ def test_rollback_to_tag_without_tag_falls_back_to_head(
     assert git.reset_calls == ["HEAD"]
 
 
-def test_rollback_to_tag_without_anchor_returns_actionable_message(
+def test_rollback_to_ref_without_anchor_returns_actionable_message(
     tmp_path: Path,
 ) -> None:
     project = _ProjectStub(tmp_path)
     git = _GitStub(is_repo=True, reset_success=True, head_commit=None)
 
-    result = rollback_to_tag(project, None, git_service=git)
+    result = rollback_to_ref(project, None, git_service=git)
 
     assert result.success is False
     assert "No rollback reference available" in result.message
     assert "git add -A && git commit" in result.message
     assert result.resolved_ref is None
+
+
+def test_rollback_to_tag_is_compatibility_wrapper(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project = _ProjectStub(tmp_path)
+    expected = object()
+
+    def _fake_ref(
+        project_obj: _ProjectStub,
+        ref: str | None,
+        *,
+        git_service: _GitStub | None = None,
+    ) -> object:
+        assert project_obj is project
+        assert ref == "demo/WP-101"
+        assert git_service is None
+        return expected
+
+    monkeypatch.setattr("waypoints.orchestration.fly_git.rollback_to_ref", _fake_ref)
+
+    result = rollback_to_tag(project, "demo/WP-101")
+
+    assert result is expected

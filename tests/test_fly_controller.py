@@ -67,9 +67,10 @@ class _FakeCoordinator:
         intervention: Intervention,
         action: InterventionAction,
         additional_iterations: int = 5,
+        rollback_ref: str | None = None,
         rollback_tag: str | None = None,
     ) -> NextAction:
-        del intervention, action, additional_iterations, rollback_tag
+        del intervention, action, additional_iterations, rollback_ref, rollback_tag
         return self.next_action
 
 

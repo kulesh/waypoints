@@ -603,6 +603,7 @@ For MVP, we use `.waypoints/` in the project directory for simplicity and portab
 |------|------------|
 | **Waypoint** | A discrete, achievable milestone in the development journey. Analogous to a GPS waypoint on a flight path. |
 | **Flight Plan** | The complete sequence of waypoints from idea to product. |
+| **Epic Waypoint** | Preferred runtime term for a parent waypoint that contains child waypoints. |
 | **Multi-hop Waypoint** | A waypoint that contains sub-waypoints (like an Epic contains Stories). |
 | **Single-hop Waypoint** | An atomic waypoint that can be completed without decomposition. |
 | **SPARK** | The phase where an idea is first captured. |

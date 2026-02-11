@@ -16,6 +16,14 @@ from waypoints.llm.providers.base import (
     classify_api_error,
 )
 
+_USER_INTERVENTION_MARKERS = (
+    "cannot proceed",
+    "need human help",
+    "blocked by",
+    "unable to complete",
+    "requires manual",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ErrorClassification:
@@ -105,3 +113,22 @@ def classify_execution_error(
         error_summary=error_summary,
         reset_at=reset_at,
     )
+
+
+def needs_user_intervention(output: str) -> bool:
+    """Check if output indicates explicit user intervention is needed."""
+    lower_output = output.lower()
+    return any(marker in lower_output for marker in _USER_INTERVENTION_MARKERS)
+
+
+def extract_intervention_reason(output: str) -> str:
+    """Extract contextual reason around an intervention marker."""
+    lower_output = output.lower()
+    for marker in _USER_INTERVENTION_MARKERS:
+        if marker in lower_output:
+            idx = lower_output.find(marker)
+            start = max(0, idx - 100)
+            end = min(len(output), idx + len(marker) + 200)
+            context = output[start:end].strip()
+            return f"Agent indicated: ...{context}..."
+    return "Agent requested human intervention"

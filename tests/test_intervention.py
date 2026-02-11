@@ -159,6 +159,7 @@ class TestInterventionResult:
         assert result.action == InterventionAction.RETRY
         assert result.additional_iterations == 5
         assert result.modified_waypoint is None
+        assert result.rollback_ref is None
         assert result.rollback_tag is None
 
     def test_create_wait_result(self) -> None:
@@ -167,6 +168,7 @@ class TestInterventionResult:
 
         assert result.action == InterventionAction.WAIT
         assert result.modified_waypoint is None
+        assert result.rollback_ref is None
         assert result.rollback_tag is None
 
     def test_create_skip_result(self) -> None:
@@ -191,10 +193,11 @@ class TestInterventionResult:
         """Test creating a rollback result."""
         result = InterventionResult(
             action=InterventionAction.ROLLBACK,
-            rollback_tag="project/WP-2",
+            rollback_ref="project/WP-2",
         )
 
         assert result.action == InterventionAction.ROLLBACK
+        assert result.rollback_ref == "project/WP-2"
         assert result.rollback_tag == "project/WP-2"
 
     def test_create_abort_result(self) -> None:
@@ -218,6 +221,7 @@ class TestInterventionResult:
         assert data["action"] == "edit"
         assert data["modified_waypoint_id"] == "WP-1"
         assert data["additional_iterations"] == 3
+        assert data["rollback_ref"] is None
         assert data["rollback_tag"] is None
 
 
@@ -296,6 +300,7 @@ class TestInterventionModalRollbackContext:
         assert captured
         assert captured[0] is not None
         assert captured[0].action == InterventionAction.ROLLBACK
+        assert captured[0].rollback_ref == "HEAD"
         assert captured[0].rollback_tag == "HEAD"
 
     def test_action_rollback_falls_back_to_last_safe_tag(
@@ -317,4 +322,5 @@ class TestInterventionModalRollbackContext:
 
         assert captured
         assert captured[0] is not None
+        assert captured[0].rollback_ref == "demo/WP-1"
         assert captured[0].rollback_tag == "demo/WP-1"

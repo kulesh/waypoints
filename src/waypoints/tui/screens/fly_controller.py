@@ -175,6 +175,7 @@ class FlyController:
             current_intervention,
             result.action,
             additional_iterations=result.additional_iterations,
+            rollback_ref=result.rollback_ref,
             rollback_tag=result.rollback_tag,
         )
         return InterventionResolutionDecision(

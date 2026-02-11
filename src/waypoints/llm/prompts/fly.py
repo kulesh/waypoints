@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from waypoints.fly.protocol import GuidancePacket
     from waypoints.git.config import Checklist
     from waypoints.git.receipt import ChecklistReceipt
     from waypoints.models.waypoint import Waypoint
@@ -19,6 +20,7 @@ def build_execution_prompt(
     full_spec_pointer: str = "docs/product-spec.md",
     spec_context_stale: bool = False,
     current_spec_hash: str | None = None,
+    guidance_packet: "GuidancePacket | None" = None,
 ) -> str:
     """Build the execution prompt for a waypoint.
 
@@ -32,6 +34,7 @@ def build_execution_prompt(
         full_spec_pointer: Relative path to the full product spec on disk
         spec_context_stale: Whether waypoint context hash mismatches current spec
         current_spec_hash: Hash of currently loaded product spec content
+        guidance_packet: Optional role-scoped governance payload
 
     Returns:
         Formatted execution prompt string
@@ -78,6 +81,28 @@ def build_execution_prompt(
             f"- current spec hash: {current_spec_hash or 'unknown'}\n"
             "Read the full spec before coding and treat the summary as hints only.\n"
         )
+    guidance_section = ""
+    if guidance_packet is not None:
+        constraints = (
+            "\n".join(f"- {item}" for item in guidance_packet.role_constraints)
+            if guidance_packet.role_constraints
+            else "- No additional role constraints."
+        )
+        stops = (
+            "\n".join(f"- {item}" for item in guidance_packet.stop_conditions)
+            if guidance_packet.stop_conditions
+            else "- No explicit stop conditions."
+        )
+        guidance_section = (
+            "\n## Development Covenant Guidance\n"
+            f"- covenant_version: {guidance_packet.covenant_version}\n"
+            f"- policy_hash: {guidance_packet.policy_hash}\n"
+            "- role: builder\n\n"
+            "### Role Constraints\n"
+            f"{constraints}\n\n"
+            "### Stop Conditions\n"
+            f"{stops}\n"
+        )
 
     return f"""## Current Waypoint: {waypoint.id}
 {waypoint.title}
@@ -105,6 +130,7 @@ def build_execution_prompt(
 {project_path}
 {policy_section}
 {waypoint_memory_section}
+{guidance_section}
 
 ## Instructions
 You are implementing a software waypoint. Your task is to:
@@ -205,6 +231,21 @@ The relevant output (test results, errors, etc.)
 Output a `<validation>` block for each validation command you run.
 This allows the system to capture evidence of your validation work.
 
+## Clarification Protocol (Mandatory On Doubt)
+If philosophy/guidelines, acceptance criteria intent, or constraints are
+ambiguous, emit this block before risky actions:
+
+```xml
+<clarification-request>
+{{"question":"what is ambiguous",
+  "context":"where the ambiguity appears",
+  "confidence":0.42,
+  "options":["option A","option B"]}}
+</clarification-request>
+```
+
+Do not emit `<waypoint-complete>` while a clarification request is unresolved.
+
 ## Acceptance Criteria Verification
 
 When you verify each acceptance criterion, report using this format:
@@ -259,6 +300,8 @@ If any validation fails:
 When ALL acceptance criteria are met and validation checks pass, output:
 <waypoint-complete>{waypoint.id}</waypoint-complete>
 
+Treat this as a completion claim handoff signal.
+Final success is decided by receipt validation and verification.
 Only output the completion marker when you are confident the waypoint is done.
 If you cannot complete the waypoint after several attempts, explain what's blocking you.
 
@@ -266,11 +309,15 @@ Begin implementing this waypoint now.
 """
 
 
-def build_verification_prompt(receipt: "ChecklistReceipt") -> str:
+def build_verification_prompt(
+    receipt: "ChecklistReceipt",
+    guidance_packet: "GuidancePacket | None" = None,
+) -> str:
     """Build the LLM verification prompt for a receipt.
 
     Args:
         receipt: The checklist receipt to verify
+        guidance_packet: Optional role-scoped governance payload
 
     Returns:
         Verification prompt string
@@ -329,6 +376,20 @@ def build_verification_prompt(receipt: "ChecklistReceipt") -> str:
     soft_section = ""
     if soft_evidence_text:
         soft_section = f"\n### Soft Validation Evidence\n\n{soft_evidence_text}\n"
+    guidance_section = ""
+    if guidance_packet is not None:
+        constraints = (
+            "\n".join(f"- {item}" for item in guidance_packet.role_constraints)
+            if guidance_packet.role_constraints
+            else "- No additional role constraints."
+        )
+        guidance_section = (
+            "\n### Development Covenant Guidance\n"
+            f"- covenant_version: {guidance_packet.covenant_version}\n"
+            f"- policy_hash: {guidance_packet.policy_hash}\n"
+            "- role: verifier\n"
+            f"{constraints}\n"
+        )
 
     return f"""## Receipt Verification
 
@@ -338,6 +399,7 @@ A receipt was generated for waypoint {receipt.waypoint_id}. Please verify it.
 
 {evidence_text}
 {soft_section}
+{guidance_section}
 
 ### Verification Task
 

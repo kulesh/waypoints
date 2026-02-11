@@ -25,6 +25,7 @@ class InterventionType(Enum):
     RATE_LIMITED = "rate_limited"  # Claude API rate limit hit
     API_UNAVAILABLE = "api_unavailable"  # Service temporarily down
     BUDGET_EXCEEDED = "budget_exceeded"  # Daily/monthly budget hit
+    CLARIFICATION_STALLED = "clarification_stalled"  # Clarification loop exhausted
 
 
 class InterventionAction(Enum):
@@ -34,7 +35,7 @@ class InterventionAction(Enum):
     RETRY = "retry"  # Try waypoint again (maybe with more iterations)
     SKIP = "skip"  # Mark waypoint skipped, continue to next
     EDIT = "edit"  # Open waypoint editor, then retry
-    ROLLBACK = "rollback"  # Rollback to last safe tag
+    ROLLBACK = "rollback"  # Rollback to last safe git reference
     ABORT = "abort"  # Stop execution entirely
 
 
@@ -50,6 +51,7 @@ SUGGESTED_ACTIONS: dict[InterventionType, InterventionAction] = {
     InterventionType.RATE_LIMITED: InterventionAction.RETRY,
     InterventionType.API_UNAVAILABLE: InterventionAction.RETRY,
     InterventionType.BUDGET_EXCEEDED: InterventionAction.WAIT,
+    InterventionType.CLARIFICATION_STALLED: InterventionAction.EDIT,
 }
 
 
@@ -96,7 +98,16 @@ class InterventionResult:
     action: InterventionAction
     modified_waypoint: Waypoint | None = None  # If EDIT was chosen
     additional_iterations: int = 5  # If RETRY was chosen
-    rollback_tag: str | None = None  # If ROLLBACK was chosen
+    rollback_ref: str | None = None
+    # Legacy field name kept for compatibility with older callers.
+    rollback_tag: str | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize rollback reference fields for compatibility."""
+        if self.rollback_ref is None and self.rollback_tag is not None:
+            self.rollback_ref = self.rollback_tag
+        if self.rollback_tag is None and self.rollback_ref is not None:
+            self.rollback_tag = self.rollback_ref
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for logging."""
@@ -106,6 +117,7 @@ class InterventionResult:
                 self.modified_waypoint.id if self.modified_waypoint else None
             ),
             "additional_iterations": self.additional_iterations,
+            "rollback_ref": self.rollback_ref,
             "rollback_tag": self.rollback_tag,
         }
 

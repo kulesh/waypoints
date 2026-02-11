@@ -583,7 +583,7 @@ def test_decide_orchestrator_disposition_escalates_without_report_and_budget() -
     assert decision.reason_code == "missing_verification_report_budget_exhausted"
 
 
-def test_decide_orchestrator_disposition_escalates_on_policy_violation_without_ref() -> (
+def test_decide_orchestrator_disposition_policy_violation_escalates_without_ref() -> (
     None
 ):
     decision = decide_orchestrator_disposition(

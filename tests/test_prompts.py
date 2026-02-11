@@ -3,6 +3,7 @@
 from datetime import datetime
 from pathlib import Path
 
+from waypoints.fly.protocol import FlyRole, GuidancePacket
 from waypoints.git.config import Checklist
 from waypoints.git.receipt import ChecklistItem, ChecklistReceipt
 from waypoints.llm.prompts.fly import build_execution_prompt, build_verification_prompt
@@ -123,3 +124,62 @@ def test_execution_prompt_includes_prior_waypoint_memory_context() -> None:
 
     assert "Prior Waypoint Memory" in prompt
     assert "WP-001 (dependency, result=success, iterations=1/10)" in prompt
+
+
+def test_execution_prompt_includes_guidance_packet() -> None:
+    waypoint = Waypoint(
+        id="WP-004",
+        title="Guided Work",
+        objective="Follow policy guidance",
+        acceptance_criteria=["prompt includes guidance"],
+    )
+    packet = GuidancePacket(
+        waypoint_id=waypoint.id,
+        produced_by_role=FlyRole.ORCHESTRATOR,
+        covenant_version="sha256:abc123",
+        policy_hash="abc123",
+        role_constraints=("Do not mutate docs/",),
+        stop_conditions=("Clarify when ambiguous",),
+    )
+
+    prompt = build_execution_prompt(
+        waypoint,
+        "Spec content",
+        Path("project"),
+        Checklist(items=["Run tests"]),
+        guidance_packet=packet,
+    )
+
+    assert "Development Covenant Guidance" in prompt
+    assert "covenant_version: sha256:abc123" in prompt
+    assert "Do not mutate docs/" in prompt
+    assert "Clarification Protocol (Mandatory On Doubt)" in prompt
+
+
+def test_verification_prompt_includes_guidance_packet() -> None:
+    receipt = ChecklistReceipt(
+        waypoint_id="WP-005",
+        completed_at=datetime.now(),
+        checklist=[
+            ChecklistItem(
+                item="tests",
+                status="passed",
+                command="pytest -v",
+                exit_code=0,
+                stdout="10 passed",
+            )
+        ],
+    )
+    packet = GuidancePacket(
+        waypoint_id="WP-005",
+        produced_by_role=FlyRole.ORCHESTRATOR,
+        covenant_version="sha256:def456",
+        policy_hash="def456",
+        role_constraints=("No file edits in verifier mode",),
+    )
+
+    prompt = build_verification_prompt(receipt, guidance_packet=packet)
+
+    assert "Development Covenant Guidance" in prompt
+    assert "covenant_version: sha256:def456" in prompt
+    assert "No file edits in verifier mode" in prompt

@@ -14,12 +14,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from waypoints.config.settings import settings
+from waypoints.fly.covenant import (
+    CovenantGuidanceInput,
+    build_guidance_packet,
+    load_development_covenant,
+)
 from waypoints.fly.evidence import (
     detect_validation_category as _detect_validation_category,
 )
 from waypoints.fly.evidence import (
     normalize_command as _normalize_command,
 )
+from waypoints.fly.protocol import FlyRole, GuidancePacket
+from waypoints.fly.skills import resolve_attached_skills
 from waypoints.fly.stack import ValidationCommand
 from waypoints.git.receipt import (
     CapturedEvidence,
@@ -311,12 +319,51 @@ class ReceiptFinalizer:
 
         return evidence
 
-    def _build_verification_prompt(self, receipt_path: Path) -> str:
+    def _build_verification_prompt(
+        self,
+        receipt_path: Path,
+        verifier_guidance: GuidancePacket | None = None,
+    ) -> str:
         """Build the LLM verification prompt for a receipt."""
         from waypoints.git.receipt import ChecklistReceipt
 
         receipt = ChecklistReceipt.load(receipt_path)
-        return build_verification_prompt(receipt)
+        return build_verification_prompt(receipt, guidance_packet=verifier_guidance)
+
+    def _build_verifier_guidance_packet(
+        self, project_path: Path
+    ) -> GuidancePacket | None:
+        """Build and return verifier guidance packet for policy propagation."""
+        if not settings.fly_multi_agent_enabled:
+            return None
+        if not settings.fly_multi_agent_verifier_enabled:
+            return None
+        try:
+            covenant = load_development_covenant(project_path)
+        except Exception:
+            logger.exception(
+                "Failed to load development covenant for verifier run on %s",
+                self._waypoint.id,
+            )
+            return None
+
+        return build_guidance_packet(
+            covenant,
+            CovenantGuidanceInput(
+                waypoint_id=self._waypoint.id,
+                role=FlyRole.VERIFIER,
+                role_constraints=(
+                    "Do not edit workspace files.",
+                    "Evaluate each criterion with explicit evidence references.",
+                    "Raise clarification when confidence is low.",
+                ),
+                stop_conditions=(
+                    "Mark inconclusive when evidence is insufficient.",
+                    "Do not infer success without command evidence.",
+                ),
+                attached_skills=resolve_attached_skills(project_path),
+            ),
+        )
 
     # ─── Finalize ─────────────────────────────────────────────────────
 
@@ -454,7 +501,41 @@ class ReceiptFinalizer:
             return False
 
         # LLM verification
-        return await self._verify_with_llm(project_path, receipt_path, max_iterations)
+        if not settings.fly_multi_agent_enabled or (
+            not settings.fly_multi_agent_verifier_enabled
+        ):
+            self._log_writer.log_finalize_end()
+            self._log_writer.log_receipt_validated(
+                str(receipt_path),
+                True,
+                "Verifier gate disabled by rollout settings",
+            )
+            self._last_failure = None
+            return True
+
+        verifier_result = await self._verify_with_llm(
+            project_path, receipt_path, max_iterations
+        )
+        if verifier_result:
+            return True
+
+        mode = settings.fly_multi_agent_verifier_mode
+        if mode in {"shadow", "advisory"}:
+            logger.warning(
+                "Verifier rejected receipt for %s in %s mode; accepting rollout result",
+                self._waypoint.id,
+                mode,
+            )
+            self._log_writer.log_error(
+                0,
+                (
+                    f"Verifier rejected receipt in {mode} mode; "
+                    "continuing due to rollout policy."
+                ),
+            )
+            self._last_failure = None
+            return True
+        return False
 
     def _finalize_soft_only(
         self,
@@ -527,7 +608,15 @@ class ReceiptFinalizer:
             "Verifying receipt with LLM...",
         )
 
-        verification_prompt = self._build_verification_prompt(receipt_path)
+        verifier_guidance = self._build_verifier_guidance_packet(project_path)
+        if verifier_guidance is not None:
+            log_method = getattr(self._log_writer, "log_protocol_artifact", None)
+            if callable(log_method):
+                log_method(verifier_guidance)
+        verification_prompt = self._build_verification_prompt(
+            receipt_path,
+            verifier_guidance=verifier_guidance,
+        )
         verification_output = ""
 
         try:

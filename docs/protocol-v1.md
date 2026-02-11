@@ -3,6 +3,9 @@
 This document defines a text-first protocol for the Waypoints engine. Clients
 send JSON commands to stdin and receive JSONL events from stdout.
 
+Terminology in this draft follows:
+- `docs/domain-model-ubiquitous-language.md`
+
 ## Design Goals
 
 - Text-first, streamable, and append-only
@@ -85,40 +88,64 @@ Errors are emitted as events with type `error`:
 }
 ```
 
-## Command Types (v1)
+## Command Types (v1, canonical)
 
-- start_qa
-- continue_qa
-- generate_brief
-- generate_spec
-- generate_plan
-- add_waypoint
-- update_waypoint
-- delete_waypoint
-- reorder_waypoints
-- execute_waypoint
-- pause
-- resume
-- intervene
-- export_genspec
-- status
+- `shape_start_qa`
+- `shape_continue_qa`
+- `shape_generate_brief`
+- `shape_generate_spec`
+- `chart_generate_flight_plan`
+- `chart_add_waypoint`
+- `chart_update_waypoint`
+- `chart_delete_waypoint`
+- `chart_reorder_waypoints`
+- `fly_execute_waypoint`
+- `fly_pause`
+- `fly_resume`
+- `fly_resolve_intervention`
+- `genspec_export`
+- `project_status`
 
-## Event Types (v1)
+## Legacy Command Aliases (compatibility)
 
-- state_changed
-- dialogue_chunk
-- dialogue_completed
-- artifact_saved
-- flight_plan_updated
-- waypoint_status_changed
-- execution_log
-- metrics_updated
-- warning
-- error
+- `start_qa` -> `shape_start_qa`
+- `continue_qa` -> `shape_continue_qa`
+- `generate_brief` -> `shape_generate_brief`
+- `generate_spec` -> `shape_generate_spec`
+- `generate_plan` -> `chart_generate_flight_plan`
+- `add_waypoint` -> `chart_add_waypoint`
+- `update_waypoint` -> `chart_update_waypoint`
+- `delete_waypoint` -> `chart_delete_waypoint`
+- `reorder_waypoints` -> `chart_reorder_waypoints`
+- `execute_waypoint` -> `fly_execute_waypoint`
+- `pause` -> `fly_pause`
+- `resume` -> `fly_resume`
+- `intervene` -> `fly_resolve_intervention`
+- `export_genspec` -> `genspec_export`
+- `status` -> `project_status`
+
+## Event Types (v1, canonical)
+
+- `journey_state_changed`
+- `dialogue_chunk`
+- `dialogue_completed`
+- `artifact_saved`
+- `flight_plan_changed`
+- `waypoint_status_changed`
+- `execution_log_entry`
+- `metrics_updated`
+- `warning`
+- `error`
+
+## Legacy Event Aliases (compatibility)
+
+- `state_changed` -> `journey_state_changed`
+- `flight_plan_updated` -> `flight_plan_changed`
+- `execution_log` -> `execution_log_entry`
 
 ## Payload Schemas (Selected)
 
-### state_changed
+### journey_state_changed
 
 ```json
 {
@@ -148,7 +175,7 @@ Errors are emitted as events with type `error`:
 }
 ```
 
-### flight_plan_updated
+### flight_plan_changed
 
 ```json
 {
@@ -159,7 +186,7 @@ Errors are emitted as events with type `error`:
 }
 ```
 
-### execution_log
+### execution_log_entry
 
 ```json
 {
@@ -198,13 +225,13 @@ Errors are emitted as events with type `error`:
 Command:
 
 ```json
-{"schema_version":"1.0","command_id":"cmd-0002","command_type":"generate_plan","project_slug":"demo","timestamp":"2026-01-20T12:40:00Z","payload":{"spec_path":"docs/product-spec.md"}}
+{"schema_version":"1.0","command_id":"cmd-0002","command_type":"chart_generate_flight_plan","project_slug":"demo","timestamp":"2026-01-20T12:40:00Z","payload":{"spec_path":"docs/product-spec.md"}}
 ```
 
 Events:
 
 ```json
-{"schema_version":"1.0","event_id":"evt-0002","event_type":"state_changed","command_id":"cmd-0002","project_slug":"demo","timestamp":"2026-01-20T12:40:00Z","payload":{"from":"shape:spec:review","to":"chart:generating"}}
-{"schema_version":"1.0","event_id":"evt-0003","event_type":"flight_plan_updated","command_id":"cmd-0002","project_slug":"demo","timestamp":"2026-01-20T12:40:03Z","payload":{"change":"generated","waypoints":[{"id":"WP-001","title":"Setup","status":"pending"}]}}
-{"schema_version":"1.0","event_id":"evt-0004","event_type":"state_changed","command_id":"cmd-0002","project_slug":"demo","timestamp":"2026-01-20T12:40:03Z","payload":{"from":"chart:generating","to":"chart:review"}}
+{"schema_version":"1.0","event_id":"evt-0002","event_type":"journey_state_changed","command_id":"cmd-0002","project_slug":"demo","timestamp":"2026-01-20T12:40:00Z","payload":{"from":"shape:spec:review","to":"chart:generating"}}
+{"schema_version":"1.0","event_id":"evt-0003","event_type":"flight_plan_changed","command_id":"cmd-0002","project_slug":"demo","timestamp":"2026-01-20T12:40:03Z","payload":{"change":"generated","waypoints":[{"id":"WP-001","title":"Setup","status":"pending"}]}}
+{"schema_version":"1.0","event_id":"evt-0004","event_type":"journey_state_changed","command_id":"cmd-0002","project_slug":"demo","timestamp":"2026-01-20T12:40:03Z","payload":{"from":"chart:generating","to":"chart:review"}}
 ```
