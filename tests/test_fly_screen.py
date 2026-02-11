@@ -24,6 +24,8 @@ from waypoints.tui.screens.fly import (
     FlyScreen,
     WaypointDetailPanel,
 )
+from waypoints.tui.screens.fly_metrics_runtime import LiveMetricsOverlay
+from waypoints.tui.widgets.fly_waypoint_list_panel import WaypointListPanel
 
 
 def make_test_screen(flight_plan: FlightPlan) -> FlyScreen:
@@ -46,6 +48,7 @@ def make_test_screen(flight_plan: FlightPlan) -> FlyScreen:
         project=MockProject(),  # type: ignore
         flight_plan=flight_plan,
     )
+    screen._live_metrics = LiveMetricsOverlay()
     return screen
 
 
@@ -661,3 +664,116 @@ def test_action_start_reruns_completed_waypoint_from_land_state() -> None:
     assert screen.coordinator.current_waypoint == waypoint
     assert screen.execution_state == ExecutionState.RUNNING
     assert executed == [True]
+
+
+def test_apply_metrics_update_updates_live_waypoint_and_project_metrics() -> None:
+    """metrics_updated progress should refresh detail and project metrics widgets."""
+    flight_plan = FlightPlan()
+    flight_plan.add_waypoint(
+        Waypoint(
+            id="WP-001",
+            title="Current",
+            objective="Work",
+            status=WaypointStatus.IN_PROGRESS,
+        )
+    )
+    screen = make_test_screen(flight_plan)
+    screen._live_metrics.waypoint_id = "WP-001"
+    screen._live_metrics.waypoint_cost = 0.5
+    screen._live_metrics.waypoint_tokens_in = 100
+    screen._live_metrics.waypoint_tokens_out = 50
+    screen._live_metrics.waypoint_tokens_known = True
+    screen._live_metrics.waypoint_cached_tokens_in = 20
+    screen._live_metrics.waypoint_cached_tokens_known = True
+    screen._live_metrics.project_cost = 2.0
+    screen._live_metrics.project_tokens_in = 1000
+    screen._live_metrics.project_tokens_out = 400
+    screen._live_metrics.project_tokens_known = True
+    screen._live_metrics.project_cached_tokens_in = 300
+    screen._live_metrics.project_cached_tokens_known = True
+    screen._live_metrics.project_time_seconds = 42
+
+    class _Detail:
+        def __init__(self) -> None:
+            self.updates: list[
+                tuple[float | None, tuple[int, int] | None, int | None]
+            ] = []
+
+        def update_metrics(
+            self,
+            cost: float | None,
+            tokens: tuple[int, int] | None,
+            cached_tokens_in: int | None,
+        ) -> None:
+            self.updates.append((cost, tokens, cached_tokens_in))
+
+    class _List:
+        def __init__(self) -> None:
+            self.updates: list[
+                tuple[
+                    float,
+                    int,
+                    int | None,
+                    int | None,
+                    bool,
+                    int | None,
+                    bool,
+                ]
+            ] = []
+
+        def update_project_metrics(
+            self,
+            cost: float,
+            time_seconds: int,
+            tokens_in: int | None,
+            tokens_out: int | None,
+            tokens_known: bool,
+            cached_tokens_in: int | None,
+            cached_tokens_known: bool,
+        ) -> None:
+            self.updates.append(
+                (
+                    cost,
+                    time_seconds,
+                    tokens_in,
+                    tokens_out,
+                    tokens_known,
+                    cached_tokens_in,
+                    cached_tokens_known,
+                )
+            )
+
+    detail = _Detail()
+    list_panel = _List()
+
+    def _query_one(selector: object, _type: object | None = None) -> object:
+        if selector == "#waypoint-detail":
+            return detail
+        if selector is WaypointListPanel:
+            return list_panel
+        raise AssertionError(f"Unexpected selector: {selector!r}")
+
+    screen.query_one = _query_one  # type: ignore[method-assign]
+    ctx = ExecutionContext(
+        waypoint=Waypoint(id="WP-001", title="Current", objective="Work"),
+        iteration=1,
+        total_iterations=10,
+        step="metrics_updated",
+        output="verifier:metrics_updated",
+        metadata={
+            "metrics": {
+                "waypoint_id": "WP-001",
+                "delta_cost_usd": 0.1,
+                "delta_tokens_in": 10,
+                "delta_tokens_out": 4,
+                "delta_cached_tokens_in": 2,
+                "tokens_known": True,
+                "cached_tokens_known": True,
+            }
+        },
+    )
+
+    screen._apply_metrics_update(ctx)
+
+    assert detail.updates[-1] == (0.6, (110, 54), 22)
+    assert list_panel.updates[-1] == (2.1, 42, 1010, 404, True, 302, True)

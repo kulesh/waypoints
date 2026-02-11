@@ -77,6 +77,8 @@ For each flight test run, capture:
 - **Completion rate**: Did all waypoints complete?
 - **Iteration count**: How many executor iterations per waypoint?
 - **Total cost**: LLM token usage ($)
+- **Live metrics stream integrity**: every `metrics_updated` progress event has
+  waypoint id, role (`builder`/`verifier`), and monotonic totals
 - **Time elapsed**: Wall clock time
 - **Smoke test result**: Pass/fail
 - **Quality scores**: From LLM-as-judge (see Pillar 2)

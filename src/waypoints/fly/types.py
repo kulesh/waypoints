@@ -50,6 +50,55 @@ class ExecutionContext:
     metadata: dict[str, object] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ExecutionMetricsUpdate:
+    """Structured metrics update emitted during waypoint execution."""
+
+    role: str
+    waypoint_id: str
+    delta_cost_usd: float | None = None
+    delta_tokens_in: int | None = None
+    delta_tokens_out: int | None = None
+    delta_cached_tokens_in: int | None = None
+    waypoint_cost_usd: float | None = None
+    waypoint_tokens_in: int | None = None
+    waypoint_tokens_out: int | None = None
+    waypoint_cached_tokens_in: int | None = None
+    project_cost_usd: float | None = None
+    project_tokens_in: int | None = None
+    project_tokens_out: int | None = None
+    project_cached_tokens_in: int | None = None
+    tokens_known: bool = False
+    cached_tokens_known: bool = False
+
+    def to_metadata(self) -> dict[str, object]:
+        """Convert to metadata payload for ExecutionContext transport."""
+        payload: dict[str, object] = {
+            "role": self.role,
+            "waypoint_id": self.waypoint_id,
+            "tokens_known": self.tokens_known,
+            "cached_tokens_known": self.cached_tokens_known,
+        }
+        optional_fields = (
+            ("delta_cost_usd", self.delta_cost_usd),
+            ("delta_tokens_in", self.delta_tokens_in),
+            ("delta_tokens_out", self.delta_tokens_out),
+            ("delta_cached_tokens_in", self.delta_cached_tokens_in),
+            ("waypoint_cost_usd", self.waypoint_cost_usd),
+            ("waypoint_tokens_in", self.waypoint_tokens_in),
+            ("waypoint_tokens_out", self.waypoint_tokens_out),
+            ("waypoint_cached_tokens_in", self.waypoint_cached_tokens_in),
+            ("project_cost_usd", self.project_cost_usd),
+            ("project_tokens_in", self.project_tokens_in),
+            ("project_tokens_out", self.project_tokens_out),
+            ("project_cached_tokens_in", self.project_cached_tokens_in),
+        )
+        for key, value in optional_fields:
+            if value is not None:
+                payload[key] = value
+        return payload
+
+
 ProgressCallback = Callable[[ExecutionContext], None]
 
 
@@ -81,12 +130,21 @@ class _LoopState:
     clarification_signatures: set[str] = field(default_factory=set)
     unresolved_clarification: bool = False
     clarification_exhausted: bool = False
+    waypoint_cost_usd: float = 0.0
+    waypoint_tokens_in: int = 0
+    waypoint_tokens_out: int = 0
+    waypoint_cached_tokens_in: int = 0
+    waypoint_tokens_known: bool = False
+    waypoint_cached_tokens_known: bool = False
     workspace_before: "WorkspaceSnapshot | None" = None
     prompt: str = ""
     completion_marker: str = ""
     # Per-iteration state (reset at start of each _run_iteration)
     iter_scope_drift_detected: bool = False
     iter_stage_reports_logged: int = 0
+    iteration_tokens_in: int | None = None
+    iteration_tokens_out: int | None = None
+    iteration_cached_tokens_in: int | None = None
     last_tool_name: str | None = None
     last_tool_input: dict[str, object] = field(default_factory=dict)
     last_tool_output: str | None = None

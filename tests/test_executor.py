@@ -990,6 +990,75 @@ async def test_execute_reports_non_file_tool_use_progress(
 
 
 @pytest.mark.anyio
+async def test_execute_emits_metrics_updated_progress(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Stream completion usage should emit metrics_updated progress payloads."""
+    progress_updates: list[ExecutionContext] = []
+
+    async def fake_agent_query(**kwargs: object):
+        del kwargs
+        yield StreamChunk(text="<waypoint-complete>WP-1</waypoint-complete>")
+        yield StreamComplete(
+            full_text="<waypoint-complete>WP-1</waypoint-complete>",
+            cost_usd=0.12,
+            tokens_in=321,
+            tokens_out=89,
+            cached_tokens_in=144,
+            session_id="session-1",
+        )
+
+    monkeypatch.setattr("waypoints.fly.executor.agent_query", fake_agent_query)
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_make_finalizer",
+        lambda self: _StubFinalizer(),
+    )
+    monkeypatch.setattr(
+        WaypointExecutor,
+        "_resolve_validation_commands",
+        lambda self, project_path, checklist: [],
+    )
+    metrics_stub = SimpleNamespace(
+        total_cost=1.0,
+        total_tokens_in=2000,
+        total_tokens_out=1000,
+        total_cached_tokens_in=500,
+    )
+    project = _TestProject(tmp_path)
+    waypoint = Waypoint(
+        id="WP-1",
+        title="Metrics progress",
+        objective="Emit metrics updates",
+        acceptance_criteria=["Criterion 1"],
+    )
+    executor = WaypointExecutor(
+        project=project,
+        waypoint=waypoint,
+        spec="spec",
+        on_progress=progress_updates.append,
+        metrics_collector=metrics_stub,  # type: ignore[arg-type]
+    )
+
+    result = await executor.execute()
+
+    assert result == ExecutionResult.SUCCESS
+    metric_updates = [ctx for ctx in progress_updates if ctx.step == "metrics_updated"]
+    assert len(metric_updates) >= 1
+    payload = metric_updates[0].metadata["metrics"]
+    assert isinstance(payload, dict)
+    assert payload["waypoint_id"] == "WP-1"
+    assert payload["role"] == "builder"
+    assert payload["delta_cost_usd"] == pytest.approx(0.12)
+    assert payload["delta_tokens_in"] == 321
+    assert payload["delta_tokens_out"] == 89
+    assert payload["delta_cached_tokens_in"] == 144
+    assert payload["project_cost_usd"] == pytest.approx(1.12)
+    assert payload["tokens_known"] is True
+    assert payload["cached_tokens_known"] is True
+
+
+@pytest.mark.anyio
 async def test_execute_retries_when_receipt_is_invalid(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1249,8 +1318,21 @@ class DummyLogWriter:
         """Record finalize tool calls."""
         self.tool_calls.append((name, tool_input, output))
 
-    def log_finalize_end(self) -> None:
+    def log_finalize_end(
+        self,
+        cost_usd: float | None = None,
+        *,
+        tokens_in: int | None = None,
+        tokens_out: int | None = None,
+        cached_tokens_in: int | None = None,
+    ) -> None:
         """Log end placeholder."""
+        self.finalize_end = (
+            cost_usd,
+            tokens_in,
+            tokens_out,
+            cached_tokens_in,
+        )
 
     def log_receipt_validated(
         self, receipt_path: str, valid: bool, reason: str

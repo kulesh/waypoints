@@ -174,6 +174,9 @@ Genspec + verification paths (CLI + TUI export):
 
 - `src/waypoints/tui/screens/fly.py`
   - UI adapter layer + timer/session wiring.
+  - Consumes live `metrics_updated` execution progress payloads to refresh:
+    - waypoint cost/token/cached metrics in the detail panel
+    - project-wide cost/token/cached metrics in the waypoint list panel
   - Uses `src/waypoints/tui/screens/fly_controller.py` for execution/intervention
     branching decisions.
   - Delegates all business logic to `JourneyCoordinator` / `FlyPhase`:
@@ -187,6 +190,10 @@ Genspec + verification paths (CLI + TUI export):
       via public `WaypointExecutor` logging APIs (no private attribute access)
     - flight plan persistence and parent completion checks
   - FlyScreen is a pure UI layer: renders progress, manages timers, shows modals
+  - Fly execution metrics data path:
+    - provider stream usage -> `fly/executor.py` / `fly/receipt_finalizer.py`
+    - progress callback (`ExecutionContext.step == "metrics_updated"`)
+    - UI projection/render in Fly screen widgets
 
 ### LAND (Completion Hub)
 

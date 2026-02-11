@@ -253,6 +253,10 @@ class ExecutionLogWriter:
         self,
         iteration: int,
         cost_usd: float | None = None,
+        *,
+        tokens_in: int | None = None,
+        tokens_out: int | None = None,
+        cached_tokens_in: int | None = None,
     ) -> None:
         """Log the end of an iteration."""
         if cost_usd:
@@ -265,6 +269,12 @@ class ExecutionLogWriter:
             "cumulative_cost_usd": self.total_cost_usd,
             "timestamp": datetime.now(UTC).isoformat(),
         }
+        if tokens_in is not None:
+            entry["tokens_in"] = tokens_in
+        if tokens_out is not None:
+            entry["tokens_out"] = tokens_out
+        if cached_tokens_in is not None:
+            entry["cached_tokens_in"] = cached_tokens_in
         self._append(entry)
 
     def log_error(self, iteration: int, error: str) -> None:
@@ -462,7 +472,14 @@ class ExecutionLogWriter:
         }
         self._append(entry)
 
-    def log_finalize_end(self, cost_usd: float | None = None) -> None:
+    def log_finalize_end(
+        self,
+        cost_usd: float | None = None,
+        *,
+        tokens_in: int | None = None,
+        tokens_out: int | None = None,
+        cached_tokens_in: int | None = None,
+    ) -> None:
         """Log the end of the finalize phase."""
         if cost_usd:
             self.total_cost_usd += cost_usd
@@ -473,6 +490,12 @@ class ExecutionLogWriter:
             "cumulative_cost_usd": self.total_cost_usd,
             "timestamp": datetime.now(UTC).isoformat(),
         }
+        if tokens_in is not None:
+            entry["tokens_in"] = tokens_in
+        if tokens_out is not None:
+            entry["tokens_out"] = tokens_out
+        if cached_tokens_in is not None:
+            entry["cached_tokens_in"] = cached_tokens_in
         self._append(entry)
 
     def log_finalize_output(self, output: str) -> None:

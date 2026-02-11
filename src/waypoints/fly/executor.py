@@ -42,9 +42,13 @@ from waypoints.fly.evidence import (
 )
 from waypoints.fly.execution_log import ExecutionLogWriter
 from waypoints.fly.executor_runtime import (
+    apply_stream_complete_metrics,
     build_protocol_progress_payload,
     dedupe_non_blank,
+    log_iteration_end_with_usage,
     persist_waypoint_memory,
+    summarize_failed_bash_command,
+    truncate_output_tail,
     validate_no_external_changes,
 )
 from waypoints.fly.guidance_runtime import (
@@ -181,10 +185,7 @@ class WaypointExecutor:
             self._log_writer.log_intervention_resolved(action, **params)
 
     async def execute(self) -> ExecutionResult:
-        """Execute the waypoint using iterative agentic loop.
-
-        Returns the execution result (success, failed, max_iterations, etc.)
-        """
+        """Execute the waypoint using the iterative loop and return final result."""
         project_path = self.project.get_path()
         app_root = dangerous_app_root()
         if project_path.resolve().is_relative_to(app_root):
@@ -375,6 +376,11 @@ class WaypointExecutor:
         iteration_file_ops: list[FileOperation] = []
         s.iter_scope_drift_detected = False
         s.iter_stage_reports_logged = 0
+        s.iteration_tokens_in, s.iteration_tokens_out, s.iteration_cached_tokens_in = (
+            None,
+            None,
+            None,
+        )
 
         async for chunk in agent_query(
             prompt=iter_prompt,
@@ -532,10 +538,17 @@ class WaypointExecutor:
         s: _LoopState,
         chunk: StreamComplete,
     ) -> float | None:
-        """Process stream completion metadata and return iteration cost."""
-        iteration_cost = chunk.cost_usd
         if chunk.session_id:
             s.resume_session_id = chunk.session_id
+        iteration_cost = apply_stream_complete_metrics(
+            loop_state=s,
+            chunk=chunk,
+            waypoint_id=self.waypoint.id,
+            role=FlyRole.BUILDER.value,
+            max_iterations=self.max_iterations,
+            metrics_collector=self.metrics_collector,
+            report_progress=self._report_progress,
+        )
         logger.info(
             "Iteration %d complete, cost: $%.4f",
             s.iteration,
@@ -654,7 +667,11 @@ class WaypointExecutor:
             s.completion_output or iteration_output,
             final_completed,
         )
-        self._log_writer.log_iteration_end(s.iteration, iteration_cost)
+        log_iteration_end_with_usage(
+            log_writer=self._log_writer,
+            loop_state=s,
+            iteration_cost=iteration_cost,
+        )
 
         if (
             settings.fly_multi_agent_clarification_required
@@ -747,7 +764,11 @@ class WaypointExecutor:
         final_criteria = CRITERION_PATTERN.findall(s.full_output)
         final_completed = {int(m[0]) for m in final_criteria}
         self._log_writer.log_output(s.iteration, iteration_output, final_completed)
-        self._log_writer.log_iteration_end(s.iteration, iteration_cost)
+        log_iteration_end_with_usage(
+            log_writer=self._log_writer,
+            loop_state=s,
+            iteration_cost=iteration_cost,
+        )
 
     def _escalate_if_needed(
         self,
@@ -755,9 +776,9 @@ class WaypointExecutor:
         s: _LoopState,
         iteration_output: str,
     ) -> None:
-        """Check for protocol derailments and stuck agent; raise if needed.
+        """Check protocol health and raise intervention when required.
 
-        Also records iteration step and determines next iteration reason.
+        Also records the iteration step and next-reason state.
         """
         assert self._log_writer is not None
         if (
@@ -842,17 +863,19 @@ class WaypointExecutor:
         s: _LoopState,
         e: Exception,
     ) -> None:
-        """Classify an iteration exception and raise InterventionNeededError.
-
-        Always raises — never returns.
-        """
+        """Classify an iteration exception and raise InterventionNeededError."""
         assert self._log_writer is not None
         logger.exception("Error during iteration %d: %s", s.iteration, e)
 
         classification = classify_execution_error(e, full_output=s.full_output)
         error_summary = classification.error_summary
 
-        if failed_command_summary := self._failed_command_summary(s):
+        if s.last_tool_name == "Bash" and (
+            failed_command_summary := summarize_failed_bash_command(
+                command=s.last_tool_input.get("command"),
+                tool_output=s.last_tool_output,
+            )
+        ):
             error_summary = f"{error_summary}\n\n{failed_command_summary}"
 
         self._report_progress(
@@ -883,7 +906,7 @@ class WaypointExecutor:
                 "original_error": str(e),
                 "last_tool_name": s.last_tool_name,
                 "last_tool_input": s.last_tool_input,
-                "last_tool_output_tail": self._truncate_output(s.last_tool_output),
+                "last_tool_output_tail": truncate_output_tail(s.last_tool_output),
                 "configured_budget_usd": settings.llm_budget_usd,
                 "current_cost_usd": (
                     self.metrics_collector.total_cost
@@ -923,36 +946,6 @@ class WaypointExecutor:
             logger=logger,
         )
         raise InterventionNeededError(intervention) from e
-
-    def _failed_command_summary(self, s: _LoopState) -> str | None:
-        """Build a concise failed-command summary for intervention surfacing."""
-        if s.last_tool_name != "Bash":
-            return None
-        command = s.last_tool_input.get("command")
-        if not isinstance(command, str) or not command.strip():
-            return None
-
-        command_block = command.strip()
-        if len(command_block) > 500:
-            command_block = command_block[:500] + "..."
-        details = [f"Failed command:\n{command_block}"]
-
-        output_tail = self._truncate_output(s.last_tool_output)
-        if output_tail:
-            details.append(f"Last command output (tail):\n{output_tail}")
-
-        return "\n\n".join(details)
-
-    def _truncate_output(self, output: str | None) -> str | None:
-        """Trim output to an intervention-friendly tail snippet."""
-        if not output:
-            return None
-        cleaned = output.strip()
-        if not cleaned:
-            return None
-        if len(cleaned) <= 800:
-            return cleaned
-        return f"...{cleaned[-800:]}"
 
     def _raise_intervention(
         self,

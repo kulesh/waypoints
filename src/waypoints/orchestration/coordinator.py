@@ -76,10 +76,12 @@ class JourneyCoordinator:
         git: "GitService | None" = None,
         metrics: "MetricsCollector | None" = None,
     ) -> None:
+        from waypoints.llm.metrics import MetricsCollector
+
         self.project = project
         self.llm = llm
         self.git = git
-        self.metrics = metrics
+        self.metrics = metrics or MetricsCollector(project)
         self._flight_plan: FlightPlan | None = flight_plan
         self._current_waypoint: Waypoint | None = None
 

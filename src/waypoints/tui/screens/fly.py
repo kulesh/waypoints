@@ -39,13 +39,11 @@ from waypoints.orchestration.fly_presenter import build_status_line
 from waypoints.orchestration.fly_service import FlyService
 from waypoints.orchestration.types import NextAction
 from waypoints.tui.screens.fly_controller import FlyController
+from waypoints.tui.screens.fly_metrics_runtime import LiveMetricsOverlay
 from waypoints.tui.screens.fly_progress import apply_progress_update
 from waypoints.tui.screens.fly_projections import (
     build_completion_status_projection,
     build_project_metrics_projection,
-    lookup_waypoint_cached_tokens_in,
-    lookup_waypoint_cost,
-    lookup_waypoint_tokens,
 )
 from waypoints.tui.screens.fly_runtime import ExecutionState, get_git_status_summary
 from waypoints.tui.screens.fly_session import FlySession
@@ -139,6 +137,7 @@ class FlyScreen(Screen[None]):
 
         # Track live criteria completion for cross-check with receipt
         self._live_criteria_completed: set[int] = set()
+        self._live_metrics = LiveMetricsOverlay()
 
     def _ensure_session(self) -> FlySession:
         session = getattr(self, "_session", None)
@@ -242,6 +241,8 @@ class FlyScreen(Screen[None]):
 
         # Set up metrics collection for this project
         self.waypoints_app.set_project_for_metrics(self.project)
+        if self.waypoints_app.metrics_collector is not None:
+            self.coordinator.metrics = self.waypoints_app.metrics_collector
         # Load persisted host validation preference for this project
         self.waypoints_app.host_validations_enabled = (
             self.waypoints_app.load_host_validation_preference(self.project)
@@ -331,16 +332,47 @@ class FlyScreen(Screen[None]):
 
     def _get_waypoint_cost(self, waypoint_id: str) -> float | None:
         """Get the cost for a waypoint from metrics."""
-        return lookup_waypoint_cost(self.waypoints_app.metrics_collector, waypoint_id)
+        return self._live_metrics.get_waypoint_cost(
+            waypoint_id=waypoint_id,
+            metrics_collector=self.waypoints_app.metrics_collector,
+        )
 
     def _get_waypoint_tokens(self, waypoint_id: str) -> tuple[int, int] | None:
         """Get the token totals for a waypoint from the metrics collector."""
-        return lookup_waypoint_tokens(self.waypoints_app.metrics_collector, waypoint_id)
+        return self._live_metrics.get_waypoint_tokens(
+            waypoint_id=waypoint_id,
+            metrics_collector=self.waypoints_app.metrics_collector,
+        )
 
     def _get_waypoint_cached_tokens_in(self, waypoint_id: str) -> int | None:
         """Get cached input tokens for a waypoint from the metrics collector."""
-        return lookup_waypoint_cached_tokens_in(
-            self.waypoints_app.metrics_collector, waypoint_id
+        return self._live_metrics.get_waypoint_cached_tokens_in(
+            waypoint_id=waypoint_id,
+            metrics_collector=self.waypoints_app.metrics_collector,
+        )
+
+    def _reset_live_metrics_overlay(self) -> None:
+        """Clear in-flight metrics overlays used for live waypoint updates."""
+        self._live_metrics.reset()
+
+    def _seed_live_metrics_overlay(self, waypoint_id: str) -> None:
+        """Initialize in-flight metrics state from persisted metrics baselines."""
+        self._live_metrics.seed(
+            waypoint_id=waypoint_id,
+            project=self.project,
+            metrics_collector=self.waypoints_app.metrics_collector,
+        )
+
+    def _apply_metrics_update(self, ctx: ExecutionContext) -> None:
+        """Apply one live `metrics_updated` progress payload to fly UI widgets."""
+        if not self._live_metrics.apply_update(ctx):
+            return
+
+        detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
+        list_panel = self.query_one(WaypointListPanel)
+        self._live_metrics.update_widgets(
+            detail_panel=detail_panel,
+            list_panel=list_panel,
         )
 
     def _get_completion_status(self) -> tuple[bool, int, int, int]:
@@ -825,6 +857,7 @@ class FlyScreen(Screen[None]):
 
         # Mark this as the active waypoint for output tracking
         detail_panel.set_live_output_waypoint(self.current_waypoint.id)
+        self._seed_live_metrics_overlay(self.current_waypoint.id)
 
         log.clear_log()
         wp_title = f"{self.current_waypoint.id}: {self.current_waypoint.title}"
@@ -889,6 +922,7 @@ class FlyScreen(Screen[None]):
             detail_panel=detail_panel,
             live_criteria_completed=self._live_criteria_completed,
         )
+        self._apply_metrics_update(ctx)
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Handle worker completion."""
@@ -950,6 +984,7 @@ class FlyScreen(Screen[None]):
                 self.current_waypoint.id
             )
             detail_panel.update_metrics(cost, tokens, cached_tokens_in)
+        self._reset_live_metrics_overlay()
 
         config = GitConfig.load(self.project.slug)
         decision = self._controller.handle_execution_result(
@@ -1042,6 +1077,7 @@ class FlyScreen(Screen[None]):
 
     def _handle_intervention(self, intervention: Intervention) -> None:
         """Handle an intervention request by classifying and presenting it."""
+        self._reset_live_metrics_overlay()
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
         log = detail_panel.execution_log
 

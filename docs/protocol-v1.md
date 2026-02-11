@@ -201,10 +201,23 @@ Errors are emitted as events with type `error`:
 
 ```json
 {
-  "total_cost_usd": 0.42,
-  "total_tokens": 12500,
+  "role": "builder",
+  "waypoint_id": "WP-003",
+  "delta_cost_usd": 0.08,
+  "delta_tokens_in": 1200,
+  "delta_tokens_out": 340,
+  "delta_cached_tokens_in": 950,
+  "waypoint_cost_usd": 0.42,
+  "waypoint_tokens_in": 6100,
+  "waypoint_tokens_out": 2200,
+  "project_cost_usd": 1.36,
+  "project_tokens_in": 18200,
+  "project_tokens_out": 7100,
+  "project_cached_tokens_in": 8400,
+  "tokens_known": true,
+  "cached_tokens_known": true,
   "phase": "fly",
-  "waypoint_id": "WP-003"
+  "message": "builder:metrics_updated"
 }
 ```
 

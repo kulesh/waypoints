@@ -559,6 +559,8 @@ class WaypointDetailPanel(Vertical):
                 f"{format_token_count(tokens_in)} in / "
                 f"{format_token_count(tokens_out)} out"
             )
+        elif cost is not None or cached_tokens_in is not None:
+            metrics_parts.append("Tokens: unavailable")
         if cached_tokens_in is not None:
             metrics_parts.append(f"Cached: {format_token_count(cached_tokens_in)} in")
         if cost is not None and cost > 0:
@@ -743,8 +745,22 @@ class WaypointDetailPanel(Vertical):
 
             elif entry_type == "iteration_end":
                 cost = entry.metadata.get("cost_usd")
-                if cost:
-                    log.write_log(f"(Iteration cost: ${cost:.4f})")
+                tokens_in = entry.metadata.get("tokens_in")
+                tokens_out = entry.metadata.get("tokens_out")
+                cached_tokens_in = entry.metadata.get("cached_tokens_in")
+                parts: list[str] = []
+                if isinstance(cost, (int, float)) and cost > 0:
+                    parts.append(f"cost=${cost:.4f}")
+                if isinstance(tokens_in, int) or isinstance(tokens_out, int):
+                    parts.append(
+                        "tokens="
+                        f"{format_token_count(int(tokens_in or 0))} in / "
+                        f"{format_token_count(int(tokens_out or 0))} out"
+                    )
+                if isinstance(cached_tokens_in, int):
+                    parts.append(f"cached={format_token_count(cached_tokens_in)} in")
+                if parts:
+                    log.write_log(f"(Iteration {' | '.join(parts)})")
 
             elif entry_type == "tool_call":
                 self._log_tool_call_entry(log, entry)
@@ -776,6 +792,27 @@ class WaypointDetailPanel(Vertical):
                 else:
                     msg = entry.metadata.get("message", "")
                     log.write_log(f"[yellow]⚠ Receipt invalid: {msg}[/]")
+
+            elif entry_type == "finalize_end":
+                cost = entry.metadata.get("cost_usd")
+                tokens_in = entry.metadata.get("tokens_in")
+                tokens_out = entry.metadata.get("tokens_out")
+                cached_tokens_in = entry.metadata.get("cached_tokens_in")
+                verifier_parts: list[str] = []
+                if isinstance(cost, (int, float)) and cost > 0:
+                    verifier_parts.append(f"cost=${cost:.4f}")
+                if isinstance(tokens_in, int) or isinstance(tokens_out, int):
+                    verifier_parts.append(
+                        "tokens="
+                        f"{format_token_count(int(tokens_in or 0))} in / "
+                        f"{format_token_count(int(tokens_out or 0))} out"
+                    )
+                if isinstance(cached_tokens_in, int):
+                    verifier_parts.append(
+                        f"cached={format_token_count(cached_tokens_in)} in"
+                    )
+                if verifier_parts:
+                    log.write_log(f"(Verifier {' | '.join(verifier_parts)})")
 
             elif entry_type == "git_commit":
                 success = entry.metadata.get("success", False)

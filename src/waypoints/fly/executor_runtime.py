@@ -5,13 +5,35 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import TYPE_CHECKING, Iterable, Protocol, Sequence
 
 from waypoints.fly.evidence import FileOperation
 from waypoints.fly.provenance import WorkspaceDiffSummary
+from waypoints.fly.types import ExecutionMetricsUpdate, _LoopState
 from waypoints.git.receipt import CapturedEvidence, CriterionVerification
+from waypoints.llm.providers.base import StreamComplete
 from waypoints.memory import WaypointMemoryRecord, save_waypoint_memory
 from waypoints.models.waypoint import Waypoint
+
+if TYPE_CHECKING:
+    from waypoints.fly.execution_log import ExecutionLogWriter
+    from waypoints.llm.metrics import MetricsCollector
+
+
+class MetricsCollectorLike(Protocol):
+    """Minimal metrics collector shape used for progress snapshots."""
+
+    @property
+    def total_cost(self) -> float: ...
+
+    @property
+    def total_tokens_in(self) -> int: ...
+
+    @property
+    def total_tokens_out(self) -> int: ...
+
+    @property
+    def total_cached_tokens_in(self) -> int: ...
 
 
 def dedupe_non_blank(values: Iterable[str]) -> tuple[str, ...]:
@@ -40,6 +62,160 @@ def build_protocol_progress_payload(
             "role": role,
             "artifact": artifact_payload,
         },
+    )
+
+
+def truncate_output_tail(output: str | None, *, max_chars: int = 800) -> str | None:
+    """Trim output to an intervention-friendly tail snippet."""
+    if not output:
+        return None
+    cleaned = output.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return f"...{cleaned[-max_chars:]}"
+
+
+def summarize_failed_bash_command(
+    *,
+    command: object,
+    tool_output: str | None,
+) -> str | None:
+    """Build a concise failed-command summary for intervention surfacing."""
+    if not isinstance(command, str) or not command.strip():
+        return None
+    command_block = command.strip()
+    if len(command_block) > 500:
+        command_block = command_block[:500] + "..."
+    details = [f"Failed command:\n{command_block}"]
+    output_tail = truncate_output_tail(tool_output)
+    if output_tail:
+        details.append(f"Last command output (tail):\n{output_tail}")
+    return "\n\n".join(details)
+
+
+def build_metrics_progress_payload(
+    *,
+    role: str,
+    waypoint_id: str,
+    delta_cost_usd: float | None,
+    delta_tokens_in: int | None,
+    delta_tokens_out: int | None,
+    delta_cached_tokens_in: int | None,
+    waypoint_cost_usd: float,
+    waypoint_tokens_in: int,
+    waypoint_tokens_out: int,
+    waypoint_cached_tokens_in: int,
+    waypoint_tokens_known: bool,
+    waypoint_cached_tokens_known: bool,
+    metrics_collector: "MetricsCollector | MetricsCollectorLike | None",
+) -> tuple[str, dict[str, object]]:
+    """Build a normalized metrics update payload for live progress callbacks."""
+    project_cost_usd: float | None = None
+    project_tokens_in: int | None = None
+    project_tokens_out: int | None = None
+    project_cached_tokens_in: int | None = None
+    if metrics_collector is not None:
+        project_cost_usd = metrics_collector.total_cost + (delta_cost_usd or 0.0)
+        project_tokens_in = metrics_collector.total_tokens_in + (delta_tokens_in or 0)
+        project_tokens_out = metrics_collector.total_tokens_out + (
+            delta_tokens_out or 0
+        )
+        project_cached_tokens_in = metrics_collector.total_cached_tokens_in + (
+            delta_cached_tokens_in or 0
+        )
+    metrics = ExecutionMetricsUpdate(
+        role=role,
+        waypoint_id=waypoint_id,
+        delta_cost_usd=delta_cost_usd,
+        delta_tokens_in=delta_tokens_in,
+        delta_tokens_out=delta_tokens_out,
+        delta_cached_tokens_in=delta_cached_tokens_in,
+        waypoint_cost_usd=waypoint_cost_usd,
+        waypoint_tokens_in=(waypoint_tokens_in if waypoint_tokens_known else None),
+        waypoint_tokens_out=(waypoint_tokens_out if waypoint_tokens_known else None),
+        waypoint_cached_tokens_in=(
+            waypoint_cached_tokens_in if waypoint_cached_tokens_known else None
+        ),
+        project_cost_usd=project_cost_usd,
+        project_tokens_in=project_tokens_in,
+        project_tokens_out=project_tokens_out,
+        project_cached_tokens_in=project_cached_tokens_in,
+        tokens_known=waypoint_tokens_known,
+        cached_tokens_known=waypoint_cached_tokens_known,
+    )
+    return (
+        f"{role}:metrics_updated",
+        {"role": role, "metrics": metrics.to_metadata()},
+    )
+
+
+def apply_stream_complete_metrics(
+    *,
+    loop_state: _LoopState,
+    chunk: StreamComplete,
+    waypoint_id: str,
+    role: str,
+    max_iterations: int,
+    metrics_collector: "MetricsCollector | MetricsCollectorLike | None",
+    report_progress: object,
+) -> float | None:
+    """Update loop-state metrics from StreamComplete and emit metrics progress."""
+    loop_state.iteration_tokens_in = chunk.tokens_in
+    loop_state.iteration_tokens_out = chunk.tokens_out
+    loop_state.iteration_cached_tokens_in = chunk.cached_tokens_in
+    if chunk.cost_usd is not None:
+        loop_state.waypoint_cost_usd += chunk.cost_usd
+    if chunk.tokens_in is not None:
+        loop_state.waypoint_tokens_in += chunk.tokens_in
+        loop_state.waypoint_tokens_known = True
+    if chunk.tokens_out is not None:
+        loop_state.waypoint_tokens_out += chunk.tokens_out
+        loop_state.waypoint_tokens_known = True
+    if chunk.cached_tokens_in is not None:
+        loop_state.waypoint_cached_tokens_in += chunk.cached_tokens_in
+        loop_state.waypoint_cached_tokens_known = True
+    output, metadata = build_metrics_progress_payload(
+        role=role,
+        waypoint_id=waypoint_id,
+        delta_cost_usd=chunk.cost_usd,
+        delta_tokens_in=chunk.tokens_in,
+        delta_tokens_out=chunk.tokens_out,
+        delta_cached_tokens_in=chunk.cached_tokens_in,
+        waypoint_cost_usd=loop_state.waypoint_cost_usd,
+        waypoint_tokens_in=loop_state.waypoint_tokens_in,
+        waypoint_tokens_out=loop_state.waypoint_tokens_out,
+        waypoint_cached_tokens_in=loop_state.waypoint_cached_tokens_in,
+        waypoint_tokens_known=loop_state.waypoint_tokens_known,
+        waypoint_cached_tokens_known=loop_state.waypoint_cached_tokens_known,
+        metrics_collector=metrics_collector,
+    )
+    if not callable(report_progress):
+        return chunk.cost_usd
+    report_progress(
+        loop_state.iteration,
+        max_iterations,
+        "metrics_updated",
+        output,
+        metadata=metadata,
+    )
+    return chunk.cost_usd
+
+
+def log_iteration_end_with_usage(
+    *,
+    log_writer: "ExecutionLogWriter",
+    loop_state: _LoopState,
+    iteration_cost: float | None,
+) -> None:
+    """Write iteration end entry including optional provider token usage."""
+    log_writer.log_iteration_end(
+        loop_state.iteration,
+        iteration_cost,
+        tokens_in=loop_state.iteration_tokens_in,
+        tokens_out=loop_state.iteration_tokens_out,
+        cached_tokens_in=loop_state.iteration_cached_tokens_in,
     )
 
 

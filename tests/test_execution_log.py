@@ -465,7 +465,13 @@ class TestExecutionLogWriter:
     ) -> None:
         """Log iteration end with cost tracking."""
         writer = ExecutionLogWriter(mock_project, mock_waypoint)
-        writer.log_iteration_end(1, cost_usd=0.05)
+        writer.log_iteration_end(
+            1,
+            cost_usd=0.05,
+            tokens_in=120,
+            tokens_out=45,
+            cached_tokens_in=80,
+        )
         writer.log_iteration_end(2, cost_usd=0.03)
 
         entries = _read_jsonl_entries(writer.file_path)
@@ -473,9 +479,13 @@ class TestExecutionLogWriter:
         assert entries[1]["type"] == "iteration_end"
         assert entries[1]["cost_usd"] == 0.05
         assert entries[1]["cumulative_cost_usd"] == 0.05
+        assert entries[1]["tokens_in"] == 120
+        assert entries[1]["tokens_out"] == 45
+        assert entries[1]["cached_tokens_in"] == 80
 
         assert entries[2]["cost_usd"] == 0.03
         assert entries[2]["cumulative_cost_usd"] == 0.08
+        assert "tokens_in" not in entries[2]
         assert writer.total_cost_usd == 0.08
 
     def test_log_error(
@@ -665,7 +675,12 @@ class TestExecutionLogWriter:
         writer.log_finalize_tool_call(
             "read_file", {"path": "/receipt.md"}, "Receipt content"
         )
-        writer.log_finalize_end(cost_usd=0.02)
+        writer.log_finalize_end(
+            cost_usd=0.02,
+            tokens_in=90,
+            tokens_out=15,
+            cached_tokens_in=30,
+        )
 
         entries = _read_jsonl_entries(writer.file_path)
 
@@ -675,6 +690,9 @@ class TestExecutionLogWriter:
         assert entries[3]["type"] == "finalize_tool_call"
         assert entries[4]["type"] == "finalize_end"
         assert entries[4]["cost_usd"] == 0.02
+        assert entries[4]["tokens_in"] == 90
+        assert entries[4]["tokens_out"] == 15
+        assert entries[4]["cached_tokens_in"] == 30
 
     def test_full_execution_flow(
         self, mock_project: MockProject, mock_waypoint: Waypoint

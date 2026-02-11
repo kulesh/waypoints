@@ -26,6 +26,7 @@ from waypoints.fly.evidence import (
 from waypoints.fly.evidence import (
     normalize_command as _normalize_command,
 )
+from waypoints.fly.executor_runtime import build_metrics_progress_payload
 from waypoints.fly.protocol import FlyRole, GuidancePacket
 from waypoints.fly.skills import resolve_attached_skills
 from waypoints.fly.stack import ValidationCommand
@@ -34,7 +35,7 @@ from waypoints.git.receipt import (
     CriterionVerification,
     ReceiptBuilder,
 )
-from waypoints.llm.client import StreamChunk, agent_query
+from waypoints.llm.client import StreamChunk, StreamComplete, agent_query
 from waypoints.llm.prompts import build_verification_prompt
 from waypoints.models.waypoint import Waypoint
 from waypoints.runtime import CommandEvent, TimeoutDomain, get_command_runner
@@ -645,6 +646,39 @@ class ReceiptFinalizer:
             verifier_guidance=verifier_guidance,
         )
         verification_output = ""
+        verification_cost: float | None = None
+        verification_tokens_in: int | None = None
+        verification_tokens_out: int | None = None
+        verification_cached_tokens_in: int | None = None
+        waypoint_cost_baseline = 0.0
+        waypoint_tokens_baseline = (0, 0)
+        waypoint_cached_tokens_baseline = 0
+        waypoint_tokens_known = False
+        waypoint_cached_tokens_known = False
+        verifier_cost_delta = 0.0
+        verifier_tokens_in_delta = 0
+        verifier_tokens_out_delta = 0
+        verifier_cached_tokens_in_delta = 0
+        if self._metrics_collector is not None:
+            waypoint_cost_baseline = self._metrics_collector.cost_by_waypoint().get(
+                self._waypoint.id,
+                0.0,
+            )
+            if (
+                tokens := self._metrics_collector.tokens_by_waypoint().get(
+                    self._waypoint.id
+                )
+            ) is not None:
+                waypoint_tokens_baseline = tokens
+                waypoint_tokens_known = True
+            if (
+                cached_tokens
+                := self._metrics_collector.cached_tokens_by_waypoint().get(
+                    self._waypoint.id
+                )
+            ) is not None:
+                waypoint_cached_tokens_baseline = cached_tokens
+                waypoint_cached_tokens_known = True
 
         try:
             async for chunk in agent_query(
@@ -659,10 +693,60 @@ class ReceiptFinalizer:
             ):
                 if isinstance(chunk, StreamChunk):
                     verification_output += chunk.text
+                elif isinstance(chunk, StreamComplete):
+                    verification_cost = chunk.cost_usd
+                    verification_tokens_in = chunk.tokens_in
+                    verification_tokens_out = chunk.tokens_out
+                    verification_cached_tokens_in = chunk.cached_tokens_in
+                    if chunk.cost_usd is not None:
+                        verifier_cost_delta += chunk.cost_usd
+                    if chunk.tokens_in is not None:
+                        verifier_tokens_in_delta += chunk.tokens_in
+                        waypoint_tokens_known = True
+                    if chunk.tokens_out is not None:
+                        verifier_tokens_out_delta += chunk.tokens_out
+                        waypoint_tokens_known = True
+                    if chunk.cached_tokens_in is not None:
+                        verifier_cached_tokens_in_delta += chunk.cached_tokens_in
+                        waypoint_cached_tokens_known = True
+                    output, metadata = build_metrics_progress_payload(
+                        role=FlyRole.VERIFIER.value,
+                        waypoint_id=self._waypoint.id,
+                        delta_cost_usd=chunk.cost_usd,
+                        delta_tokens_in=chunk.tokens_in,
+                        delta_tokens_out=chunk.tokens_out,
+                        delta_cached_tokens_in=chunk.cached_tokens_in,
+                        waypoint_cost_usd=waypoint_cost_baseline + verifier_cost_delta,
+                        waypoint_tokens_in=(
+                            waypoint_tokens_baseline[0] + verifier_tokens_in_delta
+                        ),
+                        waypoint_tokens_out=(
+                            waypoint_tokens_baseline[1] + verifier_tokens_out_delta
+                        ),
+                        waypoint_cached_tokens_in=(
+                            waypoint_cached_tokens_baseline
+                            + verifier_cached_tokens_in_delta
+                        ),
+                        waypoint_tokens_known=waypoint_tokens_known,
+                        waypoint_cached_tokens_known=waypoint_cached_tokens_known,
+                        metrics_collector=self._metrics_collector,
+                    )
+                    self._progress(
+                        max_iterations,
+                        max_iterations,
+                        "metrics_updated",
+                        output,
+                        metadata=metadata,
+                    )
         except Exception as e:
             logger.error("Error during receipt verification: %s", e)
             self._log_writer.log_error(0, f"Verification error: {e}")
-            self._log_writer.log_finalize_end()
+            self._log_writer.log_finalize_end(
+                cost_usd=verification_cost,
+                tokens_in=verification_tokens_in,
+                tokens_out=verification_tokens_out,
+                cached_tokens_in=verification_cached_tokens_in,
+            )
             self._log_writer.log_receipt_validated(
                 str(receipt_path), True, "LLM verification skipped"
             )
@@ -685,7 +769,12 @@ class ReceiptFinalizer:
             reasoning = verdict_match.group(2).strip()
             is_valid = status == "valid"
 
-            self._log_writer.log_finalize_end()
+            self._log_writer.log_finalize_end(
+                cost_usd=verification_cost,
+                tokens_in=verification_tokens_in,
+                tokens_out=verification_tokens_out,
+                cached_tokens_in=verification_cached_tokens_in,
+            )
             self._log_writer.log_receipt_validated(
                 str(receipt_path), is_valid, reasoning
             )
@@ -703,7 +792,12 @@ class ReceiptFinalizer:
                 return False
         else:
             logger.warning("No verdict marker in LLM response, using format validation")
-            self._log_writer.log_finalize_end()
+            self._log_writer.log_finalize_end(
+                cost_usd=verification_cost,
+                tokens_in=verification_tokens_in,
+                tokens_out=verification_tokens_out,
+                cached_tokens_in=verification_cached_tokens_in,
+            )
             self._log_writer.log_receipt_validated(
                 str(receipt_path), True, "LLM verdict not found, using format check"
             )
