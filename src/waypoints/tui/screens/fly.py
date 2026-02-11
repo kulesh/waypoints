@@ -5,7 +5,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.reactive import reactive
@@ -17,7 +16,6 @@ from textual.worker import Worker, WorkerFailed
 if TYPE_CHECKING:
     from waypoints.tui.app import WaypointsApp
 
-from waypoints.fly.evidence import FileOperation
 from waypoints.fly.execution_log import (
     ExecutionLogReader,
 )
@@ -41,6 +39,14 @@ from waypoints.orchestration.fly_presenter import build_status_line
 from waypoints.orchestration.fly_service import FlyService
 from waypoints.orchestration.types import NextAction
 from waypoints.tui.screens.fly_controller import FlyController
+from waypoints.tui.screens.fly_progress import apply_progress_update
+from waypoints.tui.screens.fly_projections import (
+    build_completion_status_projection,
+    build_project_metrics_projection,
+    lookup_waypoint_cached_tokens_in,
+    lookup_waypoint_cost,
+    lookup_waypoint_tokens,
+)
 from waypoints.tui.screens.fly_runtime import ExecutionState, get_git_status_summary
 from waypoints.tui.screens.fly_session import FlySession
 from waypoints.tui.screens.fly_status import derive_state_message, format_countdown
@@ -283,47 +289,21 @@ class FlyScreen(Screen[None]):
         list_panel = self.query_one(WaypointListPanel)
         list_panel.update_git_status(status)
 
-    def _calculate_total_execution_time(self) -> int:
-        """Calculate total execution time across all waypoints in seconds."""
-        total_seconds = 0
-        log_files = ExecutionLogReader.list_logs(self.project)
-        for log_path in log_files:
-            try:
-                log = ExecutionLogReader.load(log_path)
-                if log.completed_at and log.started_at:
-                    total_seconds += int(
-                        (log.completed_at - log.started_at).total_seconds()
-                    )
-            except Exception:
-                continue
-        return total_seconds
-
     def _update_project_metrics(self) -> None:
         """Update project-wide cost and time metrics in the left panel."""
-        cost = 0.0
-        tokens_in: int | None = None
-        tokens_out: int | None = None
-        tokens_known = False
-        cached_tokens_in: int | None = None
-        cached_tokens_known = False
-        if self.waypoints_app.metrics_collector:
-            metrics = self.waypoints_app.metrics_collector
-            cost = metrics.total_cost
-            tokens_in = metrics.total_tokens_in
-            tokens_out = metrics.total_tokens_out
-            cached_tokens_in = metrics.total_cached_tokens_in
-            tokens_known = metrics.has_token_usage_data()
-            cached_tokens_known = metrics.has_cached_token_usage_data()
-        time_seconds = self._calculate_total_execution_time()
+        projection = build_project_metrics_projection(
+            project=self.project,
+            metrics_collector=self.waypoints_app.metrics_collector,
+        )
         list_panel = self.query_one(WaypointListPanel)
         list_panel.update_project_metrics(
-            cost,
-            time_seconds,
-            tokens_in,
-            tokens_out,
-            tokens_known,
-            cached_tokens_in,
-            cached_tokens_known,
+            projection.cost,
+            projection.time_seconds,
+            projection.tokens_in,
+            projection.tokens_out,
+            projection.tokens_known,
+            projection.cached_tokens_in,
+            projection.cached_tokens_known,
         )
 
     def on_tree_node_highlighted(self, event: Tree.NodeHighlighted[Waypoint]) -> None:
@@ -350,48 +330,23 @@ class FlyScreen(Screen[None]):
             )
 
     def _get_waypoint_cost(self, waypoint_id: str) -> float | None:
-        """Get the cost for a waypoint from the metrics collector.
-
-        Args:
-            waypoint_id: The waypoint ID to get cost for
-
-        Returns:
-            Cost in USD, or None if not available
-        """
-        if self.waypoints_app.metrics_collector:
-            cost_by_waypoint = self.waypoints_app.metrics_collector.cost_by_waypoint()
-            return cost_by_waypoint.get(waypoint_id)
-        return None
+        """Get the cost for a waypoint from metrics."""
+        return lookup_waypoint_cost(self.waypoints_app.metrics_collector, waypoint_id)
 
     def _get_waypoint_tokens(self, waypoint_id: str) -> tuple[int, int] | None:
         """Get the token totals for a waypoint from the metrics collector."""
-        if self.waypoints_app.metrics_collector:
-            tokens_by_waypoint = (
-                self.waypoints_app.metrics_collector.tokens_by_waypoint()
-            )
-            return tokens_by_waypoint.get(waypoint_id)
-        return None
+        return lookup_waypoint_tokens(self.waypoints_app.metrics_collector, waypoint_id)
 
     def _get_waypoint_cached_tokens_in(self, waypoint_id: str) -> int | None:
         """Get cached input tokens for a waypoint from the metrics collector."""
-        if self.waypoints_app.metrics_collector:
-            cached_by_waypoint = (
-                self.waypoints_app.metrics_collector.cached_tokens_by_waypoint()
-            )
-            return cached_by_waypoint.get(waypoint_id)
-        return None
+        return lookup_waypoint_cached_tokens_in(
+            self.waypoints_app.metrics_collector, waypoint_id
+        )
 
     def _get_completion_status(self) -> tuple[bool, int, int, int]:
-        """Analyze waypoint completion status.
-
-        Returns:
-            Tuple of (all_complete, pending_count, failed_count, blocked_count)
-        """
+        """Analyze waypoint completion status."""
         status = self.coordinator.get_completion_status()
-        # Include in_progress in pending count for legacy compatibility
-        pending = status.pending + status.in_progress
-        all_complete = status.all_complete
-        return (all_complete, pending, status.failed, status.blocked)
+        return build_completion_status_projection(status)
 
     def _select_next_waypoint(self, include_in_progress: bool = False) -> None:
         """Find and select the next waypoint to execute.
@@ -929,67 +884,11 @@ class FlyScreen(Screen[None]):
     def _update_progress_ui(self, ctx: ExecutionContext) -> None:
         """Update UI with progress (called on main thread)."""
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
-
-        # Guard: Only update if this waypoint's output is currently displayed
-        if not detail_panel.is_showing_output_for(ctx.waypoint.id):
-            return
-
-        log = detail_panel.execution_log
-
-        # Update iteration display
-        detail_panel.update_iteration(ctx.iteration, ctx.total_iterations)
-
-        # Update acceptance criteria checkboxes
-        if ctx.criteria_completed:
-            self._live_criteria_completed = ctx.criteria_completed
-            detail_panel.update_criteria(ctx.criteria_completed)
-
-        # Log based on step type
-        if ctx.step == "executing":
-            log.log_heading(f"Iteration {ctx.iteration}/{ctx.total_iterations}")
-        elif ctx.step == "tool_use":
-            # Display file operation with icon (clickable for file operations)
-            if ctx.file_operations:
-                op: FileOperation = ctx.file_operations[-1]  # Get the latest op
-                icon = {
-                    "Edit": "✎",
-                    "Write": "✚",
-                    "Read": "📖",
-                    "Bash": "$",
-                    "Glob": "🔍",
-                    "Grep": "🔍",
-                }.get(op.tool_name, "•")
-                style = "dim" if op.tool_name == "Read" else "cyan"
-                # Format the file operation line - make file paths clickable
-                if op.file_path:
-                    # Escape quotes in path for action parameter
-                    escaped_path = op.file_path.replace("'", "\\'")
-                    if op.tool_name in ("Edit", "Write", "Read"):
-                        # File operations are clickable - use string markup for @click
-                        markup = (
-                            f"  [{style}]{icon}[/] "
-                            f"[@click=screen.preview_file('{escaped_path}')]"
-                            f"[{style} underline]{op.file_path}[/][/]"
-                        )
-                        # Write string directly so Textual parses @click
-                        log.write(markup)
-                    else:
-                        # Bash/Glob/Grep just show the command/pattern
-                        text = f"  [{style}]{icon}[/] {op.file_path}"
-                        log.write(Text.from_markup(text))
-            elif ctx.output.strip():
-                log.write_log(f"[dim]→ {ctx.output.strip()}[/]")
-        elif ctx.step == "streaming":
-            # Show streaming output (code blocks will be syntax-highlighted)
-            output = ctx.output.strip()
-            if output:
-                log.write_log(output)
-        elif ctx.step == "complete":
-            log.log_success(ctx.output)
-        elif ctx.step == "error":
-            log.log_error(ctx.output)
-        elif ctx.step == "stage":
-            log.log_heading(f"Stage: {ctx.output}")
+        self._live_criteria_completed = apply_progress_update(
+            ctx=ctx,
+            detail_panel=detail_panel,
+            live_criteria_completed=self._live_criteria_completed,
+        )
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Handle worker completion."""
