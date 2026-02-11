@@ -85,22 +85,43 @@ uv run waypoints
 
 For a runtime-only environment, use `uv sync --no-dev`.
 
+## LLM Credentials
+
+Waypoints requires LLM credentials before you can run SHAPE/CHART/FLY.
+
+Set at least one provider key in your shell:
+
+```bash
+# Anthropic (default provider)
+export ANTHROPIC_API_KEY="your-anthropic-key"
+
+# OpenAI (if you switch provider to OpenAI)
+export OPENAI_API_KEY="your-openai-key"
+```
+
+Notes:
+- Default provider is `anthropic`.
+- If you choose `openai` as provider, `OPENAI_API_KEY` is required.
+- Anthropic also supports Claude web auth in interactive TUI mode, but API keys are recommended for reliable local/headless/CI runs.
+
 ## Quick Start
 
-1. Launch Waypoints:
+1. Configure your LLM credentials (see **LLM Credentials** above).
+
+2. Launch Waypoints:
    ```bash
    uv run waypoints
    ```
 
-2. Enter your idea when prompted (e.g., "A habit tracking app with streaks")
+3. Enter your idea when prompted (e.g., "A habit tracking app with streaks")
 
-3. Answer clarifying questions to shape your idea
+4. Answer clarifying questions to shape your idea
 
-4. Review and edit the generated product spec
+5. Review and edit the generated product spec
 
-5. Approve the generated waypoints
+6. Approve the generated waypoints
 
-6. Press `r` to start autopilot execution
+7. Press `r` to start autopilot execution
 
 ### Keyboard Shortcuts
 
@@ -244,6 +265,7 @@ uv run mypy src/
 
 - **What is a genspec?** A genspec is the distributable specification (idea brief, product spec, flight plan) that can be exported and used to recreate a project.
 - **Which LLMs are supported?** Waypoints supports Anthropic and OpenAI providers; configure the provider and model in settings.
+- **Which API key env vars do I need?** Use `ANTHROPIC_API_KEY` for Anthropic and `OPENAI_API_KEY` for OpenAI.
 - **Where is project state stored?** Each project persists under a `.waypoints/` directory with project metadata, documents, plans, and logs.
 
 ## Related
