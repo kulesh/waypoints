@@ -31,7 +31,6 @@ from waypoints.fly.intervention import (
     InterventionAction,
     InterventionNeededError,
     InterventionResult,
-    InterventionType,
 )
 from waypoints.git import GitConfig, ReceiptValidator
 from waypoints.models import JourneyState, Project
@@ -43,6 +42,7 @@ from waypoints.orchestration.fly_presenter import build_status_line
 from waypoints.orchestration.fly_service import FlyService
 from waypoints.orchestration.types import NextAction
 from waypoints.runtime import TimeoutDomain, get_command_runner
+from waypoints.tui.screens.fly_controller import FlyController
 from waypoints.tui.screens.fly_session import FlySession
 from waypoints.tui.screens.fly_status import derive_state_message, format_countdown
 from waypoints.tui.screens.fly_timers import (
@@ -175,6 +175,7 @@ class FlyScreen(Screen[None]):
             project=project,
             flight_plan=flight_plan,
         )
+        self._controller = FlyController(self.coordinator)
         self._fly_service = FlyService(self.coordinator)
         self._session = FlySession()
 
@@ -685,11 +686,13 @@ class FlyScreen(Screen[None]):
         # Check if user has selected a specific failed waypoint to retry
         list_panel = self.query_one("#waypoint-list", WaypointListPanel)
         selected = list_panel.selected_waypoint
+        start_decision = self._controller.start(selected, self.current_waypoint)
 
-        if selected and selected.status in (
-            WaypointStatus.FAILED,
-            WaypointStatus.COMPLETE,
+        if (
+            start_decision.action == "rerun_selected"
+            and start_decision.waypoint is not None
         ):
+            selected = start_decision.waypoint
             # User wants to rerun this specific waypoint.
             prior_status = selected.status
             prepare_waypoint_for_rerun(selected)
@@ -797,7 +800,10 @@ class FlyScreen(Screen[None]):
 
     def action_pause(self) -> None:
         """Pause execution after current waypoint."""
-        if self.execution_state == ExecutionState.RUNNING:
+        pause_decision = self._controller.pause(
+            is_running=self.execution_state == ExecutionState.RUNNING
+        )
+        if pause_decision.action == "pause_pending":
             self.execution_state = ExecutionState.PAUSE_PENDING
             self.coordinator.cancel_execution()
             self.coordinator.log_pause()
@@ -1046,40 +1052,38 @@ class FlyScreen(Screen[None]):
             return
 
         if event.worker.is_finished:
-            # Check for InterventionNeededError exception
+            worker_error: BaseException | None = None
+            worker_result: ExecutionResult | None = None
             if event.worker.state.name == "ERROR":
-                # Worker raised an exception - check if it's an intervention
                 try:
-                    # Accessing result will re-raise WorkerFailed wrapping original
                     _ = event.worker.result
                 except WorkerFailed as wf:
-                    # Extract the original exception from WorkerFailed wrapper
-                    original = getattr(wf, "error", None) or wf.__cause__ or wf
-                    if isinstance(original, InterventionNeededError):
-                        self._handle_intervention(original.intervention)
-                        return
-                    # Other exception - treat as failure
-                    logger.exception("Worker failed with exception: %s", original)
-                    self._handle_execution_result(ExecutionResult.FAILED)
-                    return
-                except Exception as e:
-                    # Fallback for any other exception type
-                    logger.exception("Worker failed with exception: %s", e)
-                    self._handle_execution_result(ExecutionResult.FAILED)
-                    return
+                    worker_error = cast(
+                        BaseException,
+                        getattr(wf, "error", None) or wf.__cause__ or wf,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    worker_error = exc
+            else:
+                worker_result = event.worker.result
 
-            result = event.worker.result
-            if result == ExecutionResult.INTERVENTION_NEEDED:
-                intervention = self.coordinator.take_worker_intervention()
-                if intervention is not None:
-                    self._handle_intervention(intervention)
-                    return
-                logger.error(
-                    "Executor reported intervention_needed without intervention context"
-                )
-                self._handle_execution_result(ExecutionResult.FAILED)
+            pending_intervention = (
+                self.coordinator.take_worker_intervention()
+                if worker_result == ExecutionResult.INTERVENTION_NEEDED
+                else None
+            )
+            decision = self._controller.handle_worker_result(
+                worker_error=worker_error,
+                worker_result=worker_result,
+                pending_worker_intervention=pending_intervention,
+            )
+            if decision.action == "handle_intervention" and decision.intervention:
+                self._handle_intervention(decision.intervention)
                 return
-            self._handle_execution_result(result)
+
+            if decision.action == "handle_failure" and worker_error is not None:
+                logger.exception("Worker failed with exception: %s", worker_error)
+            self._handle_execution_result(decision.result)
 
     def _handle_execution_result(self, result: ExecutionResult | None) -> None:
         """Handle the result of waypoint execution.
@@ -1103,9 +1107,13 @@ class FlyScreen(Screen[None]):
             )
             detail_panel.update_metrics(cost, tokens, cached_tokens_in)
 
-        # Delegate status mutation, commit, and next-waypoint selection
-        # to the coordinator for ALL result types
-        if not self.current_waypoint or result is None:
+        config = GitConfig.load(self.project.slug)
+        decision = self._controller.handle_execution_result(
+            current_waypoint=self.current_waypoint,
+            result=result,
+            git_config=config,
+        )
+        if decision.action == "missing_waypoint":
             log.log_error("Execution failed")
             self.coordinator.transition(JourneyState.FLY_INTERVENTION)
             self.execution_state = ExecutionState.INTERVENTION
@@ -1113,14 +1121,12 @@ class FlyScreen(Screen[None]):
             self.notify("Waypoint execution failed", severity="error")
             return
 
-        # Capture before handle_execution_result, which may clear
-        # coordinator.current_waypoint when selecting the next waypoint.
-        completed_waypoint = self.current_waypoint
-
-        config = GitConfig.load(self.project.slug)
-        next_action = self.coordinator.handle_execution_result(
-            completed_waypoint, result, git_config=config
-        )
+        next_action = decision.next_action
+        completed_waypoint = decision.completed_waypoint
+        if next_action is None or completed_waypoint is None:
+            log.log_error("Execution failed")
+            self.execution_state = ExecutionState.INTERVENTION
+            return
 
         # Dispatch on coordinator's decision
         if next_action.action in ("continue", "complete"):
@@ -1200,17 +1206,17 @@ class FlyScreen(Screen[None]):
         log.log_error(f"Intervention needed: {type_label}")
         log.write_log(intervention.error_summary[:500])
 
-        # Classify: business logic decides modal vs auto-handle
-        presentation = self.coordinator.classify_intervention(intervention)
-
-        if not presentation.show_modal:
+        decision = self._controller.handle_intervention_display(
+            intervention,
+            self.current_waypoint,
+        )
+        if not decision.show_modal:
             # Budget-exceeded: auto-handle without user interaction
             self._activate_budget_wait(intervention, log)
             self.coordinator.clear_intervention()
             return
 
-        # Mark waypoint as failed (can be retried) via coordinator
-        if self.current_waypoint:
+        if decision.should_mark_failed and self.current_waypoint:
             self.coordinator.mark_waypoint_status(
                 self.current_waypoint, WaypointStatus.FAILED
             )
@@ -1229,7 +1235,13 @@ class FlyScreen(Screen[None]):
 
     def _on_intervention_result(self, result: InterventionResult | None) -> None:
         """Handle the result of the intervention modal."""
-        if result is None:
+        current = self.coordinator.current_intervention
+        resolution = self._controller.handle_intervention_result(
+            result=result,
+            current_intervention=current,
+        )
+
+        if resolution.action == "cancelled":
             # User cancelled - treat as abort
             self.notify("Intervention cancelled")
             self.coordinator.log_intervention_resolved("cancelled")
@@ -1241,13 +1253,13 @@ class FlyScreen(Screen[None]):
 
         # Log the intervention resolution to execution log
         params: dict[str, Any] = {}
-        if result.action == InterventionAction.RETRY:
+        if result and result.action == InterventionAction.RETRY:
             params["additional_iterations"] = result.additional_iterations
-        elif result.action == InterventionAction.ROLLBACK:
+        elif result and result.action == InterventionAction.ROLLBACK:
             params["rollback_tag"] = result.rollback_tag
-        self.coordinator.log_intervention_resolved(result.action.value, **params)
-        current = self.coordinator.current_intervention
-        if current is None:
+        if result is not None:
+            self.coordinator.log_intervention_resolved(result.action.value, **params)
+        if resolution.action == "missing_context":
             log.log_error("Missing intervention context; pausing execution")
             self.coordinator.transition(JourneyState.FLY_PAUSED)
             self.execution_state = ExecutionState.PAUSED
@@ -1257,28 +1269,27 @@ class FlyScreen(Screen[None]):
 
         # Keep UI-level rollback side effect (git reset + plan reload) while
         # delegating status mutation and next-action selection to coordinator.
-        if result.action == InterventionAction.ROLLBACK:
+        if result and result.action == InterventionAction.ROLLBACK:
             log.write_log("Rolling back to last safe tag")
             self._rollback_to_safe_tag(result.rollback_tag)
 
-        next_action = self.coordinator.handle_intervention(
-            current,
-            result.action,
-            additional_iterations=result.additional_iterations,
-            rollback_tag=result.rollback_tag,
-        )
-        self._refresh_waypoint_list()
-
-        if result.action == InterventionAction.WAIT and (
-            current.type == InterventionType.BUDGET_EXCEEDED
-        ):
+        if resolution.action == "budget_wait" and current is not None:
             self._activate_budget_wait(current, log)
             self.coordinator.clear_intervention()
             return
 
+        next_action = resolution.next_action
+        if next_action is None:
+            log.write_log("Execution paused")
+            self.execution_state = ExecutionState.PAUSED
+            self.coordinator.clear_intervention()
+            return
+
+        self._refresh_waypoint_list()
+
         if next_action.action == "continue":
-            if result.action == InterventionAction.RETRY:
-                self._additional_iterations = result.additional_iterations
+            if resolution.retry_iterations > 0:
+                self._additional_iterations = resolution.retry_iterations
             self.current_waypoint = next_action.waypoint
             log.write_log(next_action.message or "Continuing execution")
             self.coordinator.transition(JourneyState.FLY_EXECUTING)
@@ -1309,12 +1320,12 @@ class FlyScreen(Screen[None]):
             self.coordinator.transition(JourneyState.FLY_PAUSED)
             self.execution_state = ExecutionState.PAUSED
             self.query_one(StatusHeader).set_normal()
-            if result.action == InterventionAction.EDIT:
+            if result and result.action == InterventionAction.EDIT:
                 self.notify(
                     "Edit waypoint in flight plan, then press 'r' to retry",
                     severity="information",
                 )
-            elif result.action == InterventionAction.WAIT:
+            elif result and result.action == InterventionAction.WAIT:
                 self.notify("Execution paused")
 
         self.coordinator.clear_intervention()
