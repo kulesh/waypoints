@@ -30,11 +30,13 @@ Options:
 **Bootstrap mode** (`--bootstrap`):
 - Generates product spec from idea brief
 - Generates flight plan from spec
+- Optionally executes generated waypoints and captures product snapshot
 - Saves all artifacts to `<genspec-dir>/reference/`
 
 **Verify mode** (default):
 - Regenerates spec and plan from idea brief
 - Compares against reference artifacts using LLM judge
+- Optionally executes regenerated waypoints and compares execution snapshot
 - Outputs verification report to `<genspec-dir>/verify-output/`
 
 ### `waypoints compare`
@@ -65,10 +67,12 @@ my-project/
 ├── reference/                # Created by --bootstrap
 │   ├── idea-brief.md        # Copy of input
 │   ├── product-spec.md      # Generated reference spec
-│   └── flight-plan.json     # Generated reference plan
+│   ├── flight-plan.json     # Generated reference plan
+│   └── execution-summary.json  # Optional execution snapshot
 └── verify-output/            # Created by verify
     ├── product-spec.md      # Regenerated spec
     ├── flight-plan.json     # Regenerated plan
+    ├── execution-summary.json  # Optional regenerated execution snapshot
     └── verification-report.json
 ```
 
@@ -92,6 +96,11 @@ The report (`verification-report.json`) contains:
     },
     {
       "name": "plan_comparison",
+      "status": "pass|fail",
+      "result": { ... }
+    },
+    {
+      "name": "execution_comparison",
       "status": "pass|fail",
       "result": { ... }
     }
@@ -150,17 +159,22 @@ waypoints compare plan-a.json plan-b.json --type plan --verbose
    - Asks: "Would someone reading both understand they're building the same thing?"
    - Returns structured verdict with confidence score
 
-4. **Verdict**:
+4. **Execution (when `--skip-fly` is not set)**:
+   - Executes generated waypoints using the same coordinator execution path
+   - Captures waypoint status outcomes and deterministic file manifest hashes
+   - Compares regenerated snapshot to reference snapshot
+
+5. **Verdict**:
    - `equivalent`: Specs/plans describe the same product
    - `different`: Meaningful differences found
    - `uncertain`: Cannot determine with confidence
 
 ## V1 Limitations
 
-- **Artifacts only**: Compares specs and plans, not actual products
-- **No execution**: Doesn't run the FLY phase or compare built products
+- **Snapshot-based execution comparison**: Uses waypoint statuses and file manifests,
+  not boundary-level generated black-box tests yet
 - **Same tech stack**: Assumes same language/framework for comparison
 
 Future versions will add:
 - Test generation from acceptance criteria
-- Execution comparison via generated test suites
+- Execution comparison via generated boundary test suites

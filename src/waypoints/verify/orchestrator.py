@@ -8,18 +8,25 @@ Runs the full verification pipeline:
 5. (Optional) Execute and compare products
 """
 
+import asyncio
+import hashlib
 import json
 import logging
 import shutil
 import sys
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from waypoints.fly.executor import ExecutionResult
+from waypoints.fly.intervention import InterventionNeededError
 from waypoints.models import Project
+from waypoints.models.waypoint import WaypointStatus
 from waypoints.orchestration import JourneyCoordinator
 from waypoints.verify.compare import compare_flight_plans, compare_specs
 from waypoints.verify.models import (
+    ComparisonResult,
     ComparisonVerdict,
     VerificationReport,
     VerificationStatus,
@@ -30,6 +37,220 @@ logger = logging.getLogger(__name__)
 
 REFERENCE_DIR = "reference"
 VERIFY_OUTPUT_DIR = "verify-output"
+REFERENCE_EXECUTION_SUMMARY = "execution-summary.json"
+VERIFY_EXECUTION_SUMMARY = "execution-summary.json"
+EXCLUDED_MANIFEST_DIRS = {
+    ".git",
+    ".waypoints",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "docs",
+    "sessions",
+    "receipts",
+}
+EXCLUDED_MANIFEST_FILES = {
+    "project.json",
+    "flight-plan.jsonl",
+}
+
+
+@dataclass(frozen=True)
+class ExecutionSnapshot:
+    """Execution result snapshot used for product-level comparison."""
+
+    completed_waypoints: list[str]
+    failed_waypoints: list[str]
+    skipped_waypoints: list[str]
+    pending_waypoints: list[str]
+    in_progress_waypoints: list[str]
+    file_manifest: dict[str, str]
+
+    @property
+    def all_complete(self) -> bool:
+        return (
+            not self.failed_waypoints
+            and not self.pending_waypoints
+            and not self.in_progress_waypoints
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "completed_waypoints": self.completed_waypoints,
+            "failed_waypoints": self.failed_waypoints,
+            "skipped_waypoints": self.skipped_waypoints,
+            "pending_waypoints": self.pending_waypoints,
+            "in_progress_waypoints": self.in_progress_waypoints,
+            "all_complete": self.all_complete,
+            "file_manifest": self.file_manifest,
+            "file_count": len(self.file_manifest),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "ExecutionSnapshot":
+        return cls(
+            completed_waypoints=list(data.get("completed_waypoints", [])),
+            failed_waypoints=list(data.get("failed_waypoints", [])),
+            skipped_waypoints=list(data.get("skipped_waypoints", [])),
+            pending_waypoints=list(data.get("pending_waypoints", [])),
+            in_progress_waypoints=list(data.get("in_progress_waypoints", [])),
+            file_manifest=dict(data.get("file_manifest", {})),
+        )
+
+
+def _collect_product_manifest(project_path: Path) -> dict[str, str]:
+    """Collect deterministic file hashes for product artifacts only."""
+    manifest: dict[str, str] = {}
+    for path in sorted(project_path.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        rel = path.relative_to(project_path)
+        if any(part in EXCLUDED_MANIFEST_DIRS for part in rel.parts[:-1]):
+            continue
+        if rel.name in EXCLUDED_MANIFEST_FILES or rel.name == ".DS_Store":
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        manifest[rel.as_posix()] = digest
+    return manifest
+
+
+def _execute_flight_plan(
+    coordinator: JourneyCoordinator,
+    *,
+    max_iterations: int = 10,
+    verbose: bool = False,
+) -> ExecutionSnapshot:
+    """Execute the generated flight plan and capture a stable snapshot."""
+    while True:
+        waypoint = coordinator.select_next_waypoint(include_failed=False)
+        if waypoint is None:
+            break
+
+        if verbose:
+            print(f"   Executing {waypoint.id} - {waypoint.title}")
+        try:
+            result = asyncio.run(
+                coordinator.execute_waypoint(
+                    waypoint,
+                    max_iterations=max_iterations,
+                )
+            )
+            coordinator.handle_execution_result(waypoint, result)
+            if verbose:
+                marker = "✓" if result == ExecutionResult.SUCCESS else "✗"
+                print(f"     {marker} {result.value}")
+        except InterventionNeededError as err:
+            logger.warning("Execution intervention for %s: %s", waypoint.id, err)
+            coordinator.mark_waypoint_status(waypoint, WaypointStatus.FAILED)
+            if verbose:
+                print("     ⚠ intervention needed")
+        except Exception:
+            logger.exception("Execution error while running %s", waypoint.id)
+            coordinator.mark_waypoint_status(waypoint, WaypointStatus.FAILED)
+            if verbose:
+                print("     ✗ execution error")
+
+    flight_plan = coordinator.flight_plan
+    if flight_plan is None:
+        raise RuntimeError("No flight plan loaded after execution")
+
+    completed = sorted(
+        wp.id
+        for wp in flight_plan.waypoints
+        if wp.status in (WaypointStatus.COMPLETE, WaypointStatus.SKIPPED)
+    )
+    failed = sorted(
+        wp.id for wp in flight_plan.waypoints if wp.status == WaypointStatus.FAILED
+    )
+    skipped = sorted(
+        wp.id for wp in flight_plan.waypoints if wp.status == WaypointStatus.SKIPPED
+    )
+    pending = sorted(
+        wp.id for wp in flight_plan.waypoints if wp.status == WaypointStatus.PENDING
+    )
+    in_progress = sorted(
+        wp.id for wp in flight_plan.waypoints if wp.status == WaypointStatus.IN_PROGRESS
+    )
+    manifest = _collect_product_manifest(coordinator.project.get_path())
+
+    return ExecutionSnapshot(
+        completed_waypoints=completed,
+        failed_waypoints=failed,
+        skipped_waypoints=skipped,
+        pending_waypoints=pending,
+        in_progress_waypoints=in_progress,
+        file_manifest=manifest,
+    )
+
+
+def _compare_execution_snapshots(
+    reference: ExecutionSnapshot,
+    generated: ExecutionSnapshot,
+) -> ComparisonResult:
+    """Compare execution outcomes and resulting product files."""
+    differences: list[str] = []
+
+    if reference.completed_waypoints != generated.completed_waypoints:
+        differences.append(
+            "completed waypoints differ "
+            f"(ref={len(reference.completed_waypoints)} "
+            f"new={len(generated.completed_waypoints)})"
+        )
+    if reference.failed_waypoints != generated.failed_waypoints:
+        differences.append(
+            "failed waypoints differ "
+            f"(ref={reference.failed_waypoints} new={generated.failed_waypoints})"
+        )
+    if reference.pending_waypoints != generated.pending_waypoints:
+        differences.append(
+            "pending waypoints differ "
+            f"(ref={reference.pending_waypoints} new={generated.pending_waypoints})"
+        )
+    if reference.in_progress_waypoints != generated.in_progress_waypoints:
+        differences.append(
+            "in-progress waypoints differ "
+            f"(ref={reference.in_progress_waypoints} "
+            f"new={generated.in_progress_waypoints})"
+        )
+
+    ref_paths = set(reference.file_manifest.keys())
+    gen_paths = set(generated.file_manifest.keys())
+    missing = sorted(ref_paths - gen_paths)
+    extra = sorted(gen_paths - ref_paths)
+    changed = sorted(
+        path
+        for path in (ref_paths & gen_paths)
+        if reference.file_manifest[path] != generated.file_manifest[path]
+    )
+    if missing:
+        differences.append(f"missing files ({len(missing)}): {', '.join(missing[:5])}")
+    if extra:
+        differences.append(f"extra files ({len(extra)}): {', '.join(extra[:5])}")
+    if changed:
+        differences.append(
+            f"changed file content ({len(changed)}): {', '.join(changed[:5])}"
+        )
+
+    equivalent = len(differences) == 0
+    verdict = (
+        ComparisonVerdict.EQUIVALENT
+        if equivalent
+        else ComparisonVerdict.DIFFERENT
+    )
+    rationale = (
+        "Execution outcomes and product file manifest match reference."
+        if equivalent
+        else "Execution outcomes or product files differ from reference."
+    )
+    confidence = 0.95 if equivalent else 0.8
+    return ComparisonResult(
+        verdict=verdict,
+        confidence=confidence,
+        rationale=rationale,
+        differences=differences,
+        artifact_type="product",
+    )
 
 
 def _find_idea_brief(genspec_dir: Path) -> Path | None:
@@ -115,6 +336,7 @@ def run_verification(
             genspec_dir=genspec_dir,
             brief_content=brief_content,
             reference_dir=reference_dir,
+            skip_fly=skip_fly,
             verbose=verbose,
         )
     else:
@@ -132,6 +354,7 @@ def _run_bootstrap(
     genspec_dir: Path,
     brief_content: str,
     reference_dir: Path,
+    skip_fly: bool,
     verbose: bool,
 ) -> int:
     """Create reference artifacts from current generation."""
@@ -194,6 +417,24 @@ def _run_bootstrap(
         ref_brief_path.write_text(brief_content)
         print(f"   Saved: {ref_brief_path}")
 
+        if skip_fly:
+            print("\n3. Skipping execution phase (--skip-fly)")
+        else:
+            print("\n3. Executing reference flight plan...")
+            start = time.time()
+            execution_snapshot = _execute_flight_plan(coordinator, verbose=verbose)
+            duration = time.time() - start
+            ref_exec_path = reference_dir / REFERENCE_EXECUTION_SUMMARY
+            ref_exec_path.write_text(
+                json.dumps(execution_snapshot.to_dict(), indent=2),
+                encoding="utf-8",
+            )
+            print(
+                "   Saved: "
+                f"{ref_exec_path} ({len(execution_snapshot.file_manifest)} files, "
+                f"{duration:.1f}s)"
+            )
+
         print("\nBootstrap complete!")
         print(f"Reference artifacts saved to: {reference_dir}")
         return 0
@@ -231,6 +472,23 @@ def _run_verify(
 
     ref_spec = ref_spec_path.read_text()
     ref_plan = json.loads(ref_plan_path.read_text())
+    ref_execution: ExecutionSnapshot | None = None
+    if not skip_fly:
+        ref_exec_path = reference_dir / REFERENCE_EXECUTION_SUMMARY
+        if not ref_exec_path.exists():
+            print(
+                "Error: Reference execution snapshot not found: "
+                f"{ref_exec_path}",
+                file=sys.stderr,
+            )
+            print(
+                "Run bootstrap without --skip-fly to create execution reference.",
+                file=sys.stderr,
+            )
+            return 2
+        ref_execution = ExecutionSnapshot.from_dict(
+            json.loads(ref_exec_path.read_text(encoding="utf-8"))
+        )
 
     print("Verification mode: Comparing against reference...")
 
@@ -327,13 +585,32 @@ def _run_verify(
 
         # Step 3: Execute (if not skipped)
         if not skip_fly:
-            print("\n3. Execution phase skipped (not implemented in V1)")
+            print("\n3. Executing and comparing product outputs...")
+            start = time.time()
+            execution_snapshot = _execute_flight_plan(coordinator, verbose=verbose)
+            duration = time.time() - start
+            assert ref_execution is not None
+            execution_result = _compare_execution_snapshots(
+                ref_execution,
+                execution_snapshot,
+            )
+            (output_dir / VERIFY_EXECUTION_SUMMARY).write_text(
+                json.dumps(execution_snapshot.to_dict(), indent=2),
+                encoding="utf-8",
+            )
             step3 = VerificationStep(
-                name="execution",
-                status="skipped",
-                message="Execution comparison not implemented in V1",
+                name="execution_comparison",
+                status=(
+                    "pass"
+                    if execution_result.verdict == ComparisonVerdict.EQUIVALENT
+                    else "fail"
+                ),
+                result=execution_result,
+                message=execution_result.rationale,
+                duration_seconds=duration,
             )
             report.add_step(step3)
+            _print_step_result("Execution comparison", step3)
 
         # Finalize report
         report.finalize()
