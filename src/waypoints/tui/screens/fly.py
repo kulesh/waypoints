@@ -53,7 +53,6 @@ from waypoints.tui.screens.fly_timers import (
     transition_execution_timers,
 )
 from waypoints.tui.screens.intervention import InterventionModal
-from waypoints.tui.widgets import fly_waypoint_list_panel as _fly_waypoint_list_panel
 from waypoints.tui.widgets.file_preview import FilePreviewModal
 from waypoints.tui.widgets.flight_plan import DebugWaypointModal
 from waypoints.tui.widgets.fly_detail_panel import (
@@ -61,12 +60,15 @@ from waypoints.tui.widgets.fly_detail_panel import (
     WaypointDetailPanel,
 )
 from waypoints.tui.widgets.fly_execution_log import ExecutionLog
-from waypoints.tui.widgets.fly_waypoint_list_panel import WaypointListPanel
+from waypoints.tui.widgets.fly_waypoint_list_panel import (
+    WaypointListPanel,
+    format_project_metrics,
+)
 from waypoints.tui.widgets.header import StatusHeader
 from waypoints.tui.widgets.resizable_split import ResizableSplit
 
 logger = logging.getLogger(__name__)
-_format_project_metrics = _fly_waypoint_list_panel._format_project_metrics
+_format_project_metrics = format_project_metrics
 
 
 class ExecutionState(Enum):
@@ -355,20 +357,13 @@ class FlyScreen(Screen[None]):
         cached_tokens_in: int | None = None
         cached_tokens_known = False
         if self.waypoints_app.metrics_collector:
-            cost = self.waypoints_app.metrics_collector.total_cost
-            tokens_in = self.waypoints_app.metrics_collector.total_tokens_in
-            tokens_out = self.waypoints_app.metrics_collector.total_tokens_out
-            cached_tokens_in = (
-                self.waypoints_app.metrics_collector.total_cached_tokens_in
-            )
-            tokens_known = any(
-                call.tokens_in is not None or call.tokens_out is not None
-                for call in self.waypoints_app.metrics_collector._calls
-            )
-            cached_tokens_known = any(
-                call.cached_tokens_in is not None
-                for call in self.waypoints_app.metrics_collector._calls
-            )
+            metrics = self.waypoints_app.metrics_collector
+            cost = metrics.total_cost
+            tokens_in = metrics.total_tokens_in
+            tokens_out = metrics.total_tokens_out
+            cached_tokens_in = metrics.total_cached_tokens_in
+            tokens_known = metrics.has_token_usage_data()
+            cached_tokens_known = metrics.has_cached_token_usage_data()
         time_seconds = self._calculate_total_execution_time()
         list_panel = self.query_one(WaypointListPanel)
         list_panel.update_project_metrics(
@@ -886,8 +881,8 @@ class FlyScreen(Screen[None]):
             self.coordinator.transition(JourneyState.CHART_REVIEW)
 
         # Load spec and brief from disk to ensure we have content
-        spec = self.app._load_latest_doc(self.project, "product-spec")  # type: ignore[attr-defined]
-        brief = self.app._load_latest_doc(self.project, "idea-brief")  # type: ignore[attr-defined]
+        spec = self.waypoints_app.load_latest_doc(self.project, "product-spec")
+        brief = self.waypoints_app.load_latest_doc(self.project, "idea-brief")
         self.waypoints_app.switch_phase(
             "chart",
             {
@@ -924,7 +919,7 @@ class FlyScreen(Screen[None]):
         )
 
         # Mark this as the active waypoint for output tracking
-        detail_panel._showing_output_for = self.current_waypoint.id
+        detail_panel.set_live_output_waypoint(self.current_waypoint.id)
 
         log.clear_log()
         wp_title = f"{self.current_waypoint.id}: {self.current_waypoint.title}"
@@ -965,7 +960,7 @@ class FlyScreen(Screen[None]):
 
     async def _run_executor(self) -> ExecutionResult:
         """Run the executor asynchronously."""
-        executor = self.coordinator._fly.active_executor
+        executor = self.coordinator.active_executor
         if not executor:
             return ExecutionResult.FAILED
         try:
@@ -986,7 +981,7 @@ class FlyScreen(Screen[None]):
         detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
 
         # Guard: Only update if this waypoint's output is currently displayed
-        if detail_panel._showing_output_for != ctx.waypoint.id:
+        if not detail_panel.is_showing_output_for(ctx.waypoint.id):
             return
 
         log = detail_panel.execution_log
@@ -1400,7 +1395,7 @@ class FlyScreen(Screen[None]):
                         log.write_log(f"  [red]✗[/] {item.item}: {item.evidence}")
             if result.receipt:
                 detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
-                detail_panel._log_soft_validation_evidence(
+                detail_panel.log_soft_validation_evidence(
                     log, result.receipt, receipt_path
                 )
         else:

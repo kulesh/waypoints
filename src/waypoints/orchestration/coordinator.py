@@ -203,6 +203,11 @@ class JourneyCoordinator:
     def current_intervention(self) -> "Intervention | None":
         return self._fly.current_intervention
 
+    @property
+    def active_executor(self) -> "WaypointExecutor | None":
+        """Currently active fly executor, if any."""
+        return self._fly.active_executor
+
     def compute_budget_wait(
         self,
         intervention: "Intervention",

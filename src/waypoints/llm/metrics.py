@@ -213,6 +213,24 @@ class MetricsCollector:
         """Get total number of calls."""
         return len(self._calls)
 
+    def has_token_usage_data(self) -> bool:
+        """Whether any call captured input or output token usage."""
+        return any(
+            call.tokens_in is not None or call.tokens_out is not None
+            for call in self._calls
+        )
+
+    def has_cached_token_usage_data(self) -> bool:
+        """Whether any call captured cached input tokens."""
+        return any(call.cached_tokens_in is not None for call in self._calls)
+
+    def call_count_by_model(self) -> dict[str, int]:
+        """Get call counts grouped by model name."""
+        counts: dict[str, int] = {}
+        for call in self._calls:
+            counts[call.model] = counts.get(call.model, 0) + 1
+        return counts
+
     def cost_by_phase(self) -> dict[str, float]:
         """Get cost breakdown by phase.
 

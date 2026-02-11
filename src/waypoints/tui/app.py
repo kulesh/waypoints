@@ -193,7 +193,7 @@ class WaypointsApp(App[None]):
             )
         elif phase == "idea-brief":
             # Resume brief review - load existing brief
-            brief = self._load_latest_doc(project, "idea-brief")
+            brief = self.load_latest_doc(project, "idea-brief")
             if brief:
                 self._resume_brief_review(project, brief)
             else:
@@ -202,8 +202,8 @@ class WaypointsApp(App[None]):
                 self.push_screen(IdeationScreen())
         elif phase == "product-spec":
             # Resume spec review - load existing spec and brief
-            spec = self._load_latest_doc(project, "product-spec")
-            brief = self._load_latest_doc(project, "idea-brief")
+            spec = self.load_latest_doc(project, "product-spec")
+            brief = self.load_latest_doc(project, "idea-brief")
             if spec:
                 self._resume_spec_review(project, spec, brief)
             elif brief:
@@ -214,8 +214,8 @@ class WaypointsApp(App[None]):
                 self.push_screen(IdeationScreen())
         elif phase == "chart":
             # Resume chart review - load spec
-            spec = self._load_latest_doc(project, "product-spec")
-            brief = self._load_latest_doc(project, "idea-brief")
+            spec = self.load_latest_doc(project, "product-spec")
+            brief = self.load_latest_doc(project, "idea-brief")
             if spec:
                 self._resume_chart_review(project, spec, brief)
             else:
@@ -224,7 +224,7 @@ class WaypointsApp(App[None]):
         elif phase == "fly":
             # Resume fly phase - load flight plan and spec
             flight_plan = FlightPlanReader.load(project)
-            spec = self._load_latest_doc(project, "product-spec")
+            spec = self.load_latest_doc(project, "product-spec")
             if flight_plan and spec:
                 self.push_screen(
                     FlyScreen(project=project, flight_plan=flight_plan, spec=spec)
@@ -235,7 +235,7 @@ class WaypointsApp(App[None]):
         elif phase == "land":
             # Resume land phase - load flight plan and spec
             flight_plan = FlightPlanReader.load(project)
-            spec = self._load_latest_doc(project, "product-spec")
+            spec = self.load_latest_doc(project, "product-spec")
             self.push_screen(
                 LandScreen(project=project, flight_plan=flight_plan, spec=spec or "")
             )
@@ -243,7 +243,7 @@ class WaypointsApp(App[None]):
             logger.warning("Unknown phase %s, starting fresh", phase)
             self.push_screen(IdeationScreen())
 
-    def _load_latest_doc(self, project: Project, doc_type: str) -> str | None:
+    def load_latest_doc(self, project: Project, doc_type: str) -> str | None:
         """Load the latest document of a given type from project docs.
 
         Args:
@@ -267,6 +267,10 @@ class WaypointsApp(App[None]):
         latest_file = matching_files[0]
         logger.info("Loading %s from %s", doc_type, latest_file.name)
         return latest_file.read_text()
+
+    def _load_latest_doc(self, project: Project, doc_type: str) -> str | None:
+        """Compatibility wrapper for callers still using old private name."""
+        return self.load_latest_doc(project, doc_type)
 
     def _resume_brief_review(self, project: Project, brief: str) -> None:
         """Resume at brief review with existing content."""

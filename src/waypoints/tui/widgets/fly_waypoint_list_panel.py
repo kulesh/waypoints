@@ -15,7 +15,7 @@ from waypoints.tui.utils import format_token_count
 from waypoints.tui.widgets.flight_plan import FlightPlanTree
 
 
-def _format_project_metrics(
+def format_project_metrics(
     cost: float,
     time_seconds: int,
     tokens_in: int | None,
@@ -47,6 +47,9 @@ def _format_project_metrics(
         else:
             parts.append(f"{secs}s")
     return " · ".join(parts) if parts else ""
+
+
+_format_project_metrics = format_project_metrics
 
 
 def _state_name(state: Any) -> str:
@@ -171,7 +174,7 @@ class WaypointListPanel(Vertical):
             tokens_out: Total output tokens for the project.
             cached_tokens_in: Total cached input tokens for the project.
         """
-        display = _format_project_metrics(
+        display = format_project_metrics(
             cost,
             time_seconds,
             tokens_in,

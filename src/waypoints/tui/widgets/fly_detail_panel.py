@@ -309,6 +309,15 @@ class WaypointDetailPanel(Vertical):
             force_reload=True,
         )
 
+    def set_live_output_waypoint(self, waypoint_id: str | None) -> None:
+        """Mark which waypoint's execution output should be treated as live."""
+        self._showing_output_for = waypoint_id
+        self._is_live_output = waypoint_id is not None
+
+    def is_showing_output_for(self, waypoint_id: str) -> bool:
+        """Return whether output for the given waypoint is currently displayed."""
+        return self._showing_output_for == waypoint_id
+
     def update_metrics(
         self,
         cost: float | None,
@@ -783,6 +792,15 @@ class WaypointDetailPanel(Vertical):
                         f"[dim underline]{path}[/][/]"
                     )
 
+    def log_soft_validation_evidence(
+        self,
+        log: ExecutionLog,
+        receipt: "ChecklistReceipt",
+        receipt_path: Path,
+    ) -> None:
+        """Public wrapper for logging soft validation evidence."""
+        self._log_soft_validation_evidence(log, receipt, receipt_path)
+
     def _update_iteration_stats(
         self, exec_log: "ExecLogType", max_iteration: int
     ) -> None:
@@ -858,10 +876,7 @@ class WaypointDetailPanel(Vertical):
                     for item in result.receipt.failed_items():
                         log.write_log(f"  [red]✗[/] {item.item}: {item.evidence}")
             if result.receipt:
-                detail_panel = self.query_one("#waypoint-detail", WaypointDetailPanel)
-                detail_panel._log_soft_validation_evidence(
-                    log, result.receipt, receipt_path
-                )
+                self.log_soft_validation_evidence(log, result.receipt, receipt_path)
         else:
             log.write_log("[yellow]⚠ No receipt found[/]")
 
