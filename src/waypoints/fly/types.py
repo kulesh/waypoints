@@ -47,6 +47,7 @@ class ExecutionContext:
     output: str
     criteria_completed: set[int] = field(default_factory=set)
     file_operations: list[FileOperation] = field(default_factory=list)
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 ProgressCallback = Callable[[ExecutionContext], None]

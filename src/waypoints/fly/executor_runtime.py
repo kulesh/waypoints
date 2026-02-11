@@ -5,13 +5,42 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Sequence
+from typing import Iterable, Sequence
 
 from waypoints.fly.evidence import FileOperation
 from waypoints.fly.provenance import WorkspaceDiffSummary
 from waypoints.git.receipt import CapturedEvidence, CriterionVerification
 from waypoints.memory import WaypointMemoryRecord, save_waypoint_memory
 from waypoints.models.waypoint import Waypoint
+
+
+def dedupe_non_blank(values: Iterable[str]) -> tuple[str, ...]:
+    """Return values in stable order with blank entries removed."""
+    return tuple(dict.fromkeys(value for value in values if value.strip()))
+
+
+def build_protocol_progress_payload(
+    artifact: object,
+) -> tuple[str, dict[str, object]] | None:
+    """Build live-progress payload from a protocol artifact-like object."""
+    to_dict = getattr(artifact, "to_dict", None)
+    if not callable(to_dict):
+        return None
+    payload = to_dict()
+    if not isinstance(payload, dict):
+        return None
+    artifact_payload: dict[str, object] = {
+        str(key): value for key, value in payload.items()
+    }
+    artifact_type = str(payload.get("artifact_type", "protocol_artifact"))
+    role = str(payload.get("produced_by_role", "orchestrator"))
+    return (
+        f"{role}:{artifact_type}",
+        {
+            "role": role,
+            "artifact": artifact_payload,
+        },
+    )
 
 
 def persist_waypoint_memory(

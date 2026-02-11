@@ -13,6 +13,7 @@ from waypoints.fly.intervention import (
     InterventionNeededError,
     InterventionType,
 )
+from waypoints.fly.types import ExecutionContext
 from waypoints.models import JourneyState
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
@@ -132,6 +133,58 @@ class TestExecutionLogViewMode:
         assert "signals: SIGTERM -> SIGKILL" in rendered
         assert "timeout: warning" in rendered
         assert "timeout: retry" in rendered
+
+    def test_apply_agent_progress_updates_monitor_from_guidance_packet(self) -> None:
+        panel = WaypointDetailPanel(project=SimpleNamespace(), flight_plan=FlightPlan())
+        ctx = ExecutionContext(
+            waypoint=Waypoint(id="WP-001", title="Title", objective="Objective"),
+            iteration=1,
+            total_iterations=10,
+            step="protocol_artifact",
+            output="builder:guidance_packet",
+            metadata={
+                "artifact": {
+                    "artifact_type": "guidance_packet",
+                    "produced_by_role": "builder",
+                    "role_constraints": [
+                        "Implement only within waypoint scope.",
+                        "Run required validations before completion claim.",
+                    ],
+                    "stop_conditions": [
+                        (
+                            "Do not emit completion marker while clarification is "
+                            "unresolved."
+                        )
+                    ],
+                }
+            },
+        )
+
+        panel.apply_agent_progress(ctx)
+
+        assert panel._orchestrator_expectations == (
+            "Implement only within waypoint scope.",
+            "Run required validations before completion claim.",
+        )
+        assert panel._orchestrator_stop_conditions == (
+            "Do not emit completion marker while clarification is unresolved.",
+        )
+        assert panel._agent_status["builder"] == "Received orchestrator guidance"
+
+    def test_format_protocol_artifact_summary_context_envelope(self) -> None:
+        panel = WaypointDetailPanel(project=SimpleNamespace(), flight_plan=FlightPlan())
+        summary = panel._format_protocol_artifact_summary(
+            {
+                "artifact_type": "context_envelope",
+                "prompt_budget_chars": 24000,
+                "overflowed": True,
+                "slices": [{"name": "memory"}, {"name": "policy"}],
+            }
+        )
+
+        assert "budget=24000 chars" in summary
+        assert "slices=2" in summary
+        assert "overflowed=yes" in summary
 
 
 class TestStatusBarMessage:

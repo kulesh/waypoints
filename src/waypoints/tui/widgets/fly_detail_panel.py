@@ -35,6 +35,7 @@ from waypoints.tui.widgets.fly_execution_log import ExecutionLog
 from waypoints.tui.widgets.resizable_split import ResizableSplitVertical
 
 if TYPE_CHECKING:
+    from waypoints.fly.types import ExecutionContext
     from waypoints.git.receipt import ChecklistReceipt
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,10 @@ class WaypointDetailPanel(Vertical):
         color: $text-muted;
     }
 
+    WaypointDetailPanel .wp-agent-monitor {
+        color: $text-muted;
+    }
+
     WaypointDetailPanel .criteria-section {
         padding: 1 1 1 0;
         border-bottom: none;
@@ -161,6 +166,13 @@ class WaypointDetailPanel(Vertical):
         self._showing_output_for: str | None = None  # Track which waypoint's output
         self._is_live_output: bool = False  # True if showing live streaming output
         self._log_view_mode: ExecutionLogViewMode = ExecutionLogViewMode.RAW
+        self._agent_status: dict[str, str] = {
+            "orchestrator": "Waiting for execution",
+            "builder": "Idle",
+            "verifier": "Idle",
+        }
+        self._orchestrator_expectations: tuple[str, ...] = ()
+        self._orchestrator_stop_conditions: tuple[str, ...] = ()
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="panel-header"):
@@ -171,6 +183,7 @@ class WaypointDetailPanel(Vertical):
             yield Static("", classes="wp-metrics", id="wp-metrics")
             yield Static("", classes="wp-log-view", id="wp-log-view")
             yield Static("", classes="wp-status", id="iteration-label")
+            yield Static("", classes="wp-agent-monitor", id="wp-agent-monitor")
             yield ResizableSplitVertical(
                 top=Vertical(
                     Static("Acceptance Criteria", classes="section-label"),
@@ -215,6 +228,7 @@ class WaypointDetailPanel(Vertical):
         notes = self.query_one("#wp-notes", Static)
         status = self.query_one("#wp-status", Static)
         metrics = self.query_one("#wp-metrics", Static)
+        self._reset_agent_monitor()
 
         # Criteria list might not exist yet if called before compose
         try:
@@ -275,6 +289,9 @@ class WaypointDetailPanel(Vertical):
             self.execution_log.clear_log()
             self._showing_output_for = None
             self._is_live_output = False
+            self._set_agent_status("orchestrator", "Select a waypoint to begin")
+            self._set_agent_status("builder", "Idle")
+            self._set_agent_status("verifier", "Idle")
 
     def _update_log_view_label(self) -> None:
         """Render the current execution log view mode."""
@@ -297,6 +314,195 @@ class WaypointDetailPanel(Vertical):
         self._update_log_view_label()
         return self._log_view_mode
 
+    def _reset_agent_monitor(self) -> None:
+        """Reset agent monitor state for a newly selected waypoint."""
+        self._agent_status = {
+            "orchestrator": "Supervising waypoint scope and quality gates",
+            "builder": "Waiting for run",
+            "verifier": "Waiting for completion claim",
+        }
+        self._orchestrator_expectations = ()
+        self._orchestrator_stop_conditions = ()
+        self._render_agent_monitor()
+
+    def _set_agent_status(self, role: str, status: str) -> None:
+        """Set short status text for one role and re-render monitor."""
+        key = role.lower()
+        if key not in self._agent_status:
+            return
+        self._agent_status[key] = self._truncate_agent_text(status, limit=52)
+        self._render_agent_monitor()
+
+    def _set_orchestrator_expectations(
+        self,
+        constraints: tuple[str, ...],
+        stop_conditions: tuple[str, ...],
+    ) -> None:
+        """Store orchestrator constraints propagated to worker agents."""
+        self._orchestrator_expectations = constraints[:2]
+        self._orchestrator_stop_conditions = stop_conditions[:2]
+        if constraints or stop_conditions:
+            self._set_agent_status(
+                "orchestrator",
+                "Guidance updated for builder/verifier",
+            )
+        self._render_agent_monitor()
+
+    def _truncate_agent_text(self, text: str, *, limit: int) -> str:
+        """Return compact monitor text clipped to a fixed width."""
+        cleaned = " ".join(text.split())
+        if len(cleaned) <= limit:
+            return cleaned
+        return cleaned[: limit - 3] + "..."
+
+    def _render_agent_monitor(self) -> None:
+        """Render persistent multi-agent activity summary."""
+        try:
+            monitor = self.query_one("#wp-agent-monitor", Static)
+        except Exception:
+            return
+
+        text = Text()
+        text.append("Agent Monitor · ", style="bold")
+        text.append("O: ", style="bold")
+        text.append(self._agent_status["orchestrator"], style="dim")
+        text.append(" · ", style="dim")
+        text.append("B: ", style="bold")
+        text.append(self._agent_status["builder"], style="dim")
+        text.append(" · ", style="dim")
+        text.append("V: ", style="bold")
+        text.append(self._agent_status["verifier"], style="dim")
+        text.append("\n")
+
+        if self._orchestrator_expectations:
+            text.append("Expect: ", style="bold")
+            text.append(
+                self._truncate_agent_text(
+                    " | ".join(self._orchestrator_expectations),
+                    limit=160,
+                )
+                + "\n",
+                style="dim",
+            )
+
+        if self._orchestrator_stop_conditions:
+            text.append("Stops: ", style="bold")
+            text.append(
+                self._truncate_agent_text(
+                    " | ".join(self._orchestrator_stop_conditions),
+                    limit=160,
+                ),
+                style="dim",
+            )
+
+        monitor.update(text)
+
+    def apply_agent_progress(self, ctx: "ExecutionContext") -> None:
+        """Update multi-agent monitor state from live execution progress."""
+        if ctx.step == "protocol_artifact":
+            artifact = ctx.metadata.get("artifact")
+            if isinstance(artifact, dict):
+                self._apply_protocol_artifact_to_monitor(artifact)
+            return
+
+        role = self._derive_role_from_progress(ctx)
+        output = self._truncate_agent_text(ctx.output, limit=92)
+
+        if ctx.step == "executing":
+            self._set_agent_status(role, f"Running iteration {ctx.iteration}")
+        elif ctx.step == "stage":
+            self._set_agent_status(role, f"Stage update: {output}")
+        elif ctx.step == "tool_use":
+            self._set_agent_status(role, f"Using tool: {output}")
+        elif ctx.step == "finalizing":
+            self._set_agent_status("verifier", output)
+        elif ctx.step == "complete":
+            self._set_agent_status("verifier", "Receipt accepted")
+            self._set_agent_status("orchestrator", "Accepted completion claim")
+        elif ctx.step == "validation_failed":
+            self._set_agent_status("verifier", "Rejected receipt evidence")
+            self._set_agent_status("orchestrator", "Requested rework and retry")
+        elif ctx.step == "clarification_pending":
+            self._set_agent_status(
+                "orchestrator",
+                "Blocked completion until clarification is resolved",
+            )
+        elif ctx.step in {"error", "warning"}:
+            self._set_agent_status("orchestrator", output)
+
+    def _derive_role_from_progress(self, ctx: "ExecutionContext") -> str:
+        """Map progress update metadata/step to one canonical role label."""
+        raw_role = ctx.metadata.get("role")
+        if isinstance(raw_role, str) and raw_role:
+            return raw_role
+        if ctx.step in {"finalizing"}:
+            return "verifier"
+        if ctx.step in {"complete", "validation_failed", "clarification_pending"}:
+            return "orchestrator"
+        return "builder"
+
+    def _apply_protocol_artifact_to_monitor(self, artifact: dict[str, Any]) -> None:
+        """Update monitor status lines from structured protocol artifacts."""
+        artifact_type = str(artifact.get("artifact_type", "")).strip()
+        role = str(artifact.get("produced_by_role", "orchestrator")).strip() or (
+            "orchestrator"
+        )
+
+        if artifact_type == "guidance_packet":
+            constraints = tuple(
+                str(item) for item in artifact.get("role_constraints", []) if item
+            )
+            stops = tuple(
+                str(item) for item in artifact.get("stop_conditions", []) if item
+            )
+            self._set_orchestrator_expectations(constraints, stops)
+            self._set_agent_status(role, "Received orchestrator guidance")
+            return
+
+        if artifact_type == "clarification_request":
+            question = str(artifact.get("blocking_question", "")).strip()
+            self._set_agent_status("builder", f"Needs clarification: {question}")
+            self._set_agent_status("orchestrator", "Reviewing clarification request")
+            return
+
+        if artifact_type == "clarification_response":
+            option = str(artifact.get("chosen_option", "")).strip()
+            self._set_agent_status(
+                "orchestrator",
+                f"Clarification resolved: {option}",
+            )
+            self._set_agent_status("builder", "Resuming with clarified constraints")
+            return
+
+        if artifact_type == "verification_report":
+            results = artifact.get("criteria_results", [])
+            passed = 0
+            failed = 0
+            if isinstance(results, list):
+                for item in results:
+                    if not isinstance(item, dict):
+                        continue
+                    verdict = str(item.get("verdict", "")).strip().lower()
+                    if verdict == "pass":
+                        passed += 1
+                    elif verdict == "fail":
+                        failed += 1
+            self._set_agent_status(
+                "verifier",
+                f"Reported {passed} pass / {failed} fail criteria verdicts",
+            )
+            return
+
+        if artifact_type == "orchestrator_decision":
+            disposition = str(artifact.get("disposition", "escalate")).strip()
+            self._set_agent_status(
+                "orchestrator",
+                f"Decision: {disposition}",
+            )
+            return
+
+        self._set_agent_status(role, f"Emitted {artifact_type or 'protocol artifact'}")
+
     def refresh_current_waypoint(self, active_waypoint_id: str | None = None) -> None:
         """Force-refresh currently displayed waypoint details."""
         self.show_waypoint(
@@ -313,6 +519,13 @@ class WaypointDetailPanel(Vertical):
         """Mark which waypoint's execution output should be treated as live."""
         self._showing_output_for = waypoint_id
         self._is_live_output = waypoint_id is not None
+        if waypoint_id is not None:
+            self._set_agent_status(
+                "orchestrator",
+                "Supervising builder execution and completion quality gate",
+            )
+            self._set_agent_status("builder", "Preparing first iteration")
+            self._set_agent_status("verifier", "Waiting for completion claim")
 
     def is_showing_output_for(self, waypoint_id: str) -> bool:
         """Return whether output for the given waypoint is currently displayed."""
@@ -370,6 +583,12 @@ class WaypointDetailPanel(Vertical):
                 self.clear_iteration()
             self._showing_output_for = waypoint.id
             self._is_live_output = True
+            self._set_agent_status(
+                "orchestrator",
+                "Supervising builder execution and completion quality gate",
+            )
+            self._set_agent_status("builder", "Executing waypoint tasks")
+            self._set_agent_status("verifier", "Waiting for completion claim")
             return
 
         # If we're showing live output for a DIFFERENT waypoint, don't switch away
@@ -410,19 +629,29 @@ class WaypointDetailPanel(Vertical):
                 completed = waypoint.completed_at.strftime("%Y-%m-%d %H:%M")
                 log.write_log(f"Completed: {completed}")
             log.write_log("(No execution log found)")
+            self._set_agent_status("orchestrator", "Execution already complete")
+            self._set_agent_status("builder", "Completed")
+            self._set_agent_status("verifier", "Completed")
         elif waypoint.status == WaypointStatus.FAILED:
             log.log_error("Last execution failed")
             log.write_log("Press 'r' to retry")
             log.write_log("(No execution log found)")
+            self._set_agent_status("orchestrator", "Awaiting retry decision")
+            self._set_agent_status("builder", "Last run failed")
+            self._set_agent_status("verifier", "Did not accept completion")
         elif waypoint.status == WaypointStatus.IN_PROGRESS:
             # In progress but not active (stale from previous session)
             log.write_log("Execution was in progress...")
             log.write_log("(Session may have been interrupted)")
+            self._set_agent_status("orchestrator", "Execution interrupted")
+            self._set_agent_status("builder", "State unknown (stale in-progress)")
         else:  # PENDING
             log.write_log("Waiting to execute")
             if waypoint.dependencies:
                 deps = ", ".join(waypoint.dependencies)
                 log.write_log(f"Dependencies: {deps}")
+            self._set_agent_status("builder", "Pending")
+            self._set_agent_status("verifier", "Pending")
 
     def _load_execution_history(self, waypoint: Waypoint) -> bool:
         """Load and display execution history from disk.
@@ -445,6 +674,7 @@ class WaypointDetailPanel(Vertical):
             # Log the three main sections
             self._log_execution_header(log, exec_log)
             max_iteration = self._log_execution_entries(log, exec_log)
+            self._replay_agent_activity(exec_log)
             self._update_iteration_stats(exec_log, max_iteration)
             self._log_historical_verification(waypoint, log)
 
@@ -519,6 +749,12 @@ class WaypointDetailPanel(Vertical):
             elif entry_type == "tool_call":
                 self._log_tool_call_entry(log, entry)
 
+            elif entry_type == "stage_report":
+                self._log_stage_report_entry(log, entry)
+
+            elif entry_type == "protocol_artifact":
+                self._log_protocol_artifact_entry(log, entry)
+
             elif entry_type == "intervention_needed":
                 int_type = entry.metadata.get("intervention_type", "unknown")
                 reason = entry.metadata.get("reason", "")
@@ -559,6 +795,17 @@ class WaypointDetailPanel(Vertical):
 
             elif entry_type == "workspace_diff":
                 self._log_workspace_diff_entry(log, entry)
+
+            elif entry_type == "finalize_start":
+                log.log_heading("Verifier")
+                log.write_log("[dim]Running receipt finalization[/]")
+
+            elif entry_type == "finalize_output":
+                if entry.content:
+                    content = entry.content
+                    if len(content) > 24000:
+                        content = content[:24000] + "\n... (truncated)"
+                    log.write_log(content)
 
         return max_iteration
 
@@ -615,6 +862,102 @@ class WaypointDetailPanel(Vertical):
             payload["content"] = entry.content
 
         return payload
+
+    def _log_stage_report_entry(self, log: "ExecutionLog", entry: Any) -> None:
+        """Log a structured stage report emitted by the builder agent."""
+        stage = str(entry.metadata.get("stage", "unknown")).strip() or "unknown"
+        success = bool(entry.metadata.get("success", False))
+        output = str(entry.metadata.get("output", "")).strip()
+        next_stage = str(entry.metadata.get("next_stage", "")).strip()
+        status = "[green]✓[/]" if success else "[yellow]~[/]"
+        log.write_log(f"{status} [cyan]Builder[/] stage [bold]{stage}[/]")
+        if output:
+            log.write_log(f"[dim]  {self._truncate_agent_text(output, limit=220)}[/]")
+        if next_stage:
+            log.write_log(f"[dim]  next: {next_stage}[/]")
+        stage_summary = output or ("ok" if success else "needs attention")
+        self._set_agent_status("builder", f"Stage {stage}: {stage_summary}")
+
+    def _log_protocol_artifact_entry(self, log: "ExecutionLog", entry: Any) -> None:
+        """Log a protocol artifact in human-readable form."""
+        artifact = entry.metadata.get("artifact")
+        if not isinstance(artifact, dict):
+            log.write_log("[dim]Protocol artifact emitted[/]")
+            return
+        role = str(artifact.get("produced_by_role", "orchestrator")).strip()
+        summary = self._format_protocol_artifact_summary(artifact)
+        log.write_log(f"[bold blue]{role}[/] · {summary}")
+        self._apply_protocol_artifact_to_monitor(artifact)
+
+    def _format_protocol_artifact_summary(self, artifact: dict[str, Any]) -> str:
+        """Render concise summary text for one protocol artifact payload."""
+        artifact_type = str(artifact.get("artifact_type", "protocol_artifact")).strip()
+
+        if artifact_type == "guidance_packet":
+            constraints = artifact.get("role_constraints", [])
+            stops = artifact.get("stop_conditions", [])
+            skills = artifact.get("attached_skills", [])
+            constraints_count = len(constraints) if isinstance(constraints, list) else 0
+            stops_count = len(stops) if isinstance(stops, list) else 0
+            skills_count = len(skills) if isinstance(skills, list) else 0
+            return (
+                "Guidance packet "
+                f"({constraints_count} constraints, {stops_count} stops, "
+                f"{skills_count} skills)"
+            )
+
+        if artifact_type == "context_envelope":
+            slices = artifact.get("slices", [])
+            slices_count = len(slices) if isinstance(slices, list) else 0
+            budget = artifact.get("prompt_budget_chars")
+            overflowed = bool(artifact.get("overflowed", False))
+            return (
+                f"Context envelope budget={budget} chars, slices={slices_count}, "
+                f"overflowed={'yes' if overflowed else 'no'}"
+            )
+
+        if artifact_type == "clarification_request":
+            question = str(artifact.get("blocking_question", "")).strip()
+            return "Clarification requested: " + self._truncate_agent_text(
+                question or "unspecified question",
+                limit=140,
+            )
+
+        if artifact_type == "clarification_response":
+            option = str(artifact.get("chosen_option", "")).strip()
+            return "Clarification response: " + self._truncate_agent_text(
+                option or "follow orchestrator guidance",
+                limit=140,
+            )
+
+        if artifact_type == "verification_report":
+            raw_results = artifact.get("criteria_results", [])
+            passed = 0
+            failed = 0
+            inconclusive = 0
+            if isinstance(raw_results, list):
+                for item in raw_results:
+                    if not isinstance(item, dict):
+                        continue
+                    verdict = str(item.get("verdict", "")).strip().lower()
+                    if verdict == "pass":
+                        passed += 1
+                    elif verdict == "fail":
+                        failed += 1
+                    elif verdict == "inconclusive":
+                        inconclusive += 1
+            return (
+                "Verification report: "
+                f"{passed} pass / {failed} fail / {inconclusive} inconclusive"
+            )
+
+        if artifact_type == "orchestrator_decision":
+            disposition = str(artifact.get("disposition", "escalate")).strip()
+            reason = str(artifact.get("reason_code", "")).strip()
+            reason_text = f", reason={reason}" if reason else ""
+            return f"Orchestrator decision: {disposition}{reason_text}"
+
+        return artifact_type
 
     def _log_tool_call_entry(self, log: "ExecutionLog", entry: Any) -> None:
         """Log a tool call entry with clickable file paths for file operations."""
@@ -801,6 +1144,46 @@ class WaypointDetailPanel(Vertical):
         """Public wrapper for logging soft validation evidence."""
         self._log_soft_validation_evidence(log, receipt, receipt_path)
 
+    def _replay_agent_activity(self, exec_log: "ExecLogType") -> None:
+        """Reconstruct agent monitor state from persisted execution entries."""
+        for entry in exec_log.entries:
+            if entry.entry_type == "protocol_artifact":
+                artifact = entry.metadata.get("artifact")
+                if isinstance(artifact, dict):
+                    self._apply_protocol_artifact_to_monitor(artifact)
+                continue
+
+            if entry.entry_type == "stage_report":
+                stage = str(entry.metadata.get("stage", "")).strip()
+                output = str(entry.metadata.get("output", "")).strip()
+                if stage:
+                    summary = output or "reported"
+                    self._set_agent_status("builder", f"Stage {stage}: {summary}")
+                continue
+
+            if entry.entry_type == "finalize_start":
+                self._set_agent_status(
+                    "verifier",
+                    "Running receipt finalization and criterion checks",
+                )
+                continue
+
+            if entry.entry_type == "receipt_validated":
+                valid = bool(entry.metadata.get("valid", False))
+                if valid:
+                    self._set_agent_status("verifier", "Receipt accepted")
+                    self._set_agent_status(
+                        "orchestrator", "Accepted waypoint completion"
+                    )
+                else:
+                    self._set_agent_status("verifier", "Receipt rejected")
+                    self._set_agent_status("orchestrator", "Requested rework")
+                continue
+
+            if entry.entry_type == "intervention_needed":
+                self._set_agent_status("orchestrator", "Intervention required")
+                continue
+
     def _update_iteration_stats(
         self, exec_log: "ExecLogType", max_iteration: int
     ) -> None:
@@ -890,6 +1273,9 @@ class WaypointDetailPanel(Vertical):
         """
         log = self.execution_log
         children = self._flight_plan.get_children(waypoint.id)
+        self._set_agent_status("orchestrator", "Supervising multi-hop child waypoints")
+        self._set_agent_status("builder", "No direct execution on epic parent")
+        self._set_agent_status("verifier", "Evaluates child-waypoint receipts")
 
         log.log_heading("Multi-hop Waypoint")
         log.write_log(f"This waypoint contains {len(children)} child tasks.")

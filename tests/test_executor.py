@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from waypoints.config.settings import settings
+from waypoints.fly.clarification_runtime import extract_clarification_payloads
 from waypoints.fly.executor import (
     CRITERION_PATTERN,
     MAX_CLARIFICATION_ROUNDS,
@@ -381,6 +382,28 @@ class TestBuildPrompt:
         assert "<status>verified</status>" in prompt
         assert "<text>" in prompt
         assert "<evidence>" in prompt
+
+    def test_prompt_does_not_hardcode_pytest(
+        self, waypoint: Waypoint, checklist: Checklist
+    ) -> None:
+        prompt = build_execution_prompt(waypoint, "spec", Path("/project"), checklist)
+        assert "Run tests with `pytest -v`" not in prompt
+
+    def test_prompt_includes_resolved_validation_commands(
+        self,
+        waypoint: Waypoint,
+        checklist: Checklist,
+    ) -> None:
+        prompt = build_execution_prompt(
+            waypoint,
+            "spec",
+            Path("/project"),
+            checklist,
+            resolved_validation_commands=("swift build", "swift test"),
+        )
+        assert "Validation Commands for This Waypoint" in prompt
+        assert "`swift build`" in prompt
+        assert "`swift test`" in prompt
 
 
 class TestWaypointExecutor:
@@ -1165,6 +1188,7 @@ class TestExecutionContext:
         assert ctx.output == "Running..."
         assert ctx.criteria_completed == set()
         assert ctx.file_operations == []
+        assert ctx.metadata == {}
 
     def test_context_with_criteria(self) -> None:
         """Context with completed criteria."""
@@ -1195,6 +1219,18 @@ class TestExecutionContext:
             file_operations=ops,
         )
         assert len(ctx.file_operations) == 2
+
+    def test_context_with_metadata(self) -> None:
+        waypoint = Waypoint(id="WP-1", title="Test", objective="Test")
+        ctx = ExecutionContext(
+            waypoint=waypoint,
+            iteration=1,
+            total_iterations=10,
+            step="protocol_artifact",
+            output="builder:guidance_packet",
+            metadata={"role": "builder"},
+        )
+        assert ctx.metadata["role"] == "builder"
 
 
 class DummyLogWriter:
@@ -1639,16 +1675,8 @@ class _ArtifactLogWriter:
 
 
 def test_extract_clarification_payloads_parses_structured_tags(tmp_path: Path) -> None:
-    project = SimpleNamespace(get_path=lambda: tmp_path)
-    waypoint = Waypoint(
-        id="WP-880",
-        title="Clarify",
-        objective="Test parser",
-        acceptance_criteria=[],
-    )
-    executor = WaypointExecutor(project=project, waypoint=waypoint, spec="spec")
-
-    payloads = executor._extract_clarification_payloads(
+    del tmp_path
+    payloads = extract_clarification_payloads(
         """
         <clarification-request>
         {"question":"Which config file is canonical?","confidence":0.41}

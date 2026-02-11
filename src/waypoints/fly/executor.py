@@ -12,12 +12,6 @@ from waypoints.fly.clarification_runtime import (
     MAX_CLARIFICATION_ROUNDS as _MAX_CLARIFICATION_ROUNDS,
 )
 from waypoints.fly.clarification_runtime import (
-    build_clarification_response as _build_clarification_response_runtime,
-)
-from waypoints.fly.clarification_runtime import (
-    extract_clarification_payloads as _extract_clarification_payloads_runtime,
-)
-from waypoints.fly.clarification_runtime import (
     handle_clarification_requests as _handle_clarification_requests_runtime,
 )
 from waypoints.fly.context_envelope import (
@@ -48,6 +42,8 @@ from waypoints.fly.evidence import (
 )
 from waypoints.fly.execution_log import ExecutionLogWriter
 from waypoints.fly.executor_runtime import (
+    build_protocol_progress_payload,
+    dedupe_non_blank,
     persist_waypoint_memory,
     validate_no_external_changes,
 )
@@ -70,8 +66,6 @@ from waypoints.fly.kickoff_prompt import (
     build_iteration_kickoff_prompt as _build_iteration_kickoff_prompt_payload,
 )
 from waypoints.fly.protocol import (
-    ClarificationRequest,
-    ClarificationResponse,
     FlyRole,
     GuidancePacket,
     parse_stage_reports,
@@ -268,19 +262,22 @@ class WaypointExecutor:
             spec_context_stale=self._spec_context_stale,
             current_spec_hash=self._current_spec_hash,
             guidance_packet=self._builder_guidance_packet,
+            resolved_validation_commands=dedupe_non_blank(
+                c.command for c in self._validation_commands
+            ),
         )
 
         logger.info(
-            "Starting execution of %s: %s", self.waypoint.id, self.waypoint.title
+            "Starting execution of %s: %s (log: %s)",
+            self.waypoint.id,
+            self.waypoint.title,
+            self._log_writer.file_path,
         )
-        logger.info("Execution log: %s", self._log_writer.file_path)
 
         s = _LoopState(
             workspace_before=self._capture_workspace_snapshot(project_path),
             prompt=prompt,
-            completion_marker=(
-                f"<waypoint-complete>{self.waypoint.id}</waypoint-complete>"
-            ),
+            completion_marker=f"<waypoint-complete>{self.waypoint.id}</waypoint-complete>",
         )
 
         while s.iteration < self.max_iterations:
@@ -616,17 +613,6 @@ class WaypointExecutor:
             log_artifact=self._log_protocol_artifact_if_supported,
         )
 
-    def _extract_clarification_payloads(self, text: str) -> list[dict[str, Any]]:
-        """Extract structured clarification payloads from model output tags."""
-        return _extract_clarification_payloads_runtime(text)
-
-    def _build_clarification_response(
-        self,
-        request: ClarificationRequest,
-    ) -> ClarificationResponse:
-        """Generate deterministic orchestrator response for clarification."""
-        return _build_clarification_response_runtime(request)
-
     def _log_protocol_artifact_if_supported(self, artifact: Any) -> None:
         """Log protocol artifact when the active log writer supports it."""
         if self._log_writer is None:
@@ -634,6 +620,17 @@ class WaypointExecutor:
         log_method = getattr(self._log_writer, "log_protocol_artifact", None)
         if callable(log_method):
             log_method(artifact)
+        progress_payload = build_protocol_progress_payload(artifact)
+        if progress_payload is None:
+            return
+        output, metadata = progress_payload
+        self._report_progress(
+            0,
+            self.max_iterations,
+            "protocol_artifact",
+            output,
+            metadata=metadata,
+        )
 
     async def _handle_completion(
         self,
@@ -1194,6 +1191,7 @@ class WaypointExecutor:
         output: str,
         criteria_completed: set[int] | None = None,
         file_operations: list[FileOperation] | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> None:
         """Report progress to callback if set."""
         if self.on_progress:
@@ -1205,6 +1203,7 @@ class WaypointExecutor:
                 output=output,
                 criteria_completed=criteria_completed or set(),
                 file_operations=file_operations or [],
+                metadata=metadata or {},
             )
             self.on_progress(ctx)
 

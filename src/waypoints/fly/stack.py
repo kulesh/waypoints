@@ -17,6 +17,7 @@ class StackType(Enum):
     JAVASCRIPT = "javascript"
     GO = "go"
     RUST = "rust"
+    SWIFT = "swift"
 
 
 @dataclass
@@ -64,6 +65,10 @@ STACK_COMMANDS: dict[StackType, list[ValidationCommand]] = {
         ValidationCommand("tests", "cargo test", "test"),
         ValidationCommand("linting", "cargo clippy -- -D warnings", "lint"),
         ValidationCommand("formatting", "cargo fmt --check", "format"),
+    ],
+    StackType.SWIFT: [
+        ValidationCommand("build", "swift build", "build"),
+        ValidationCommand("tests", "swift test", "test"),
     ],
 }
 
@@ -117,6 +122,14 @@ def _detect_stacks_at(directory: Path) -> list[StackConfig]:
     if (directory / "Cargo.toml").exists():
         configs.append(
             StackConfig(StackType.RUST, list(STACK_COMMANDS[StackType.RUST]), directory)
+        )
+
+    # Swift Package Manager
+    if (directory / "Package.swift").exists():
+        configs.append(
+            StackConfig(
+                StackType.SWIFT, list(STACK_COMMANDS[StackType.SWIFT]), directory
+            )
         )
 
     return configs
@@ -190,6 +203,11 @@ def detect_stack_from_spec(spec_content: str) -> list[StackType]:
     rust_keywords = ["rust", "cargo", "tokio", "actix"]
     if any(kw in spec_lower for kw in rust_keywords):
         stacks.append(StackType.RUST)
+
+    # Swift keywords (package-oriented workflows)
+    swift_keywords = ["swift package", "package.swift", "swiftpm", "swift test"]
+    if any(kw in spec_lower for kw in swift_keywords):
+        stacks.append(StackType.SWIFT)
 
     return stacks
 

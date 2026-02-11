@@ -34,6 +34,7 @@ class _DetailPanel:
         self.log = _Log()
         self.iteration_updates: list[tuple[int, int]] = []
         self.criteria_updates: list[set[int]] = []
+        self.agent_progress_steps: list[str] = []
 
     @property
     def execution_log(self) -> _Log:
@@ -47,6 +48,9 @@ class _DetailPanel:
 
     def update_criteria(self, completed: set[int]) -> None:
         self.criteria_updates.append(completed)
+
+    def apply_agent_progress(self, ctx: ExecutionContext) -> None:
+        self.agent_progress_steps.append(ctx.step)
 
 
 def _context(
@@ -80,6 +84,7 @@ def test_apply_progress_update_ignores_non_visible_waypoint() -> None:
     assert returned == {9}
     assert detail_panel.iteration_updates == []
     assert detail_panel.criteria_updates == []
+    assert detail_panel.agent_progress_steps == []
     assert detail_panel.execution_log.entries == []
 
 
@@ -99,6 +104,7 @@ def test_apply_progress_update_renders_clickable_edit_operation() -> None:
     assert returned == {1, 2}
     assert detail_panel.iteration_updates == [(2, 8)]
     assert detail_panel.criteria_updates == [{1, 2}]
+    assert detail_panel.agent_progress_steps == ["tool_use"]
     assert len(detail_panel.execution_log.entries) == 1
     entry_type, content = detail_panel.execution_log.entries[0]
     assert entry_type == "write"
@@ -138,8 +144,24 @@ def test_apply_progress_update_handles_complete_error_and_stage_steps() -> None:
         live_criteria_completed=set(),
     )
 
+    assert detail_panel.agent_progress_steps == ["complete", "error", "stage"]
     assert detail_panel.execution_log.entries == [
         ("success", "ok"),
         ("error", "boom"),
         ("heading", "Stage: verifying"),
+    ]
+
+
+def test_apply_progress_update_renders_protocol_artifact_step() -> None:
+    detail_panel = _DetailPanel(showing_waypoint_id="WP-001")
+
+    apply_progress_update(
+        ctx=_context(step="protocol_artifact", output="builder:guidance_packet"),
+        detail_panel=detail_panel,
+        live_criteria_completed=set(),
+    )
+
+    assert detail_panel.agent_progress_steps == ["protocol_artifact"]
+    assert detail_panel.execution_log.entries == [
+        ("write_log", "[dim]↳ builder:guidance_packet[/]")
     ]

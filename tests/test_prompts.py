@@ -126,6 +126,28 @@ def test_execution_prompt_includes_prior_waypoint_memory_context() -> None:
     assert "WP-001 (dependency, result=success, iterations=1/10)" in prompt
 
 
+def test_execution_prompt_is_stack_agnostic_and_accepts_resolved_commands() -> None:
+    waypoint = Waypoint(
+        id="WP-003b",
+        title="Swift Validation",
+        objective="Use stack-native validation commands",
+        acceptance_criteria=["stack commands appear in prompt"],
+    )
+
+    prompt = build_execution_prompt(
+        waypoint,
+        "Spec content",
+        Path("project"),
+        Checklist(items=["Run tests"]),
+        resolved_validation_commands=("swift build", "swift test"),
+    )
+
+    assert "Run tests with `pytest -v`" not in prompt
+    assert "Validation Commands for This Waypoint" in prompt
+    assert "`swift build`" in prompt
+    assert "`swift test`" in prompt
+
+
 def test_execution_prompt_includes_guidance_packet() -> None:
     waypoint = Waypoint(
         id="WP-004",

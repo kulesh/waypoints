@@ -36,6 +36,8 @@ class DetailPanelLike(Protocol):
 
     def update_criteria(self, completed: set[int]) -> None: ...
 
+    def apply_agent_progress(self, ctx: ExecutionContext) -> None: ...
+
 
 def apply_progress_update(
     *,
@@ -48,7 +50,9 @@ def apply_progress_update(
         return live_criteria_completed
 
     log = detail_panel.execution_log
-    detail_panel.update_iteration(ctx.iteration, ctx.total_iterations)
+    if ctx.step != "protocol_artifact":
+        detail_panel.update_iteration(ctx.iteration, ctx.total_iterations)
+    detail_panel.apply_agent_progress(ctx)
 
     next_criteria_completed = live_criteria_completed
     if ctx.criteria_completed:
@@ -69,6 +73,20 @@ def apply_progress_update(
         log.log_error(ctx.output)
     elif ctx.step == "stage":
         log.log_heading(f"Stage: {ctx.output}")
+    elif ctx.step == "finalizing":
+        output = ctx.output.strip()
+        if output:
+            log.log_heading(f"Verifier: {output}")
+    elif ctx.step == "protocol_artifact":
+        output = ctx.output.strip()
+        if output:
+            log.write_log(f"[dim]↳ {output}[/]")
+    elif ctx.step == "validation_failed":
+        log.log_error(ctx.output)
+    elif ctx.step == "clarification_pending":
+        log.write_log(f"[yellow]⚠ {ctx.output}[/]")
+    elif ctx.step == "warning":
+        log.write_log(f"[yellow]⚠ {ctx.output}[/]")
 
     return next_criteria_completed
 

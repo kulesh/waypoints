@@ -21,6 +21,7 @@ def build_execution_prompt(
     spec_context_stale: bool = False,
     current_spec_hash: str | None = None,
     guidance_packet: "GuidancePacket | None" = None,
+    resolved_validation_commands: tuple[str, ...] | None = None,
 ) -> str:
     """Build the execution prompt for a waypoint.
 
@@ -103,6 +104,17 @@ def build_execution_prompt(
             "### Stop Conditions\n"
             f"{stops}\n"
         )
+    validation_commands_section = ""
+    if resolved_validation_commands:
+        rendered = "\n".join(
+            f"- `{command}`" for command in resolved_validation_commands if command
+        )
+        if rendered:
+            validation_commands_section = (
+                "\n### Validation Commands for This Waypoint\n"
+                "Use these exact commands for stack-appropriate validation:\n"
+                f"{rendered}\n"
+            )
 
     return f"""## Current Waypoint: {waypoint.id}
 {waypoint.title}
@@ -137,9 +149,9 @@ You are implementing a software waypoint. Your task is to:
 
 1. Read any existing code in the project to understand the codebase
 2. Create/modify code files to achieve the waypoint objective
-3. Write tests that verify the acceptance criteria
-4. Run tests with `pytest -v` and ensure they pass
-5. If tests fail, analyze the failure and fix the code
+3. Write stack-appropriate tests/checks that verify the acceptance criteria
+4. Run stack-appropriate validation commands and ensure they pass
+5. If validations fail, analyze the failure and fix the code
 6. Iterate until all acceptance criteria are met
 
 ## Execution Protocol (Structured Stage Reports)
@@ -179,6 +191,8 @@ Keep `output` brief and factual. Use `artifacts` for files created/modified.
 - Create tests before or alongside implementation
 - Author tests that capture intent/behavior (not shallow or superficial)
 - Run tests after each significant change
+- Do not introduce a different language/toolchain just for testing unless the
+  project already uses it or the waypoint explicitly requires it
 - Assume all code (good or bad) is yours to maintain. Do not ignore existing
   errors/warnings because they are “pre-existing” — fix them unless doing so
   would derail the waypoint.
@@ -188,6 +202,7 @@ Before marking this waypoint complete, you must run and **fix** anything
 uncovered by these checks. Treat any warning/error as a failure that must be
 resolved before completion. Verify the following:
 {checklist_items}
+{validation_commands_section}
 
 Report each checklist item using this structure (one block per item):
 ```xml
@@ -206,11 +221,7 @@ Key output showing the result
 
 Run the appropriate validation commands for the project's stack. Any
 warnings/errors must be fixed before completion; include evidence of fixes in
-your outputs:
-- **Tests**: Run the test suite (e.g., `pytest`, `cargo test`, `npm test`, `go test`)
-- **Linting**: Run the linter (e.g., `ruff check`, `cargo clippy`, `eslint`)
-- **Formatting**: Check code formatting (e.g., `ruff format --check`,
-  `cargo fmt --check`)
+your outputs. Prefer commands already used by this repository and current stack.
 
 Use the correct tool paths (e.g., `/Users/kulesh/.cargo/bin/cargo` if cargo is there).
 

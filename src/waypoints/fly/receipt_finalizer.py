@@ -105,9 +105,23 @@ class ReceiptFinalizer:
         self._report_progress = progress_callback
         self._last_failure: FinalizeFailure | None = None
 
-    def _progress(self, iteration: int, total: int, step: str, output: str) -> None:
+    def _progress(
+        self,
+        iteration: int,
+        total: int,
+        step: str,
+        output: str,
+        *,
+        metadata: dict[str, object] | None = None,
+    ) -> None:
         if self._report_progress:
-            self._report_progress(iteration, total, step, output)
+            self._report_progress(
+                iteration,
+                total,
+                step,
+                output,
+                metadata=metadata,
+            )
 
     def _set_failure(
         self,
@@ -403,6 +417,7 @@ class ReceiptFinalizer:
             max_iterations,
             "finalizing",
             "Running host validations and building receipt...",
+            metadata={"role": FlyRole.VERIFIER.value},
         )
 
         receipt_builder = ReceiptBuilder(
@@ -553,6 +568,7 @@ class ReceiptFinalizer:
             max_iterations,
             "finalizing",
             "Host validations OFF (LLM-as-judge only)...",
+            metadata={"role": FlyRole.VERIFIER.value},
         )
 
         if commands_to_run:
@@ -606,6 +622,7 @@ class ReceiptFinalizer:
             max_iterations,
             "finalizing",
             "Verifying receipt with LLM...",
+            metadata={"role": FlyRole.VERIFIER.value},
         )
 
         verifier_guidance = self._build_verifier_guidance_packet(project_path)
@@ -613,6 +630,16 @@ class ReceiptFinalizer:
             log_method = getattr(self._log_writer, "log_protocol_artifact", None)
             if callable(log_method):
                 log_method(verifier_guidance)
+            self._progress(
+                max_iterations,
+                max_iterations,
+                "protocol_artifact",
+                f"{FlyRole.VERIFIER.value}:{verifier_guidance.artifact_type}",
+                metadata={
+                    "role": FlyRole.VERIFIER.value,
+                    "artifact": verifier_guidance.to_dict(),
+                },
+            )
         verification_prompt = self._build_verification_prompt(
             receipt_path,
             verifier_guidance=verifier_guidance,

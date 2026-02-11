@@ -27,6 +27,7 @@ class TestStackType:
         assert StackType.JAVASCRIPT.value == "javascript"
         assert StackType.GO.value == "go"
         assert StackType.RUST.value == "rust"
+        assert StackType.SWIFT.value == "swift"
 
 
 class TestValidationCommand:
@@ -108,6 +109,13 @@ class TestStackCommands:
         assert "test" in categories
         assert "lint" in categories
 
+    def test_swift_commands(self) -> None:
+        """Verify Swift stack has expected commands."""
+        cmds = STACK_COMMANDS[StackType.SWIFT]
+        categories = {c.category for c in cmds}
+        assert "build" in categories
+        assert "test" in categories
+
 
 class TestDetectStack:
     """Tests for detect_stack function."""
@@ -161,6 +169,13 @@ class TestDetectStack:
         configs = detect_stack(tmp_path)
         assert len(configs) == 1
         assert configs[0].stack_type == StackType.RUST
+
+    def test_detect_swift(self, tmp_path: Path) -> None:
+        """Detect Swift from Package.swift."""
+        (tmp_path / "Package.swift").write_text("// swift-tools-version:5.10")
+        configs = detect_stack(tmp_path)
+        assert len(configs) == 1
+        assert configs[0].stack_type == StackType.SWIFT
 
     def test_detect_multiple_stacks(self, tmp_path: Path) -> None:
         """Detect multiple stacks in a monorepo."""
@@ -260,6 +275,12 @@ class TestDetectStackFromSpec:
         spec = "Using Rust with Tokio for async runtime"
         stacks = detect_stack_from_spec(spec)
         assert StackType.RUST in stacks
+
+    def test_detect_swift_keywords(self) -> None:
+        """Detect Swift package workflows from spec keywords."""
+        spec = "Use Swift Package Manager with Package.swift and swift test"
+        stacks = detect_stack_from_spec(spec)
+        assert StackType.SWIFT in stacks
 
     def test_detect_multiple_from_spec(self) -> None:
         """Detect multiple stacks from spec."""
