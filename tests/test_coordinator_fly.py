@@ -5,12 +5,21 @@ from waypoints.fly.intervention import (
     InterventionAction,
     InterventionType,
 )
+from waypoints.fly.protocol import (
+    CriterionVerdict,
+    DecisionDisposition,
+    FlyRole,
+    VerificationCriterionResult,
+    VerificationReport,
+)
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration.coordinator_fly import (
+    OrchestratorDecisionInput,
     build_completion_status,
     build_intervention_resolution,
     build_next_action_after_success,
+    decide_orchestrator_disposition,
     prepare_waypoint_for_rerun,
     select_next_waypoint_candidate,
 )
@@ -474,3 +483,117 @@ def test_build_intervention_resolution_wait_sets_pending_and_pauses() -> None:
     assert new_status == WaypointStatus.PENDING
     assert action.action == "pause"
     assert action.message == "Paused waiting for budget reset"
+
+
+def _verification_report(
+    *,
+    waypoint_id: str = "WP-900",
+    verdicts: tuple[CriterionVerdict, ...] = (CriterionVerdict.PASS,),
+    unresolved_doubts: tuple[str, ...] = (),
+) -> VerificationReport:
+    results = tuple(
+        VerificationCriterionResult(index=index, verdict=verdict)
+        for index, verdict in enumerate(verdicts)
+    )
+    return VerificationReport(
+        waypoint_id=waypoint_id,
+        produced_by_role=FlyRole.VERIFIER,
+        artifact_id=f"verify-{waypoint_id.lower()}",
+        criteria_results=results,
+        unresolved_doubts=unresolved_doubts,
+    )
+
+
+def test_decide_orchestrator_disposition_accepts_when_all_verified() -> None:
+    decision = decide_orchestrator_disposition(
+        OrchestratorDecisionInput(
+            waypoint_id="WP-900",
+            verification_report=_verification_report(),
+            retry_budget_remaining=2,
+            referenced_artifact_ids=("build-wp-900",),
+        )
+    )
+
+    assert decision.disposition == DecisionDisposition.ACCEPT
+    assert decision.reason_code == "verification_passed"
+    assert decision.status_mutation == "complete"
+    assert decision.referenced_artifact_ids == ("build-wp-900", "verify-wp-900")
+
+
+def test_decide_orchestrator_disposition_prefers_clarification_escalation() -> None:
+    decision = decide_orchestrator_disposition(
+        OrchestratorDecisionInput(
+            waypoint_id="WP-901",
+            verification_report=_verification_report(waypoint_id="WP-901"),
+            unresolved_clarification=True,
+            retry_budget_remaining=3,
+        )
+    )
+
+    assert decision.disposition == DecisionDisposition.ESCALATE
+    assert decision.reason_code == "unresolved_clarification"
+    assert decision.status_mutation is None
+
+
+def test_decide_orchestrator_disposition_reworks_when_retry_budget_available() -> None:
+    decision = decide_orchestrator_disposition(
+        OrchestratorDecisionInput(
+            waypoint_id="WP-902",
+            verification_report=_verification_report(
+                waypoint_id="WP-902",
+                verdicts=(CriterionVerdict.FAIL,),
+            ),
+            retry_budget_remaining=1,
+        )
+    )
+
+    assert decision.disposition == DecisionDisposition.REWORK
+    assert decision.reason_code == "verification_failed_rework"
+    assert decision.status_mutation == "in_progress"
+
+
+def test_decide_orchestrator_disposition_rolls_back_after_budget_exhaustion() -> None:
+    decision = decide_orchestrator_disposition(
+        OrchestratorDecisionInput(
+            waypoint_id="WP-903",
+            verification_report=_verification_report(
+                waypoint_id="WP-903",
+                verdicts=(CriterionVerdict.FAIL,),
+            ),
+            retry_budget_remaining=0,
+            rollback_ref_available=True,
+        )
+    )
+
+    assert decision.disposition == DecisionDisposition.ROLLBACK
+    assert decision.reason_code == "verification_failed_budget_exhausted"
+    assert decision.status_mutation == "failed"
+
+
+def test_decide_orchestrator_disposition_escalates_without_report_and_budget() -> None:
+    decision = decide_orchestrator_disposition(
+        OrchestratorDecisionInput(
+            waypoint_id="WP-904",
+            verification_report=None,
+            retry_budget_remaining=0,
+        )
+    )
+
+    assert decision.disposition == DecisionDisposition.ESCALATE
+    assert decision.reason_code == "missing_verification_report_budget_exhausted"
+
+
+def test_decide_orchestrator_disposition_escalates_on_policy_violation_without_ref() -> (
+    None
+):
+    decision = decide_orchestrator_disposition(
+        OrchestratorDecisionInput(
+            waypoint_id="WP-905",
+            verification_report=_verification_report(waypoint_id="WP-905"),
+            policy_violations=("verifier attempted write",),
+            rollback_ref_available=False,
+        )
+    )
+
+    assert decision.disposition == DecisionDisposition.ESCALATE
+    assert decision.reason_code == "policy_violation_escalate"

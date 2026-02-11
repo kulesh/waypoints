@@ -362,6 +362,7 @@ class OpenAIProvider(LLMProvider):
         system_prompt: str | None = None,
         allowed_tools: list[str] | None = None,
         cwd: str | None = None,
+        tool_role: str | None = None,
         resume_session_id: str | None = None,
         metrics_collector: "MetricsCollector | None" = None,
         phase: str = "fly",
@@ -481,7 +482,12 @@ class OpenAIProvider(LLMProvider):
                             # Yield tool use for logging/display
                             has_yielded = True
                             # Execute the tool (host-side) and surface output
-                            result = execute_tool(tool_name, arguments, cwd)
+                            result = execute_tool(
+                                tool_name,
+                                arguments,
+                                cwd,
+                                tool_role=tool_role,
+                            )
                             yield StreamToolUse(
                                 tool_name=TOOL_NAME_MAP.get(tool_name, tool_name),
                                 tool_input=arguments,

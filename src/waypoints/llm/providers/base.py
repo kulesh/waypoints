@@ -283,6 +283,7 @@ class LLMProvider(ABC):
         system_prompt: str | None = None,
         allowed_tools: list[str] | None = None,
         cwd: str | None = None,
+        tool_role: str | None = None,
         resume_session_id: str | None = None,
         metrics_collector: "MetricsCollector | None" = None,
         phase: str = "fly",
@@ -295,6 +296,7 @@ class LLMProvider(ABC):
             system_prompt: Optional system prompt.
             allowed_tools: List of tool names to allow.
             cwd: Working directory for tools.
+            tool_role: Optional role identifier for tool permissions.
             resume_session_id: Optional provider session ID to resume.
             metrics_collector: Optional metrics collector.
             phase: Phase name for metrics.

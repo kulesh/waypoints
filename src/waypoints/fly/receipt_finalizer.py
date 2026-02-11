@@ -536,6 +536,7 @@ class ReceiptFinalizer:
                 system_prompt="Verify the checklist receipt. Output your verdict.",
                 allowed_tools=[],
                 cwd=str(project_path),
+                tool_role="verifier",
                 metrics_collector=self._metrics_collector,
                 phase="fly",
                 waypoint_id=self._waypoint.id,

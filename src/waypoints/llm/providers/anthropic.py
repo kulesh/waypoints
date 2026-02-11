@@ -321,6 +321,7 @@ class AnthropicProvider(LLMProvider):
         system_prompt: str | None = None,
         allowed_tools: list[str] | None = None,
         cwd: str | None = None,
+        tool_role: str | None = None,
         resume_session_id: str | None = None,
         metrics_collector: "MetricsCollector | None" = None,
         phase: str = "fly",
@@ -392,7 +393,12 @@ class AnthropicProvider(LLMProvider):
                                 tool_name = TOOL_NAME_MAP.get(
                                     block.name.lower(), block.name
                                 )
-                                tool_output = execute_tool(tool_name, block.input, cwd)
+                                tool_output = execute_tool(
+                                    tool_name,
+                                    block.input,
+                                    cwd,
+                                    tool_role=tool_role,
+                                )
                                 yield StreamToolUse(
                                     tool_name=block.name,
                                     tool_input=block.input,

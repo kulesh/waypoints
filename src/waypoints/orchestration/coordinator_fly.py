@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from waypoints.fly.intervention import Intervention, InterventionAction
+from waypoints.fly.protocol import (
+    DecisionDisposition,
+    FlyRole,
+    OrchestratorDecision,
+    VerificationReport,
+)
 from waypoints.models.flight_plan import FlightPlan
 from waypoints.models.waypoint import Waypoint, WaypointStatus
 from waypoints.orchestration.types import CompletionStatus, NextAction
@@ -140,12 +148,151 @@ def build_next_action_after_success(flight_plan: FlightPlan | None) -> NextActio
     return NextAction(action="pause", message="No executable waypoints available")
 
 
+@dataclass(frozen=True, slots=True)
+class OrchestratorDecisionInput:
+    """Inputs required for orchestrator decisioning in multi-agent mode."""
+
+    waypoint_id: str
+    verification_report: VerificationReport | None = None
+    unresolved_clarification: bool = False
+    policy_violations: tuple[str, ...] = ()
+    retry_budget_remaining: int = 0
+    rollback_ref_available: bool = False
+    referenced_artifact_ids: tuple[str, ...] = ()
+
+
+def decide_orchestrator_disposition(
+    decision_input: OrchestratorDecisionInput,
+) -> OrchestratorDecision:
+    """Apply deterministic disposition policy for multi-agent orchestration."""
+    referenced_ids = _collect_referenced_artifact_ids(decision_input)
+    report = decision_input.verification_report
+
+    if decision_input.unresolved_clarification:
+        return _build_orchestrator_decision(
+            decision_input=decision_input,
+            disposition=DecisionDisposition.ESCALATE,
+            reason_code="unresolved_clarification",
+            status_mutation=None,
+            referenced_artifact_ids=referenced_ids,
+        )
+
+    if decision_input.policy_violations:
+        if decision_input.rollback_ref_available:
+            return _build_orchestrator_decision(
+                decision_input=decision_input,
+                disposition=DecisionDisposition.ROLLBACK,
+                reason_code="policy_violation_rollback",
+                status_mutation="failed",
+                referenced_artifact_ids=referenced_ids,
+            )
+        return _build_orchestrator_decision(
+            decision_input=decision_input,
+            disposition=DecisionDisposition.ESCALATE,
+            reason_code="policy_violation_escalate",
+            status_mutation=None,
+            referenced_artifact_ids=referenced_ids,
+        )
+
+    if report is None:
+        if decision_input.retry_budget_remaining > 0:
+            return _build_orchestrator_decision(
+                decision_input=decision_input,
+                disposition=DecisionDisposition.REWORK,
+                reason_code="missing_verification_report",
+                status_mutation="in_progress",
+                referenced_artifact_ids=referenced_ids,
+            )
+        return _build_orchestrator_decision(
+            decision_input=decision_input,
+            disposition=DecisionDisposition.ESCALATE,
+            reason_code="missing_verification_report_budget_exhausted",
+            status_mutation=None,
+            referenced_artifact_ids=referenced_ids,
+        )
+
+    if report.all_passed and not report.unresolved_doubts:
+        return _build_orchestrator_decision(
+            decision_input=decision_input,
+            disposition=DecisionDisposition.ACCEPT,
+            reason_code="verification_passed",
+            status_mutation="complete",
+            referenced_artifact_ids=referenced_ids,
+        )
+
+    if decision_input.retry_budget_remaining > 0:
+        reason_code = "verification_inconclusive_rework"
+        if report.has_failures:
+            reason_code = "verification_failed_rework"
+        return _build_orchestrator_decision(
+            decision_input=decision_input,
+            disposition=DecisionDisposition.REWORK,
+            reason_code=reason_code,
+            status_mutation="in_progress",
+            referenced_artifact_ids=referenced_ids,
+        )
+
+    if report.has_failures and decision_input.rollback_ref_available:
+        return _build_orchestrator_decision(
+            decision_input=decision_input,
+            disposition=DecisionDisposition.ROLLBACK,
+            reason_code="verification_failed_budget_exhausted",
+            status_mutation="failed",
+            referenced_artifact_ids=referenced_ids,
+        )
+
+    reason_code = "verification_inconclusive_budget_exhausted"
+    if report.has_failures:
+        reason_code = "verification_failed_escalate"
+    return _build_orchestrator_decision(
+        decision_input=decision_input,
+        disposition=DecisionDisposition.ESCALATE,
+        reason_code=reason_code,
+        status_mutation=None,
+        referenced_artifact_ids=referenced_ids,
+    )
+
+
+def _collect_referenced_artifact_ids(
+    decision_input: OrchestratorDecisionInput,
+) -> tuple[str, ...]:
+    report = decision_input.verification_report
+    seen: dict[str, None] = {
+        artifact_id: None
+        for artifact_id in decision_input.referenced_artifact_ids
+        if artifact_id
+    }
+    if report is not None and report.artifact_id not in seen:
+        seen[report.artifact_id] = None
+    return tuple(seen.keys())
+
+
+def _build_orchestrator_decision(
+    *,
+    decision_input: OrchestratorDecisionInput,
+    disposition: DecisionDisposition,
+    reason_code: str,
+    status_mutation: str | None,
+    referenced_artifact_ids: tuple[str, ...],
+) -> OrchestratorDecision:
+    return OrchestratorDecision(
+        waypoint_id=decision_input.waypoint_id,
+        produced_by_role=FlyRole.ORCHESTRATOR,
+        source_refs=(),
+        disposition=disposition,
+        reason_code=reason_code,
+        referenced_artifact_ids=referenced_artifact_ids,
+        status_mutation=status_mutation,
+    )
+
+
 def build_intervention_resolution(
     *,
     flight_plan: FlightPlan | None,
     intervention: Intervention,
     action: InterventionAction,
     additional_iterations: int = 5,
+    rollback_ref: str | None = None,
     rollback_tag: str | None = None,
 ) -> tuple[WaypointStatus | None, NextAction]:
     """Map an intervention action to a waypoint status change and next action."""
@@ -169,13 +316,14 @@ def build_intervention_resolution(
         return (WaypointStatus.SKIPPED, next_action)
 
     if action == InterventionAction.ROLLBACK:
+        target_ref = rollback_ref or rollback_tag
         return (
             None,
             NextAction(
                 action="pause",
                 message=(
-                    f"Rollback requested for {rollback_tag}"
-                    if rollback_tag
+                    f"Rollback requested for {target_ref}"
+                    if target_ref
                     else "Rollback requested"
                 ),
             ),

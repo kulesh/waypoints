@@ -16,7 +16,7 @@ from uuid import uuid4
 from waypoints.models.schema import migrate_if_needed, write_schema_fields
 
 if TYPE_CHECKING:
-    from waypoints.fly.protocol import StageReport
+    from waypoints.fly.protocol import ProtocolArtifact, StageReport
     from waypoints.models.project import Project
     from waypoints.models.waypoint import Waypoint
 
@@ -419,6 +419,25 @@ class ExecutionLogWriter:
         }
         self._append(entry)
 
+    def log_protocol_artifact(self, artifact: "ProtocolArtifact") -> None:
+        """Log a control-plane protocol artifact."""
+        to_dict = getattr(artifact, "to_dict", None)
+        if not callable(to_dict):
+            raise ValueError("Protocol artifact must implement to_dict()")
+        payload = to_dict()
+        artifact_id = payload.get("artifact_id")
+        artifact_type = payload.get("artifact_type")
+        entry: dict[str, Any] = {
+            "type": "protocol_artifact",
+            "artifact": payload,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        if isinstance(artifact_id, str):
+            entry["artifact_id"] = artifact_id
+        if isinstance(artifact_type, str):
+            entry["artifact_type"] = artifact_type
+        self._append(entry)
+
     def log_protocol_derailment(
         self,
         iteration: int,
@@ -533,6 +552,14 @@ class ExecutionLogReader:
                         content = data.get("error", "")
                     elif entry_type == "tool_call":
                         content = f"{data.get('tool_name')}: {data.get('tool_input')}"
+                    elif entry_type == "protocol_artifact":
+                        artifact_payload = data.get("artifact")
+                        if isinstance(artifact_payload, dict):
+                            artifact_type = artifact_payload.get("artifact_type", "?")
+                            artifact_id = artifact_payload.get("artifact_id", "?")
+                            content = f"{artifact_type}:{artifact_id}"
+                        else:
+                            content = "protocol_artifact"
 
                     entries.append(
                         ExecutionEntry(

@@ -364,6 +364,7 @@ class WaypointExecutor:
                 "WebFetch",
             ],
             cwd=str(project_path),
+            tool_role="builder",
             resume_session_id=s.resume_session_id,
             metrics_collector=self.metrics_collector,
             phase="fly",

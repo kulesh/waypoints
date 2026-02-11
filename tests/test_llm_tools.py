@@ -3,7 +3,7 @@
 from pathlib import Path
 from sys import executable
 
-from waypoints.llm.tools import execute_tool
+from waypoints.llm.tools import allowed_tools_for_role, execute_tool
 
 
 def test_execute_tool_bash_echo() -> None:
@@ -102,3 +102,26 @@ def test_read_file_denies_stack_specific_dependency_dir(tmp_path: Path) -> None:
 
     assert "Error: Access denied:" in result
     assert "node_modules" in result
+
+
+def test_verifier_role_cannot_write_files(tmp_path: Path) -> None:
+    """Verifier role must fail fast on mutating tool attempts."""
+    target = tmp_path / "src" / "new_file.py"
+
+    result = execute_tool(
+        "write_file",
+        {"file_path": str(target), "content": "print('no')"},
+        cwd=str(tmp_path),
+        tool_role="verifier",
+    )
+
+    assert "Error: Access denied:" in result
+    assert "verifier role" in result
+    assert not target.exists()
+
+
+def test_allowed_tools_for_role_verifier_excludes_mutations() -> None:
+    verifier_tools = allowed_tools_for_role("verifier")
+    assert "read_file" in verifier_tools
+    assert "write_file" not in verifier_tools
+    assert "edit_file" not in verifier_tools

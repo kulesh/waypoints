@@ -24,6 +24,14 @@ LEGACY_BLOCKED_TOP_LEVEL_DIRS = frozenset(
     }
 )
 
+ROLE_TOOL_ALLOWLIST: dict[str, tuple[str, ...]] = {
+    "builder": ("read_file", "write_file", "edit_file", "bash", "glob", "grep"),
+    "verifier": ("read_file", "bash", "glob", "grep"),
+    "repair": ("read_file", "write_file", "edit_file", "bash", "glob", "grep"),
+}
+
+MUTATING_TOOLS = frozenset({"write_file", "edit_file"})
+
 
 def _access_denied(message: str) -> str:
     """Create a normalized tool error for blocked paths."""
@@ -81,13 +89,34 @@ def _check_path_policy(
     return None
 
 
-def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
+def _normalize_tool_name(name: str) -> str:
+    lowered = name.lower()
+    alias_map = {
+        "read": "read_file",
+        "write": "write_file",
+        "edit": "edit_file",
+    }
+    return alias_map.get(lowered, lowered)
+
+
+def allowed_tools_for_role(role: str) -> tuple[str, ...]:
+    """Resolve tool allowlist for a role identifier."""
+    return ROLE_TOOL_ALLOWLIST.get(role.lower(), ())
+
+
+def execute_tool(
+    name: str,
+    arguments: dict[str, Any],
+    cwd: str | None,
+    tool_role: str | None = None,
+) -> str:
     """Execute a tool and return the result as a string.
 
     Args:
         name: Tool name (read_file, write_file, edit_file, bash, glob, grep).
         arguments: Tool arguments.
         cwd: Working directory for relative paths.
+        tool_role: Optional caller role for permission enforcement.
 
     Returns:
         Result string to send back to the model and/or log.
@@ -95,6 +124,12 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
     import re
 
     command_runner = get_command_runner()
+    normalized_name = _normalize_tool_name(name)
+    role_name = tool_role.lower() if tool_role else None
+    if role_name == "verifier" and normalized_name in MUTATING_TOOLS:
+        return _access_denied(
+            f"tool '{normalized_name}' is not allowed for verifier role"
+        )
 
     def _format_timeout_events(events: list[CommandEvent]) -> str:
         if not events:
@@ -111,7 +146,7 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
 
     try:
         blocked_dirs = _resolve_blocked_top_level_dirs(cwd)
-        if name == "read_file":
+        if normalized_name == "read_file":
             path = _resolve_tool_path(arguments["file_path"], cwd)
             if (error := _check_path_policy(path, cwd, blocked_dirs)) is not None:
                 return _access_denied(error)
@@ -119,7 +154,7 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
                 return f"Error: File not found: {path}"
             return path.read_text(encoding="utf-8")
 
-        if name == "write_file":
+        if normalized_name == "write_file":
             path = _resolve_tool_path(arguments["file_path"], cwd)
             if (error := _check_path_policy(path, cwd, blocked_dirs)) is not None:
                 return _access_denied(error)
@@ -127,7 +162,7 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
             path.write_text(arguments["content"], encoding="utf-8")
             return f"Successfully wrote to {path}"
 
-        if name == "edit_file":
+        if normalized_name == "edit_file":
             path = _resolve_tool_path(arguments["file_path"], cwd)
             if (error := _check_path_policy(path, cwd, blocked_dirs)) is not None:
                 return _access_denied(error)
@@ -142,7 +177,7 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
             path.write_text(new_content, encoding="utf-8")
             return f"Successfully edited {path}"
 
-        if name == "bash":
+        if normalized_name == "bash":
             command = arguments["command"]
             raw_timeout = arguments.get("timeout")
             timeout: float | None = None
@@ -175,7 +210,7 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
                 output += f"\nExit code: {result.effective_exit_code}"
             return output or "(no output)"
 
-        if name == "glob":
+        if normalized_name == "glob":
             pattern = arguments["pattern"]
             search_path = _resolve_tool_path(arguments.get("path", cwd or "."), cwd)
             if (
@@ -193,7 +228,7 @@ def execute_tool(name: str, arguments: dict[str, Any], cwd: str | None) -> str:
                     break
             return "\n".join(visible_matches) or "(no matches)"
 
-        if name == "grep":
+        if normalized_name == "grep":
             pattern = arguments["pattern"]
             search_path = _resolve_tool_path(arguments.get("path", cwd or "."), cwd)
             if (

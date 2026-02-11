@@ -147,6 +147,7 @@ async def agent_query(
     system_prompt: str | None = None,
     allowed_tools: list[str] | None = None,
     cwd: str | None = None,
+    tool_role: str | None = None,
     resume_session_id: str | None = None,
     metrics_collector: "MetricsCollector | None" = None,
     phase: str = "fly",
@@ -168,6 +169,7 @@ async def agent_query(
         system_prompt: Optional system prompt.
         allowed_tools: List of tool names to allow.
         cwd: Working directory for tools.
+        tool_role: Optional role hint for tool permission policy.
         metrics_collector: Optional collector for recording metrics.
         phase: Phase name for metrics (default "fly").
         waypoint_id: Optional waypoint ID for per-waypoint metrics.
@@ -186,6 +188,7 @@ async def agent_query(
         system_prompt=system_prompt,
         allowed_tools=allowed_tools,
         cwd=cwd,
+        tool_role=tool_role,
         resume_session_id=resume_session_id,
         metrics_collector=metrics_collector,
         phase=phase,

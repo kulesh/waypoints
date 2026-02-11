@@ -16,6 +16,7 @@ from waypoints.fly.execution_log import (
     ExecutionLogReader,
     ExecutionLogWriter,
 )
+from waypoints.fly.protocol import FlyRole, GuidancePacket
 from waypoints.models.waypoint import Waypoint
 
 
@@ -844,6 +845,50 @@ class TestExecutionLogReader:
             mock_project, waypoint_id="WP-999"
         )
         assert criteria == set()
+
+
+def test_log_protocol_artifact_writes_artifact_payload(
+    mock_project: MockProject, mock_waypoint: Waypoint
+) -> None:
+    writer = ExecutionLogWriter(mock_project, mock_waypoint)
+    artifact = GuidancePacket(
+        waypoint_id=mock_waypoint.id,
+        produced_by_role=FlyRole.ORCHESTRATOR,
+        covenant_version="2026-02-11",
+        policy_hash="hash-1",
+    )
+
+    writer.log_protocol_artifact(artifact)
+
+    entries = _read_jsonl_entries(writer.file_path)
+    assert entries[1]["type"] == "protocol_artifact"
+    assert entries[1]["artifact_type"] == "guidance_packet"
+    assert entries[1]["artifact"]["artifact_id"] == artifact.artifact_id
+    assert entries[1]["artifact"]["covenant_version"] == "2026-02-11"
+
+
+def test_load_reader_preserves_protocol_artifact_entry_content(
+    mock_project: MockProject, mock_waypoint: Waypoint
+) -> None:
+    writer = ExecutionLogWriter(mock_project, mock_waypoint)
+    artifact = GuidancePacket(
+        waypoint_id=mock_waypoint.id,
+        produced_by_role=FlyRole.ORCHESTRATOR,
+        artifact_id="guidance-001",
+        covenant_version="2026-02-11",
+        policy_hash="hash-2",
+    )
+
+    writer.log_protocol_artifact(artifact)
+    writer.log_completion("success")
+
+    log = ExecutionLogReader.load(writer.file_path)
+
+    assert any(entry.entry_type == "protocol_artifact" for entry in log.entries)
+    protocol_entries = [
+        entry for entry in log.entries if entry.entry_type == "protocol_artifact"
+    ]
+    assert protocol_entries[0].content == "guidance_packet:guidance-001"
 
 
 def _read_jsonl_entries(path: Path) -> list[dict[str, Any]]:
